@@ -6,12 +6,18 @@
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
-New-Item -ItemType Directory -Force -Path "scripts", "docs\slides\reports" | Out-Null
+New-Item -ItemType Directory -Force -Path "scripts", "docs\slides\reports", "docs\slides\assets\diagrams" | Out-Null
 Copy-Item "$ScriptDir\generate_slides.py" "scripts\" -Force
+Copy-Item "$ScriptDir\validate_diagram_manifest.py" "scripts\" -Force
+Copy-Item "$ScriptDir\render_review_sheet.py" "scripts\" -Force
 
 Write-Host "report-slides setup complete:"
 Write-Host "  scripts\generate_slides.py"
+Write-Host "  scripts\validate_diagram_manifest.py"
+Write-Host "  scripts\render_review_sheet.py"
 Write-Host "  docs\slides\reports\"
+Write-Host "  docs\slides\assets\diagrams\"
+Write-Host "  Pillow is required only for review-sheet composition."
 Write-Host ""
 
 $setStyle = (Get-ChildItem $env:USERPROFILE\.claude -Recurse -Filter set-style.ps1 |
