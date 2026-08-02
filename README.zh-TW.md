@@ -182,6 +182,9 @@ amended:
 | `/research-log amend` | 修訂現有記錄的某個章節 |
 | `/research-log index` | 從 frontmatter 重建 `docs/research_log/INDEX.md` |
 | `/research-log show [n]` | 顯示最近 n 筆記錄的摘要（預設 5） |
+| `/research-log query` | 依章節與日期搜尋歷史，再於安全 token 預算內讀取選定結果 |
+
+即使沒有啟用 `/mode`，Agent 也會在開始新實驗、診斷異常、調整參數或啟動成本高昂的重跑前，主動查閱相關歷史。
 
 ---
 

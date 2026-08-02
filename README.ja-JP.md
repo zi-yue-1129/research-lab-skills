@@ -162,6 +162,9 @@ bash <(curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-ski
 | `/research-log amend` | 既存エントリのセクションを修正 |
 | `/research-log index` | `docs/research_log/INDEX.md` を frontmatter から再構築 |
 | `/research-log show [n]` | 最近 n 件のサマリーを表示（デフォルト 5） |
+| `/research-log query` | セクションと日付で履歴を検索し、安全なトークン予算内で選択結果を取得 |
+
+`/mode` を有効にしていなくても、Agent は新しい実験の開始、異常の診断、パラメータ変更、または高コストな再実行の前に、関連する履歴を自発的に確認します。
 
 ---
 

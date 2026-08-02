@@ -53,6 +53,24 @@ amended:
 
 `/research-log index` 指令會從所有日誌的 frontmatter 自動重建 `INDEX.md`，顯示完整的研究時間線。
 
+## 查詢章節歷史
+
+先尋找已安裝技能中的查詢腳本，再列出可查詢的章節類型、搜尋歷史，並讀取選定結果：
+
+```bash
+SECTION_QUERY="$(find ~/.claude -path "*/research-log/scripts/section_query.py" | head -1)"
+python3 "$SECTION_QUERY" types --dir examples/research-log
+python3 "$SECTION_QUERY" search \
+  --dir examples/research-log \
+  --sections Failures \
+  --range all
+python3 "$SECTION_QUERY" fetch \
+  --dir examples/research-log \
+  --ids "2026-05-18_bert_finetuned_full::failures"
+```
+
+若 `fetch` 回應溢位，回應不會包含任何部分正文。請使用每個 `suggested_batches[].ids` 群組重複執行 `fetch`，或使用回傳的 `chunk_cursor` 繼續讀取，直到 `next_chunk_cursor` 為 `null`。
+
 ## 生成的簡報
 
 這三篇日誌生成了 [`../report-slides/`](../report-slides/) 裡的 7 張週報投影片。slide03 的時間線圖就是從 `follows:` 鏈與日期自動建構的。

@@ -159,8 +159,11 @@ Manages a structured journal in `docs/research_log/` (one `.md` file per experim
 | `/research-log amend` | Edit sections of an existing entry |
 | `/research-log index` | Rebuild `docs/research_log/INDEX.md` from frontmatter |
 | `/research-log show [n]` | Show compact summary of the last n entries (default 5) |
+| `/research-log query` | Find section types, search history by section/date, then fetch selected results within a safe token budget |
 
 Each entry is a Markdown file with YAML frontmatter tracking `follows:` links between experiments and `slide_decks:` updated automatically when slides are generated.
+
+Agents proactively consult relevant history before starting new experiments, diagnosing anomalies, changing parameters, or launching costly reruns, even when `/mode` is not active.
 
 ---
 
