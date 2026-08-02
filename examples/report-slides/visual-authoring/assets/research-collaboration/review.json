@@ -1,0 +1,109 @@
+{
+  "status": "passed",
+  "diagram_id": "research-collaboration",
+  "diagram_type": "conceptual",
+  "slide": "slides/slide02-hybrid.svg",
+  "artifacts": [
+    "renders/source.png",
+    "renders/slide02-hybrid.png",
+    "renders/review-sheet.png",
+    "../../renders/deck-review-sheet.png",
+    "../../renders/lo-rendered/slide-02.png",
+    "../../renders/lo-normalized/slide-02.png",
+    "../../renders/pptx-vs-svg-review.png"
+  ],
+  "subfigure_render": {
+    "status": "passed",
+    "renderer": "CairoSVG with unsafe=True for the declared local raster layer",
+    "path": "renders/source.png"
+  },
+  "slide_render": {
+    "status": "passed",
+    "renderer": "CairoSVG with unsafe=True for the declared local raster layer",
+    "path": "renders/slide02-hybrid.png"
+  },
+  "model_vision": {
+    "status": "passed",
+    "inspected": [
+      "renders/source.png",
+      "renders/slide02-hybrid.png",
+      "../../renders/deck-review-sheet.png"
+    ],
+    "findings": [
+      {
+        "round": 1,
+        "level": "source-and-slide",
+        "region": "generated-raster-background",
+        "issue": "The default CairoSVG external-resource policy omitted the local PNG during the first render.",
+        "action": "Confirmed the local PNG and SVG href, then re-rendered with unsafe=True; the delivered source remained unchanged."
+      }
+    ]
+  },
+  "revision_rounds": 2,
+  "findings": [
+    {
+      "round": 1,
+      "level": "render",
+      "region": "generated-raster-background",
+      "issue": "The raster background was absent from the first pixel render.",
+      "action": "Used the confirmed CairoSVG local-resource option and re-rendered both source and slide."
+    }
+  ],
+  "pptx_render": {
+    "status": "passed",
+    "renderer": "LibreOffice",
+    "version": "7.3.7.2",
+    "path": "../../renders/lo-rendered/slide-02.png",
+    "dimensions": {
+      "width": 1601,
+      "height": 900
+    },
+    "normalized_comparison_path": "../../renders/lo-normalized/slide-02.png",
+    "normalized_dimensions": {
+      "width": 1200,
+      "height": 675
+    }
+  },
+  "pixel_vs_structure": {
+    "pixel_status": "passed",
+    "structure_status": "passed",
+    "pptx_render_status": "passed",
+    "equivalence_status": "passed_with_renderer_differences",
+    "comparison_status": "passed",
+    "comparison_artifact": "../../renders/pptx-vs-svg-review.png",
+    "comparison": {
+      "verdict": "passed",
+      "metric": "mean absolute RGB pixel delta on normalized 1200x675 images, channel range 0-255",
+      "approved_preview_dimensions": {
+        "width": 1200,
+        "height": 675
+      },
+      "pptx_render_dimensions": {
+        "width": 1601,
+        "height": 900
+      },
+      "normalized_comparison_dimensions": {
+        "width": 1200,
+        "height": 675
+      },
+      "mean_absolute_pixel_delta_rgb_0_255": 6.647181,
+      "p95_absolute_channel_delta_rgb_0_255": 26.0,
+      "p99_per_pixel_mean_delta_rgb_0_255": 126.0,
+      "pass_threshold_mean_absolute_pixel_delta_rgb_0_255": 12.0,
+      "normalization": "Dropped the rightmost one-pixel PDF raster rounding column (1601x900 to 1600x900), then resized with Pillow LANCZOS to the approved 1200x675 preview size."
+    },
+    "known_renderer_differences": [
+      "LibreOffice PDF rasterization and CairoSVG preview rendering use different anti-aliasing and font rasterization/metrics.",
+      "The 1601x900 PDF PNG dimensions require the documented one-pixel width normalization before comparison.",
+      "The verdict is threshold-based and does not claim byte-identical or pixel-identical output."
+    ]
+  },
+  "remaining_raster_layers": [
+    {
+      "id": "generated-raster-background",
+      "path": "generated.png",
+      "editable": false,
+      "reason": "The bitmap is illustrative atmosphere only; all factual text, shapes, arrows, and callouts remain in the SVG overlay."
+    }
+  ]
+}

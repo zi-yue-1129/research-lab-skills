@@ -1,0 +1,5 @@
+{
+  "categories": ["Baseline A", "Baseline B", "Current A", "Current B"],
+  "accuracy": [72.1, 81.6, 98.4, 100.0],
+  "unit": "percent"
+}

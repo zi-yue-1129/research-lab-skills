@@ -96,3 +96,17 @@ Slides 01–07 使用 `default` 風格；slides 08–09 使用 `paper` 風格。
 ```bash
 bash "$(find ~/.claude -path "*/report-slides/scripts/set-style.sh" | head -1)" paper
 ```
+
+### Tracked visual-authoring fixture
+
+`visual-authoring/` is a self-contained three-slide fixture for the reviewed
+visual-authoring workflow. The architecture uses native editable SVG, the
+researcher collaboration scene uses a hybrid raster base with separate SVG
+overlays, and the accuracy comparison uses a deterministic data route from
+`data.json`. The pipeline manifest records the reused baseline revision and
+the evaluation-stage change bbox; the other manifests disclose their source,
+overlay, and data provenance. Each visual includes rendered previews, a review
+sheet, and a `review.json` record with separate pixel and structure statuses.
+The tracked `deck.pptx` is exported with `svg_to_pptx --mode native` so the
+architecture and chart objects remain editable, while the hybrid illustration
+retains its declared raster layer alongside editable text and shapes.

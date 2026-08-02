@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="1200"
+     height="675"
+     viewBox="0 0 1200 675"
+     role="img"
+     aria-labelledby="accuracy-title accuracy-description">
+  <title id="accuracy-title">Accuracy comparison</title>
+  <desc id="accuracy-description">Editable bar chart comparing four accuracy percentages from a deterministic data file.</desc>
+
+  <rect id="accuracy-canvas-background"
+        x="0"
+        y="0"
+        width="1200"
+        height="675"
+        fill="#F7FAFC"/>
+  <text id="accuracy-kicker"
+        x="60"
+        y="48"
+        fill="#5B7890"
+        font-family="Arial, Helvetica, sans-serif"
+        font-size="13"
+        font-weight="700"
+        letter-spacing="2">DETERMINISTIC DATA VIEW</text>
+  <text id="accuracy-heading"
+        x="60"
+        y="84"
+        fill="#15334A"
+        font-family="Arial, Helvetica, sans-serif"
+        font-size="30"
+        font-weight="700">Accuracy comparison</text>
+  <text id="accuracy-subtitle"
+        x="60"
+        y="113"
+        fill="#5B7890"
+        font-family="Arial, Helvetica, sans-serif"
+        font-size="15">Four checkpoints rendered directly from data.json.</text>
+  <path id="accuracy-header-rule"
+        d="M60 138 H1140"
+        fill="none"
+        stroke="#D9E5EC"
+        stroke-width="2"/>
+
+  <g id="chart-plot"
+     data-region="chart-plot"
+     data-source="data.json"
+     role="group"
+     aria-label="Accuracy bar chart">
+    <g id="chart-grid"
+       data-region="chart-grid"
+       role="group"
+       aria-label="Chart grid">
+      <line id="grid-100" x1="140" y1="180" x2="1100" y2="180" stroke="#D9E5EC" stroke-width="1.5"/>
+      <line id="grid-75" x1="140" y1="265" x2="1100" y2="265" stroke="#E7EEF2" stroke-width="1.5"/>
+      <line id="grid-50" x1="140" y1="350" x2="1100" y2="350" stroke="#E7EEF2" stroke-width="1.5"/>
+      <line id="grid-25" x1="140" y1="435" x2="1100" y2="435" stroke="#E7EEF2" stroke-width="1.5"/>
+      <line id="grid-0" x1="140" y1="520" x2="1100" y2="520" stroke="#B9CCD9" stroke-width="2"/>
+    </g>
+
+    <g id="chart-axis"
+       data-region="chart-axis"
+       role="group"
+       aria-label="Chart axes and labels">
+      <line id="accuracy-y-axis" x1="140" y1="180" x2="140" y2="520" stroke="#6B8799" stroke-width="2"/>
+      <line id="accuracy-x-axis" x1="140" y1="520" x2="1100" y2="520" stroke="#6B8799" stroke-width="2"/>
+      <line id="accuracy-tick-100" x1="132" y1="180" x2="140" y2="180" stroke="#6B8799" stroke-width="2"/>
+      <line id="accuracy-tick-75" x1="132" y1="265" x2="140" y2="265" stroke="#6B8799" stroke-width="2"/>
+      <line id="accuracy-tick-50" x1="132" y1="350" x2="140" y2="350" stroke="#6B8799" stroke-width="2"/>
+      <line id="accuracy-tick-25" x1="132" y1="435" x2="140" y2="435" stroke="#6B8799" stroke-width="2"/>
+      <line id="accuracy-tick-0" x1="132" y1="520" x2="140" y2="520" stroke="#6B8799" stroke-width="2"/>
+      <text id="accuracy-y-label-100" x="118" y="185" text-anchor="end" fill="#557085" font-family="Arial, Helvetica, sans-serif" font-size="12">100</text>
+      <text id="accuracy-y-label-75" x="118" y="270" text-anchor="end" fill="#557085" font-family="Arial, Helvetica, sans-serif" font-size="12">75</text>
+      <text id="accuracy-y-label-50" x="118" y="355" text-anchor="end" fill="#557085" font-family="Arial, Helvetica, sans-serif" font-size="12">50</text>
+      <text id="accuracy-y-label-25" x="118" y="440" text-anchor="end" fill="#557085" font-family="Arial, Helvetica, sans-serif" font-size="12">25</text>
+      <text id="accuracy-y-label-0" x="118" y="525" text-anchor="end" fill="#557085" font-family="Arial, Helvetica, sans-serif" font-size="12">0</text>
+      <text id="accuracy-y-axis-title" x="140" y="160" fill="#557085" font-family="Arial, Helvetica, sans-serif" font-size="11" font-weight="700" letter-spacing="1.1">ACCURACY (%)</text>
+      <text id="accuracy-x-axis-title" x="620" y="598" text-anchor="middle" fill="#557085" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="700" letter-spacing="1.1">CHECKPOINT</text>
+    </g>
+
+    <g id="chart-bars"
+       data-region="chart-bars"
+       data-element="editable-bars"
+       role="group"
+       aria-label="Accuracy bars">
+      <rect id="bar-baseline-a" data-category="Baseline A" x="236" y="274.86" width="112" height="245.14" rx="9" fill="#5B7890"/>
+      <rect id="bar-baseline-b" data-category="Baseline B" x="456" y="242.56" width="112" height="277.44" rx="9" fill="#6B9AB2"/>
+      <rect id="bar-current-a" data-category="Current A" x="676" y="185.44" width="112" height="334.56" rx="9" fill="#4F9A9A"/>
+      <rect id="bar-current-b" data-category="Current B" x="896" y="180" width="112" height="340" rx="9" fill="#D29A52"/>
+
+      <text id="bar-baseline-a-value" x="292" y="258" text-anchor="middle" fill="#15334A" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="700">72.1%</text>
+      <text id="bar-baseline-b-value" x="512" y="226" text-anchor="middle" fill="#15334A" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="700">81.6%</text>
+      <text id="bar-current-a-value" x="732" y="169" text-anchor="middle" fill="#15334A" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="700">98.4%</text>
+      <text id="bar-current-b-value" x="952" y="164" text-anchor="middle" fill="#15334A" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="700">100.0%</text>
+
+      <text id="bar-baseline-a-label" x="292" y="550" text-anchor="middle" fill="#15334A" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="700">Baseline A</text>
+      <text id="bar-baseline-b-label" x="512" y="550" text-anchor="middle" fill="#15334A" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="700">Baseline B</text>
+      <text id="bar-current-a-label" x="732" y="550" text-anchor="middle" fill="#15334A" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="700">Current A</text>
+      <text id="bar-current-b-label" x="952" y="550" text-anchor="middle" fill="#15334A" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="700">Current B</text>
+    </g>
+  </g>
+
+  <g id="chart-legend"
+     data-region="chart-legend"
+     role="group"
+     aria-label="Chart legend">
+    <rect id="legend-baseline-swatch" x="780" y="72" width="14" height="14" rx="3" fill="#5B7890"/>
+    <text id="legend-baseline-label" x="803" y="84" fill="#557085" font-family="Arial, Helvetica, sans-serif" font-size="12">Baseline</text>
+    <rect id="legend-current-swatch" x="886" y="72" width="14" height="14" rx="3" fill="#4F9A9A"/>
+    <text id="legend-current-label" x="909" y="84" fill="#557085" font-family="Arial, Helvetica, sans-serif" font-size="12">Current</text>
+  </g>
+
+  <path id="accuracy-footer-rule" d="M60 624 H1140" fill="none" stroke="#D9E5EC" stroke-width="1.5"/>
+  <text id="accuracy-footer-note" x="60" y="649" fill="#7892A4" font-family="Arial, Helvetica, sans-serif" font-size="11">Source data: accuracy-comparison/data.json • unit: percent</text>
+</svg>

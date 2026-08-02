@@ -1,0 +1,86 @@
+{
+  "status": "passed",
+  "diagram_id": "system-pipeline",
+  "diagram_type": "architecture",
+  "slide": "slides/slide01-architecture.svg",
+  "artifacts": [
+    "renders/source.png",
+    "renders/slide01-architecture.png",
+    "renders/review-sheet.png",
+    "../../renders/deck-review-sheet.png",
+    "../../renders/lo-rendered/slide-01.png",
+    "../../renders/lo-normalized/slide-01.png",
+    "../../renders/pptx-vs-svg-review.png"
+  ],
+  "subfigure_render": {
+    "status": "passed",
+    "renderer": "CairoSVG",
+    "path": "renders/source.png"
+  },
+  "slide_render": {
+    "status": "passed",
+    "renderer": "CairoSVG",
+    "path": "renders/slide01-architecture.png"
+  },
+  "model_vision": {
+    "status": "passed",
+    "inspected": [
+      "renders/source.png",
+      "renders/slide01-architecture.png",
+      "../../renders/deck-review-sheet.png"
+    ],
+    "findings": []
+  },
+  "revision_rounds": 1,
+  "findings": [],
+  "pptx_render": {
+    "status": "passed",
+    "renderer": "LibreOffice",
+    "version": "7.3.7.2",
+    "path": "../../renders/lo-rendered/slide-01.png",
+    "dimensions": {
+      "width": 1601,
+      "height": 900
+    },
+    "normalized_comparison_path": "../../renders/lo-normalized/slide-01.png",
+    "normalized_dimensions": {
+      "width": 1200,
+      "height": 675
+    }
+  },
+  "pixel_vs_structure": {
+    "pixel_status": "passed",
+    "structure_status": "passed",
+    "pptx_render_status": "passed",
+    "equivalence_status": "passed_with_renderer_differences",
+    "comparison_status": "passed",
+    "comparison_artifact": "../../renders/pptx-vs-svg-review.png",
+    "comparison": {
+      "verdict": "passed",
+      "metric": "mean absolute RGB pixel delta on normalized 1200x675 images, channel range 0-255",
+      "approved_preview_dimensions": {
+        "width": 1200,
+        "height": 675
+      },
+      "pptx_render_dimensions": {
+        "width": 1601,
+        "height": 900
+      },
+      "normalized_comparison_dimensions": {
+        "width": 1200,
+        "height": 675
+      },
+      "mean_absolute_pixel_delta_rgb_0_255": 8.935925,
+      "p95_absolute_channel_delta_rgb_0_255": 56.0,
+      "p99_per_pixel_mean_delta_rgb_0_255": 198.0,
+      "pass_threshold_mean_absolute_pixel_delta_rgb_0_255": 12.0,
+      "normalization": "Dropped the rightmost one-pixel PDF raster rounding column (1601x900 to 1600x900), then resized with Pillow LANCZOS to the approved 1200x675 preview size."
+    },
+    "known_renderer_differences": [
+      "LibreOffice PDF rasterization and CairoSVG preview rendering use different anti-aliasing and font rasterization/metrics.",
+      "The 1601x900 PDF PNG dimensions require the documented one-pixel width normalization before comparison.",
+      "The verdict is threshold-based and does not claim byte-identical or pixel-identical output."
+    ]
+  },
+  "remaining_raster_layers": []
+}

@@ -4,6 +4,7 @@ __pycache__/
 *.pptx
 !examples/**/*.pptx
 *.png
+!examples/report-slides/visual-authoring/**/*.png
 node_modules/
 .claude/worktrees/
 

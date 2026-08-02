@@ -1,0 +1,72 @@
+schema_version: 1
+deck_id: visual-authoring-fixture
+visuals:
+  - diagram_id: system-pipeline
+    slide: 1
+    purpose: Explain ingestion, feature processing, training, evaluation, human approval, failure recovery, and publishing.
+    regions:
+      - ingestion
+      - feature-processing
+      - training
+      - evaluation-stage
+      - human-review-branch
+      - failure-return-path
+      - publishing
+    route: native
+    editability: native
+    source_path: assets/system-pipeline/source.svg
+    preview_path: assets/system-pipeline/renders/source.png
+    slide_path: slides/slide01-architecture.svg
+    slide_preview_path: assets/system-pipeline/renders/slide01-architecture.png
+    reuse:
+      action: modify
+      asset_id: system-pipeline
+      reused_source: git:1634a372819632f66ddcf0aeebc3ca174e73f5b1
+      based_on_revision: git:1634a372819632f66ddcf0aeebc3ca174e73f5b1
+      changes:
+        - region: evaluation-stage
+          bbox: [600, 151, 954, 356]
+          change: Added the human review gate, approval handoff, and failure return path.
+          reason: Make manual approval and retraining recovery explicit.
+
+  - diagram_id: research-collaboration
+    slide: 2
+    purpose: Show a researcher and an AI laboratory connected by an editable collaboration loop over illustrative imagery.
+    regions:
+      - collaboration-header
+      - researcher-zone
+      - ai-lab-zone
+      - collaboration-loop
+      - disclosure-footer
+    route: hybrid
+    editability: hybrid
+    source_path: assets/research-collaboration/source.svg
+    preview_path: assets/research-collaboration/renders/source.png
+    slide_path: slides/slide02-hybrid.svg
+    slide_preview_path: assets/research-collaboration/renders/slide02-hybrid.png
+    generation:
+      prompt_path: assets/research-collaboration/prompt.md
+      output_path: assets/research-collaboration/generated.png
+      references: []
+    reuse:
+      action: create
+
+  - diagram_id: accuracy-comparison
+    slide: 3
+    purpose: Compare Baseline A, Baseline B, Current A, and Current B accuracy values from deterministic source data.
+    regions:
+      - chart-title
+      - chart-plot
+      - chart-grid
+      - chart-axis
+      - chart-bars
+      - chart-legend
+    route: data
+    editability: native
+    source_path: assets/accuracy-comparison/source.svg
+    data_path: assets/accuracy-comparison/data.json
+    preview_path: assets/accuracy-comparison/renders/source.png
+    slide_path: slides/slide03-chart.svg
+    slide_preview_path: assets/accuracy-comparison/renders/slide03-chart.png
+    reuse:
+      action: create

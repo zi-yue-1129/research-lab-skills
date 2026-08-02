@@ -1,0 +1,175 @@
+{
+  "status": "passed",
+  "deck_id": "visual-authoring-fixture",
+  "visuals": [
+    {
+      "diagram_id": "system-pipeline",
+      "slide": 1,
+      "authoring_route": "native",
+      "review": "passed",
+      "revision_rounds": 1,
+      "subfigure_render": "passed",
+      "slide_render": "passed",
+      "model_vision": "passed",
+      "pixel_status": "passed",
+      "pptx_structure_status": "passed",
+      "pptx_render_status": "passed",
+      "pptx_comparison_status": "passed",
+      "pptx_equivalence_status": "passed_with_renderer_differences"
+    },
+    {
+      "diagram_id": "research-collaboration",
+      "slide": 2,
+      "authoring_route": "hybrid",
+      "review": "passed",
+      "revision_rounds": 2,
+      "subfigure_render": "passed",
+      "slide_render": "passed",
+      "model_vision": "passed",
+      "pixel_status": "passed",
+      "pptx_structure_status": "passed",
+      "pptx_render_status": "passed",
+      "pptx_comparison_status": "passed",
+      "pptx_equivalence_status": "passed_with_renderer_differences",
+      "remaining_raster_layer": "generated.png is illustrative only; factual overlays are editable SVG objects."
+    },
+    {
+      "diagram_id": "accuracy-comparison",
+      "slide": 3,
+      "authoring_route": "data",
+      "review": "passed",
+      "revision_rounds": 2,
+      "subfigure_render": "passed",
+      "slide_render": "passed",
+      "model_vision": "passed",
+      "pixel_status": "passed",
+      "pptx_structure_status": "passed",
+      "pptx_render_status": "passed",
+      "pptx_comparison_status": "passed",
+      "pptx_equivalence_status": "passed_with_renderer_differences"
+    }
+  ],
+  "deck_review_sheet": "renders/deck-review-sheet.png",
+  "pptx_comparison_artifact": "renders/pptx-vs-svg-review.png",
+  "pptx_render": {
+    "status": "passed",
+    "renderer": "LibreOffice",
+    "version": "7.3.7.2",
+    "conversion_command": "libreoffice --headless --convert-to pdf --outdir /tmp/report-slides-lo-check examples/report-slides/visual-authoring/deck.pptx",
+    "raw_png_directory": "renders/lo-rendered",
+    "normalized_png_directory": "renders/lo-normalized"
+  },
+  "office_renderer": {
+    "installed": true,
+    "version": "LibreOffice 7.3.7.2",
+    "render_status": "passed",
+    "rendered_png_directory": "renders/lo-rendered",
+    "reason": "The provided headless PDF conversion completed successfully; its PDF-derived PNG pages are preserved under renders/lo-rendered/."
+  },
+  "ppts_structure_command": "python-pptx inline structural probe",
+  "ppts_structure_status": "passed",
+  "pixel_vs_structure": {
+    "svg_preview_status": "passed",
+    "pptx_structure_status": "passed",
+    "pptx_render_status": "passed",
+    "pptx_pixel_equivalence_status": "passed_with_renderer_differences",
+    "comparison_status": "passed",
+    "comparison_artifact": "renders/pptx-vs-svg-review.png",
+    "comparison_metric": "mean absolute RGB pixel delta on normalized 1200x675 images, channel range 0-255",
+    "comparison_threshold": {
+      "mean_absolute_pixel_delta_rgb_0_255": {
+        "operator": "<=",
+        "value": 12.0
+      }
+    },
+    "comparison_normalization": "Each 1601x900 PDF-derived PNG was cropped to 1600x900 by dropping the rightmost raster-rounding column, then resized with Pillow LANCZOS to 1200x675. The approved SVG preview was not modified.",
+    "known_renderer_differences": [
+      "LibreOffice PDF rasterization and CairoSVG preview rendering use different anti-aliasing and font rasterization/metrics.",
+      "The 1601x900 PDF PNG dimensions require the documented one-pixel width normalization before comparison.",
+      "The verdict is threshold-based and does not claim byte-identical or pixel-identical output."
+    ]
+  },
+  "pptx_comparison": {
+    "status": "passed_with_renderer_differences",
+    "verdict": "passed",
+    "artifact": "renders/pptx-vs-svg-review.png",
+    "metric": "mean absolute RGB pixel delta on normalized 1200x675 images, channel range 0-255",
+    "threshold": {
+      "mean_absolute_pixel_delta_rgb_0_255": {
+        "operator": "<=",
+        "value": 12.0
+      }
+    },
+    "slides": [
+      {
+        "slide": 1,
+        "diagram_id": "system-pipeline",
+        "approved_preview_path": "assets/system-pipeline/renders/slide01-architecture.png",
+        "approved_preview_dimensions": {
+          "width": 1200,
+          "height": 675
+        },
+        "pptx_render_path": "renders/lo-rendered/slide-01.png",
+        "pptx_render_dimensions": {
+          "width": 1601,
+          "height": 900
+        },
+        "normalized_comparison_path": "renders/lo-normalized/slide-01.png",
+        "normalized_comparison_dimensions": {
+          "width": 1200,
+          "height": 675
+        },
+        "mean_absolute_pixel_delta_rgb_0_255": 8.935925,
+        "p95_absolute_channel_delta_rgb_0_255": 56.0,
+        "p99_per_pixel_mean_delta_rgb_0_255": 198.0,
+        "verdict": "passed"
+      },
+      {
+        "slide": 2,
+        "diagram_id": "research-collaboration",
+        "approved_preview_path": "assets/research-collaboration/renders/slide02-hybrid.png",
+        "approved_preview_dimensions": {
+          "width": 1200,
+          "height": 675
+        },
+        "pptx_render_path": "renders/lo-rendered/slide-02.png",
+        "pptx_render_dimensions": {
+          "width": 1601,
+          "height": 900
+        },
+        "normalized_comparison_path": "renders/lo-normalized/slide-02.png",
+        "normalized_comparison_dimensions": {
+          "width": 1200,
+          "height": 675
+        },
+        "mean_absolute_pixel_delta_rgb_0_255": 6.647181,
+        "p95_absolute_channel_delta_rgb_0_255": 26.0,
+        "p99_per_pixel_mean_delta_rgb_0_255": 126.0,
+        "verdict": "passed"
+      },
+      {
+        "slide": 3,
+        "diagram_id": "accuracy-comparison",
+        "approved_preview_path": "assets/accuracy-comparison/renders/slide03-chart.png",
+        "approved_preview_dimensions": {
+          "width": 1200,
+          "height": 675
+        },
+        "pptx_render_path": "renders/lo-rendered/slide-03.png",
+        "pptx_render_dimensions": {
+          "width": 1601,
+          "height": 900
+        },
+        "normalized_comparison_path": "renders/lo-normalized/slide-03.png",
+        "normalized_comparison_dimensions": {
+          "width": 1200,
+          "height": 675
+        },
+        "mean_absolute_pixel_delta_rgb_0_255": 5.432014,
+        "p95_absolute_channel_delta_rgb_0_255": 27.0,
+        "p99_per_pixel_mean_delta_rgb_0_255": 142.333333,
+        "verdict": "passed"
+      }
+    ]
+  }
+}

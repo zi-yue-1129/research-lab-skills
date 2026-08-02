@@ -1,0 +1,46 @@
+schema_version: 1
+diagram_id: accuracy-comparison
+purpose: Compare four accuracy checkpoints from a deterministic source data file.
+diagram_type: statistical
+visual_kind: chart
+authoring_route: data
+editability: native
+source_files:
+  - data.json
+  - source.svg
+source_path: source.svg
+data_path: data.json
+rendered_preview_paths:
+  - renders/source.png
+  - renders/slide03-chart.png
+slide_path: ../../slides/slide03-chart.svg
+used_in:
+  - deck: visual-authoring-fixture
+    slide: 3
+derived_from: null
+based_on_revision: null
+changes: []
+reuse:
+  action: create
+  reused_source: null
+regions:
+  - name: chart-title
+    id: accuracy-heading
+  - name: chart-plot
+    id: chart-plot
+  - name: chart-axis
+    id: chart-axis
+  - name: chart-bars
+    id: chart-bars
+  - name: chart-legend
+    id: chart-legend
+editable_element_ids:
+  - chart-axis
+  - chart-bars
+  - chart-legend
+  - accuracy-x-axis-title
+  - accuracy-y-axis-title
+generation: null
+review:
+  status: passed
+  artifact: review.json
