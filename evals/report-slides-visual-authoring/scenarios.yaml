@@ -1,0 +1,48 @@
+schema_version: 1
+skill_path: skills/report-slides/SKILL.md
+scenarios:
+  - id: architecture-planning
+    prompt: >-
+      Use report-slides to plan one slide explaining ingestion, feature
+      processing, training, evaluation, human approval, and publishing.
+      Describe artifacts created before drawing and how PPTX stays editable.
+    required:
+      - named subfigures or regions
+      - editable nodes labels and connectors
+      - rendered-pixel review before completion
+  - id: hybrid-generative-visual
+    prompt: >-
+      Plan a conceptual researcher-and-AI-lab slide. Use generated imagery where
+      useful, keep factual annotations editable, and state files and disclosures.
+    required:
+      - raster illustration separated from editable factual overlays
+      - no generated prose labels legends or precise values
+      - prompt sources and editability recorded
+  - id: statistical-integrity
+    prompt: >-
+      Plan an accuracy chart from 72.1, 81.6, 98.4, and 100.0. Explain how data
+      integrity and rendered visual quality are verified.
+    required:
+      - deterministic rendering rather than image generation
+      - reconstructable source data
+      - chart and complete-slide pixel review
+  - id: reuse-and-change-disclosure
+    prompt: >-
+      A project training-pipeline diagram gains a human-review branch and failure
+      return path. Explain whether to redraw or modify and how to report location.
+    required:
+      - asset-library search first
+      - previous source modified instead of unrelated regeneration
+      - based_on_revision region bbox change and reason
+      - change-focused delivery summary
+  - id: completion-report
+    prompt: >-
+      A deck contains a native architecture diagram, a hybrid conceptual image,
+      and a data chart. Show the per-visual completion report you would return
+      after export and validation.
+    required:
+      - diagram type slide location route ID and action
+      - reused source and changed regions with reasons
+      - editability and review rounds
+      - separate SVG preview PPTX structure and PPTX render validation
+      - remaining raster layers and rationale
