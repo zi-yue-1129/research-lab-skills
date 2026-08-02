@@ -36,6 +36,8 @@ def test_research_log_documents_strict_query_sequence() -> None:
         "never silently truncate",
     ):
         assert required_anchor in text
+    assert "must run `types` before every query" in text
+    assert "may be skipped" not in text
 
 
 def test_history_check_does_not_require_research_mode() -> None:

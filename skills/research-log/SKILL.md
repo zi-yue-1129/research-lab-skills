@@ -336,11 +336,11 @@ python $SECTION_QUERY types --dir docs\research_log --budget 4000
 ```
 
 Use the strict `types → search → fetch` sequence. `types` discovers the stable
-canonical taxonomy and any custom headings before selecting a query. It may be
-skipped only when the request already names valid canonical types and custom
-discovery is not relevant. If `types` returns `next_cursor`, perform full
-type-cursor traversal with the same directory and budget before claiming that a
-custom type does not exist:
+canonical taxonomy and any custom headings before selecting a query. The agent
+must run `types` before every query, including a canonical-only request, then
+use the result without asking the user again. If `types` returns `next_cursor`,
+perform full type-cursor traversal with the same directory and budget before
+claiming that a custom type does not exist:
 
 ```bash
 python "$SECTION_QUERY" types --dir docs/research_log --budget 4000 --cursor "<opaque-cursor>"
