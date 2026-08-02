@@ -329,6 +329,19 @@ def test_search_rejects_invalid_dates_and_unknown_sections(tmp_path: Path) -> No
     assert "Goal" in unknown.stderr
 
 
+def test_search_rejects_case_variant_of_discovered_custom_type(tmp_path: Path) -> None:
+    """Require the exact discovered display name for custom section types."""
+    log_dir = tmp_path / "research_log"
+    log_dir.mkdir()
+    _write_log(log_dir, "run.md", "## My Custom\nBody.\n")
+
+    result = _run("search", "--dir", str(log_dir), "--sections", "my custom")
+
+    assert result.returncode != 0
+    assert "Unknown section types: my custom" in result.stderr
+    assert "My Custom" in result.stderr
+
+
 def test_search_manifests_preserve_provenance_without_body(tmp_path: Path) -> None:
     """Emit stable manifest summaries with source and nested-content provenance."""
     log_dir = tmp_path / "research_log"

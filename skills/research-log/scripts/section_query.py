@@ -193,15 +193,25 @@ def _validate_requested_types(
         Canonical or discovered display names in request order.
     """
     summaries = discover_types(scan)
-    names_by_key = {summary.key: summary.name for summary in summaries}
+    canonical_names_by_key = {
+        summary.key: summary.name for summary in summaries if summary.canonical
+    }
+    custom_names = {
+        summary.name for summary in summaries if not summary.canonical
+    }
     unknown_names: list[str] = []
     normalized_names: list[str] = []
     for requested_type in requested_types:
-        _, type_key = normalize_heading(requested_type)
-        resolved_name = names_by_key.get(type_key)
-        if resolved_name is None:
+        _, normalized_key = normalize_heading(requested_type)
+        canonical_name = canonical_names_by_key.get(normalized_key)
+        if canonical_name is not None:
+            resolved_name = canonical_name
+        elif requested_type in custom_names:
+            resolved_name = requested_type
+        else:
             unknown_names.append(requested_type)
-        elif resolved_name not in normalized_names:
+            continue
+        if resolved_name not in normalized_names:
             normalized_names.append(resolved_name)
     if unknown_names:
         valid_names = ", ".join(summary.name for summary in summaries)
