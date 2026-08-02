@@ -1,6 +1,6 @@
 ---
 name: report-slides
-description: Generate SVG presentation slides for research progress reports from research log entries, then optionally export to PPTX. Use when the user wants to make slides, create a presentation, or produce a visual report from experiment logs. Triggers on "make slides", "create presentation", "report slides", "generate deck", "export to pptx". Reads docs/research_log/ entries, proposes a slide outline for user confirmation, then generates files. Suggest /research-log add first if new experiments have not been logged yet.
+description: Use when creating presentations and research reports, especially diagram-heavy decks with architecture, flowcharts, timelines, charts, conceptual illustrations, or editable PPTX output.
 metadata:
   data_access_level: raw
   task_type: open-ended
@@ -8,12 +8,14 @@ metadata:
 
 # Report Slides
 
-Generates a slide deck from research log entries using three rendering paths:
+Generates a slide deck from research log entries using three source paths:
 - **[A]** `generate_slides.py` — data-driven slides (charts, tables, metrics)
 - **[B]** Mermaid (`mmdc`) — diagram slides (flowcharts, architectures, state machines)
 - **[C]** Claude SVG — free-form slides (conceptual layouts, text-heavy content)
 
-After generation, slides can optionally be packaged into a PPTX with native SVG embedding.
+Every non-trivial visual goes through the mandatory visual-authoring gate below.
+After generation, slides can optionally be exported as native editable PPTX shapes,
+with SVG embedding retained as the backward-compatible fallback.
 
 ---
 
@@ -30,7 +32,7 @@ bash "$(find ~/.claude -path "*/report-slides/scripts/setup.sh" | head -1)"
     Where-Object FullName -like "*report-slides*" | Select-Object -First 1).FullName
 ```
 
-This copies `generate_slides.py` into `scripts/` and creates `docs/slides/reports/`. `to_pptx.py` stays in the skill bundle and is invoked directly from there.
+This copies `generate_slides.py`, `validate_diagram_manifest.py`, and `render_review_sheet.py` into `scripts/` and creates both `docs/slides/reports/` and `docs/slides/assets/diagrams/`. `to_pptx.py` stays in the skill bundle and is invoked directly from there.
 
 **Auto-setup:** if you invoke `/report-slides` and `scripts/generate_slides.py` is missing, run the appropriate setup command automatically before proceeding — no need to ask the user.
 
@@ -92,7 +94,7 @@ When the user passes `--source academic` or selects "academic pipeline" as sourc
 2. Run the bridge script to extract stage data:
    ```bash
    BRIDGE="$(find ~/.claude -path "*/research-lab-skills/bridge/scripts/passport_to_log.py" 2>/dev/null | head -1)"
-   python "$BRIDGE" --passport docs/passport.yaml
+   python3 "$BRIDGE" --passport docs/passport.yaml
    ```
 3. Use the extracted stage records as input for slide generation instead of research-log entries
 
@@ -126,17 +128,93 @@ Proposed slide structure (N slides):
 
 #01  Title                   [C]
 #02  Background & Goal       [C: two_column]
-#03  Experiment Timeline     [B: Mermaid]
-#04  Changes                 [A: bullet_list]
-#05  Results                 [A: bar_chart]
-#06  Comparison              [A: table]
-#07  Architecture            [B: Mermaid]
+#03  Experiment Timeline     [A: bullet_list] [V:DATA]
+#04  Changes                 [A: bullet_list] [V:DATA]
+#05  Results                 [A: bar_chart]   [V:DATA]
+#06  Comparison              [A: table]       [V:DATA]
+#07  Architecture            [C: native SVG]  [V:NATIVE]
 #08  Conclusion & Next Steps [C: conclusion]
 
 [A] Python  [B] Mermaid  [C] Claude SVG
 
 Confirm? (say "ok" to proceed, or specify changes)
 ```
+
+### 3.1 Mandatory visual-authoring gate
+
+Immediately after outline confirmation, before drawing or generating any visual,
+run this ordered gate for every non-trivial visual, including charts and
+conceptual illustrations:
+
+1. **Plan:** create `diagram-plan.yaml` with one entry per visual.
+2. **Discover:** search project `manifest.yaml` files by purpose, diagram type,
+   and semantic regions before drawing.
+3. **Classify:** select exactly one route: native, data, generative, or hybrid,
+   and record its route tag.
+4. **Reference:** load only the relevant references below for the selected route.
+5. **Author:** create or modify a reusable source; resolve reuse, modification,
+   or derivation identity before route-specific generation.
+6. **Render:** render both the subfigure and the complete slide to pixels.
+7. **Review:** inspect both pixel renders with model vision, revise the source,
+   and repeat the render/vision loop until both gates pass.
+8. **Manifest:** validate the plan, each manifest, and the asset root:
+   `python3 scripts/validate_diagram_manifest.py --plan <plan>`,
+   `python3 scripts/validate_diagram_manifest.py --manifest <manifest>`, and
+   `python3 scripts/validate_diagram_manifest.py --root <asset-root>`.
+9. **native PPTX export and separate validation:** for a PPTX deliverable,
+   export native PPTX and report `SVG-preview`, `PPTX-structure`, and
+   `PPTX-render` statuses as separate validation stages. If PPTX export is not
+   requested, record the two PPTX stages as not requested rather than collapsing
+   them into preview.
+
+Missing rendering or model-vision review is a hard blocker: retain the failing
+artifact, record the blocker, and do not mark the visual or deck complete.
+
+### 3.2 Visual routes and references
+
+In `diagram-plan.yaml`, set the validator-facing `route` field. In
+`manifest.yaml`, set the validator-facing `authoring_route` field. Both fields
+must use exactly one enum value: `native`, `data`, `generative`, or `hybrid`.
+The bracketed values below are display/report/outline tags, not validator enum
+values:
+
+| Display/report/outline tag | Route and default |
+|---|---|
+| `[V:NATIVE]` | Editable SVG shapes and connectors; default for architecture and flowcharts. |
+| `[V:DATA]` | Deterministic data-driven SVG; default for timelines, statistical charts, and status/matrix views. |
+| `[V:AI]` | Runtime-generated raster illustration for conceptual visuals when native shapes are not sufficient. |
+| `[V:HYBRID]` | Runtime-generated raster base plus an editable SVG overlay for factual annotations and structure. |
+
+Direct native SVG is the default for editable architecture and flow diagrams.
+Mermaid is optional only when its output converts correctly; if conversion
+loses editability, disclose that loss in the manifest and completion report.
+Do not label an embedded or raster-only Mermaid result as `[V:NATIVE]`.
+
+Read only the references needed for the selected route and gate:
+
+- [diagram-workflow.md](references/diagram-workflow.md) — plans, manifests, identity, and completion records.
+- [diagram-patterns.md](references/diagram-patterns.md) — route recipes and failure checks.
+- [generative-visuals.md](references/generative-visuals.md) — runtime generation and reference edits.
+- [visual-review.md](references/visual-review.md) — pixel rendering, vision review, and blockers.
+
+### 3.3 Generation, reuse, and reporting contract
+
+- `[V:AI]` and `[V:HYBRID]` require runtime image generation for creation or
+  editing. For an edit, provide the earlier asset to the image-generation
+  capability and name every changed region and reason. Never substitute an
+  arbitrary web image or unrelated redraw.
+- Search manifests before authoring. Assets remain `reused` when unchanged,
+  including for placement-only changes. If the core message and model stay the same, modify
+  the same `diagram_id` with `based_on_revision` only for a content/layout
+  revision. A changed core message or model derives a new ID with `derived_from`.
+  Missing generation capability, an edit reference, rendering, vision, or
+  factual input blocks the affected visual; do not silently fall back.
+- The completion report records, for every visual: `diagram_type`, `slide`,
+  `authoring_route` and route tag, `diagram_id`, action (`created`, `reused`,
+  `modified`, or `derived`), reused source, changed regions with reasons,
+  editability, review rounds, separate `SVG-preview`/`PPTX-structure`/
+  `PPTX-render` statuses, remaining raster layers, and the rationale for each
+  raster layer.
 
 **Dynamic inclusion rules:**
 - Timeline: only with ≥2 entries linked via `follows:`
@@ -170,16 +248,16 @@ Output directory: `docs/slides/reports/YYYY-MM-DD_<name>/`
 
 ---
 
-#### [A] Python renderer
+#### [A] Python renderer — usually [V:DATA]
 
 **Supported types:** `title` `bullet_list` `bar_chart` `table` `metric_cards` `two_column` `timeline` `conclusion` `score_trajectory` `pipeline_status`
 
 Write `slide_data.json` then run:
 ```bash
-python scripts/generate_slides.py --data <dir>/slide_data.json --out <dir>/ \
+python3 scripts/generate_slides.py --data <dir>/slide_data.json --out <dir>/ \
     ${STYLE_FILE:+--style "$STYLE_FILE"}
 # Re-render one slide:
-python scripts/generate_slides.py --data <dir>/slide_data.json --out <dir>/ --slide N \
+python3 scripts/generate_slides.py --data <dir>/slide_data.json --out <dir>/ --slide N \
     ${STYLE_FILE:+--style "$STYLE_FILE"}
 ```
 
@@ -256,7 +334,7 @@ Only include [A] slides in `slide_data.json`.
 
 ---
 
-#### [B] Mermaid
+#### [B] Mermaid (optional source for [V:NATIVE])
 
 Write a `.mmd` file then convert:
 ```bash
@@ -268,13 +346,17 @@ mmdc -i <dir>/slideNN.mmd -o <dir>/slideNN_diagram.svg \
      --theme neutral --width 1200 --height 675
 ```
 
-If `mmdc` is unavailable: fall back to [C] for that slide and note it in the summary.
+Use Mermaid only when its output converts correctly to the selected editable
+route. If `mmdc` is unavailable, fall back to [C] for that slide and note the
+route and editability in the summary. If the conversion yields only an
+embedded or raster result, disclose the editability loss instead of calling it
+`[V:NATIVE]`.
 
 Prefer `flowchart LR` for pipelines, `flowchart TD` for training stages, `stateDiagram-v2` for state machines.
 
 ---
 
-#### [C] Claude SVG
+#### [C] Claude SVG — [V:NATIVE], [V:AI], or [V:HYBRID] source
 
 Write SVG directly. If `STYLE_FILE` is set, read it and load `references/styles/STYLES.md` for the full
 role descriptions; otherwise use the defaults in the table below.
@@ -293,7 +375,7 @@ role descriptions; otherwise use the defaults in the table below.
 | `warn` | Caution values | `#d97706` |
 | `danger` | Error / regression values | `#dc2626` |
 
-Rules: no `<image>` tags; escape `&` `<` `>` in text; split long text with `<tspan dy="...">`.
+Rules for `[V:NATIVE]`: no `<image>` tags; escape `&` `<` `>` in text; split long text with `<tspan dy="...">`. `[V:AI]` keeps the generated PNG/JPG as a separate raster base. `[V:HYBRID]` composes that raster base with an editable SVG overlay in the same `1200x675` coordinate system. For `[V:AI]` and `[V:HYBRID]`, do not put factual labels, legends, or values in generated pixels. Native PPTX exports overlay elements as separate shapes when supported, while embed/fallback output must disclose remaining raster layers and editability loss.
 
 ---
 
@@ -330,7 +412,7 @@ Native mode converts every SVG element to editable shapes: rectangles, ovals, te
 ```bash
 python3 -m svg_to_pptx --slides output/ --out deck.pptx --mode embed
 # or equivalently:
-python "" \
+python3 to_pptx.py \
     --slides docs/slides/reports/YYYY-MM-DD_<name>/ \
     --out    docs/slides/reports/YYYY-MM-DD_<name>/deck.pptx
 ```
@@ -343,6 +425,10 @@ Only `python-pptx` and `lxml` required — no cairosvg, Pillow, or image convert
 
 After all slides are generated, print:
 - Output directory and slide list with rendering path tags ([A] / [B] / [C])
+- One completion record per non-trivial visual with its route tag, `diagram_id`,
+  type, slide, action, reused source, changed regions and reasons, editability,
+  review rounds, separate SVG-preview/PPTX-structure/PPTX-render statuses, and
+  remaining raster layers with their rationale
 - `slide_data.json` re-render tip for [A] slides
 - `chart_list.md` note if applicable
 - Updated log files
