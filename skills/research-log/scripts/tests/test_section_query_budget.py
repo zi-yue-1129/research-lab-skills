@@ -150,10 +150,92 @@ def test_lower_budget_and_metadata_overflow_are_typed(tmp_path: Path) -> None:
     assert error["ok"] is False
     diagnostic = error["error"]
     assert diagnostic["code"] == "metadata_exceeds_budget"
-    assert set(diagnostic) == {"code", "details"}
+    assert set(diagnostic) == {"code", "message", "details"}
+    assert isinstance(diagnostic["message"], str)
+    assert diagnostic["message"]
     assert diagnostic["details"]["budget"] == 1
     assert diagnostic["details"]["estimated_tokens"] > 1
-    assert _estimated_tokens(error) < 40
+
+
+def test_search_fit_indicator_matches_single_fetch_at_multiple_budgets(
+    tmp_path: Path,
+) -> None:
+    """Calculate fetch fit from the active search budget and full response."""
+    log_dir = tmp_path / "research_log"
+    log_dir.mkdir()
+    _write_log(
+        log_dir,
+        "large.md",
+        "---\ndate: 2026-08-02\nexperiment: large\n---\n## Analysis\n"
+        + ("x" * 7_500)
+        + "\n",
+    )
+
+    for budget, expected_fit in ((1_000, False), (4_000, True)):
+        search = _payload(
+            _run(
+                "search",
+                "--dir",
+                str(log_dir),
+                "--sections",
+                "Analysis",
+                "--budget",
+                str(budget),
+            )
+        )
+        fetch = _payload(
+            _run(
+                "fetch",
+                "--dir",
+                str(log_dir),
+                "--ids",
+                "large::analysis",
+                "--budget",
+                str(budget),
+            )
+        )
+
+        assert search["matches"][0]["fits_fetch_budget"] is expected_fit
+        assert (fetch["status"] == "complete") is expected_fit
+
+
+def test_search_fit_indicator_includes_single_fetch_metadata(tmp_path: Path) -> None:
+    """Mark a body as oversized when its complete fetch envelope cannot fit."""
+    log_dir = tmp_path / "research_log"
+    log_dir.mkdir()
+    body = ("x" * 2_400) + "\n"
+    _write_log(
+        log_dir,
+        "metadata-boundary.md",
+        "---\ndate: 2026-08-02\nexperiment: boundary\n---\n## Analysis\n" + body,
+    )
+
+    search = _payload(
+        _run(
+            "search",
+            "--dir",
+            str(log_dir),
+            "--sections",
+            "Analysis",
+            "--budget",
+            "700",
+        )
+    )
+    fetch = _payload(
+        _run(
+            "fetch",
+            "--dir",
+            str(log_dir),
+            "--ids",
+            "metadata-boundary::analysis",
+            "--budget",
+            "700",
+        )
+    )
+
+    assert search["matches"][0]["estimated_body_tokens"] < 700
+    assert search["matches"][0]["fits_fetch_budget"] is False
+    assert fetch["status"] == "chunk_required"
 
 
 def test_cursors_are_opaque_and_reject_changed_query_or_journal(tmp_path: Path) -> None:
@@ -278,6 +360,48 @@ def test_fetch_overflow_returns_no_partial_body_and_safe_batches(tmp_path: Path)
         ))
         assert response["status"] == "complete"
         assert response["budget"]["estimated_tokens"] == batch["estimated_tokens"]
+
+
+def test_mixed_fetch_disposes_every_requested_id_without_partial_bodies(
+    tmp_path: Path,
+) -> None:
+    """Return a chunk cursor or safe batch disposition for every mixed ID."""
+    log_dir = tmp_path / "research_log"
+    log_dir.mkdir()
+    _write_log(
+        log_dir,
+        "mixed.md",
+        "---\ndate: 2026-08-02\nexperiment: mixed\n---\n"
+        f"## Goal\n{'x' * 10_000}\n"
+        "## Analysis\nSmall analysis.\n",
+    )
+    requested_ids = ["mixed::goal", "mixed::analysis"]
+
+    payload = _payload(
+        _run(
+            "fetch",
+            "--dir",
+            str(log_dir),
+            "--ids",
+            *requested_ids,
+            "--budget",
+            "1800",
+        )
+    )
+
+    assert payload["status"] == "overflow"
+    assert payload["requested_ids"] == requested_ids
+    assert "items" not in payload
+    dispositions = payload["item_dispositions"]
+    assert [item["id"] for item in dispositions] == requested_ids
+    assert dispositions[0]["status"] == "chunk_required"
+    assert isinstance(dispositions[0]["chunk_cursor"], str)
+    assert dispositions[1] == {
+        "id": "mixed::analysis",
+        "status": "suggested_batch",
+        "batch_index": 0,
+    }
+    assert payload["suggested_batches"][0]["ids"] == ["mixed::analysis"]
 
 
 def test_oversized_section_chunks_reconstruct_exact_body(tmp_path: Path) -> None:

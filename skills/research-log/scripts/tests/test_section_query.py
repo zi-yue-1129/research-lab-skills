@@ -168,6 +168,35 @@ Still results.
     assert "Nested Detail" not in by_name
 
 
+def test_scanner_excludes_nested_markdown_logs(tmp_path: Path) -> None:
+    """Scan only top-level Markdown logs and avoid nested stem collisions."""
+    log_dir = tmp_path / "research_log"
+    log_dir.mkdir()
+    _write_log(log_dir, "run.md", "## Goal\nTop-level.\n")
+    for directory_name in ("archive-a", "archive-b"):
+        nested_dir = log_dir / directory_name
+        nested_dir.mkdir()
+        _write_log(nested_dir, "run.md", "## Analysis\nNested.\n")
+
+    payload = _payload(_run("types", "--dir", str(log_dir)))
+    by_name = {item["name"]: item for item in payload["types"]}
+
+    assert by_name["Goal"]["result_ids"] == ["run::goal"]
+    assert by_name["Analysis"]["occurrence_count"] == 0
+    assert payload["warnings"] == [
+        {
+            "code": "missing_experiment",
+            "path": "run.md",
+            "message": "Missing experiment frontmatter field.",
+        },
+        {
+            "code": "missing_date",
+            "path": "run.md",
+            "message": "Missing date frontmatter field.",
+        },
+    ]
+
+
 def test_repeated_headings_receive_incrementing_occurrence_identifiers(tmp_path: Path) -> None:
     """Give repeated normalized headings stable, distinct occurrence IDs."""
     log_dir = tmp_path / "research_log"
@@ -201,11 +230,18 @@ def test_missing_experiment_warns_without_filename_fallback(tmp_path: Path) -> N
 
     payload = _payload(_run("types", "--dir", str(log_dir)))
 
-    assert payload["warnings"] == [{
-        "code": "missing_experiment",
-        "path": "2026-01-02_run.md",
-        "message": "Missing experiment frontmatter field.",
-    }]
+    assert payload["warnings"] == [
+        {
+            "code": "missing_experiment",
+            "path": "2026-01-02_run.md",
+            "message": "Missing experiment frontmatter field.",
+        },
+        {
+            "code": "missing_date",
+            "path": "2026-01-02_run.md",
+            "message": "Missing date frontmatter field.",
+        },
+    ]
     assert payload["types"][0]["log_count"] == 1
 
 
@@ -244,6 +280,25 @@ def test_invalid_utf8_returns_json_error(tmp_path: Path) -> None:
     assert payload["error"]["code"] == "invalid_utf8"
     assert payload["error"]["details"] == {
         "path": str(log_dir / "2026-01-02_run.md"),
+    }
+
+
+def test_source_read_failure_returns_json_error(tmp_path: Path) -> None:
+    """Translate source read failures without a traceback or stderr output."""
+    log_dir = tmp_path / "research_log"
+    log_dir.mkdir()
+    unreadable_path = _write_log(log_dir, "unreadable.md", "## Goal\nBlocked.\n")
+    unreadable_path.chmod(0)
+    try:
+        result = _run("types", "--dir", str(log_dir))
+    finally:
+        unreadable_path.chmod(0o600)
+
+    payload = _error_payload(result)
+    assert payload["error"] == {
+        "code": "source_read_error",
+        "message": f"Could not read {unreadable_path}.",
+        "details": {"path": str(unreadable_path)},
     }
 
 
@@ -427,15 +482,7 @@ def test_expected_errors_use_standard_json_envelope(
 
     operation, *remaining_arguments = arguments
     result = _run(operation, "--dir", str(log_dir), *remaining_arguments)
-    if expected_code == "metadata_exceeds_budget":
-        assert result.returncode != 0
-        assert result.stderr == ""
-        error: dict[str, Any] = json.loads(result.stdout)
-        assert error["ok"] is False
-        assert set(error["error"]) == {"code", "details"}
-        assert isinstance(error["error"]["details"], dict)
-    else:
-        error = _error_payload(result)
+    error = _error_payload(result)
 
     assert error["error"]["code"] == expected_code
 

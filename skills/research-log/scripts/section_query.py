@@ -4,10 +4,9 @@
 from __future__ import annotations
 
 import argparse
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict
 from datetime import date
-from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -15,15 +14,12 @@ from section_query_budget import (
     DEFAULT_BUDGET,
     MAX_BUDGET,
     BudgetError,
-    ChunkPlan,
     CursorError,
     Page,
     decode_cursor,
     encode_cursor,
     estimate_json_tokens,
     paginate_records,
-    plan_batches,
-    plan_chunks,
     query_fingerprint,
     serialize_json,
 )
@@ -34,14 +30,12 @@ from section_query_core import (
     ScanResult,
     SectionOccurrence,
     discover_types,
-    manifest_record,
     normalize_heading,
     resolve_date_bounds,
     scan_journal,
     search_sections,
 )
-
-_MANIFEST_FETCH_BUDGET = 1_000
+from section_query_fetch import build_fetch_response, manifest_record_for_budget
 
 
 class QueryCliError(Exception):
@@ -109,7 +103,7 @@ def main(arguments: list[str] | None = None) -> int:
         arguments: Optional command-line arguments excluding the executable name.
 
     Returns:
-        Zero for a successful query and one for a typed JSON error.
+        Zero for a successful query or a non-zero status for a typed JSON error.
     """
     parser = _build_parser()
     try:
@@ -130,7 +124,7 @@ def main(arguments: list[str] | None = None) -> int:
         _emit(error_payload(error))
         return error.exit_status
     except JournalReadError as error:
-        _emit_error(QueryCliError("invalid_utf8", str(error), {"path": str(error.path)}))
+        _emit_error(QueryCliError(error.code, str(error), {"path": str(error.path)}))
         return 1
     except QueryInputError as error:
         _emit_error(QueryCliError(error.code, str(error)))
@@ -235,21 +229,11 @@ def _validate_budget(budget: int) -> int:
 
 
 def _emit_budget_error(error: BudgetError) -> None:
-    """Print a compact control-plane diagnostic for a budget failure.
-
-    Successful data responses are budgeted by their complete serialized JSON.
-    Only a metadata-overflow error stays compact because its requested ceiling
-    cannot represent the full standard error envelope.
+    """Print a standard structured diagnostic for a budget failure.
 
     Args:
         error: Typed budget failure to expose to the command caller.
     """
-    if error.code == "metadata_exceeds_budget":
-        _emit({
-            "ok": False,
-            "error": {"code": error.code, "details": error.details},
-        })
-        return
     _emit_error(QueryCliError(error.code, str(error), error.details))
 
 
@@ -364,7 +348,10 @@ def _run_search(
         scan.journal_fingerprint,
         budget,
     )
-    records = [manifest_record(section, _MANIFEST_FETCH_BUDGET) for section in matches]
+    records = [
+        manifest_record_for_budget(section, scan.journal_fingerprint, budget)
+        for section in matches
+    ]
     base_payload: dict[str, object] = {
         "ok": True,
         "query": query,
@@ -404,324 +391,14 @@ def _run_fetch(
         CursorError: A chunk cursor is malformed, stale, or mismatched.
         BudgetError: Required fetch control metadata cannot fit the budget.
     """
-    if parsed_arguments.chunk_cursor is not None:
-        _emit(_fetch_chunk_response(
-            parsed_arguments.chunk_cursor, scan, log_directory, budget
-        ))
-        return 0
-
-    requested_ids = tuple(parsed_arguments.ids)
-    _validate_fetch_ids(requested_ids, scan)
-    sections_by_id = {section.result_id: section for section in scan.sections}
-    requested_sections = tuple(sections_by_id[item_id] for item_id in requested_ids)
-
-    def complete_response(item_ids: Sequence[str]) -> dict[str, object]:
-        """Build the complete response a caller would receive for one batch."""
-        batch_sections = tuple(sections_by_id[item_id] for item_id in item_ids)
-        return _complete_fetch_payload(batch_sections, scan.journal_fingerprint, budget)
-
-    complete_payload = complete_response(requested_ids)
-    if estimate_json_tokens(complete_payload) <= budget:
-        _emit(complete_payload)
-        return 0
-
-    for section in requested_sections:
-        if estimate_json_tokens(complete_response((section.result_id,))) > budget:
-            _emit(_chunk_required_payload(section, scan, log_directory, budget))
-            return 0
-
-    batches = plan_batches(requested_ids, complete_response, budget)
-    item_sizes = [
-        {
-            "id": section.result_id,
-            "estimated_tokens": estimate_json_tokens(complete_response((section.result_id,))),
-        }
-        for section in requested_sections
-    ]
-    overflow_payload = _sized_payload(lambda estimated_tokens: {
-        "ok": True,
-        "status": "overflow",
-        "requested_ids": list(requested_ids),
-        "item_sizes": item_sizes,
-        "suggested_batches": list(batches),
-        "journal_fingerprint": scan.journal_fingerprint,
-        "budget": {"limit": budget, "estimated_tokens": estimated_tokens},
-    })
-    _require_budget(overflow_payload, budget)
-    _emit(overflow_payload)
+    _emit(build_fetch_response(
+        parsed_arguments.ids,
+        parsed_arguments.chunk_cursor,
+        scan,
+        log_directory,
+        budget,
+    ))
     return 0
-
-
-def _validate_fetch_ids(item_ids: Sequence[str], scan: ScanResult) -> None:
-    """Reject duplicate or unknown full-text section identifiers.
-
-    Args:
-        item_ids: Requested IDs in caller-provided order.
-        scan: Current journal scan used as the authoritative ID source.
-
-    Raises:
-        QueryInputError: The request contains duplicate or unknown IDs.
-    """
-    if len(set(item_ids)) != len(item_ids):
-        raise QueryInputError("duplicate_ids", "Fetch requests must not repeat an ID.")
-    known_ids = {section.result_id for section in scan.sections}
-    unknown_ids = [item_id for item_id in item_ids if item_id not in known_ids]
-    if unknown_ids:
-        raise QueryInputError(
-            "invalid_result_id", f"Unknown section IDs: {', '.join(unknown_ids)}."
-        )
-
-
-def _complete_fetch_payload(
-    sections: Sequence[SectionOccurrence], journal_fingerprint: str, budget: int
-) -> dict[str, object]:
-    """Build one fixed-point-sized complete full-text fetch response.
-
-    Args:
-        sections: Exact source occurrences to include in requested order.
-        journal_fingerprint: Fingerprint of the scan that supplied the bodies.
-        budget: Active response budget.
-
-    Returns:
-        Complete response containing every requested body and its provenance.
-    """
-    items = [_full_item(section, budget) for section in sections]
-    requested_ids = [section.result_id for section in sections]
-    return _sized_payload(lambda estimated_tokens: {
-        "ok": True,
-        "status": "complete",
-        "requested_ids": requested_ids,
-        "items": items,
-        "journal_fingerprint": journal_fingerprint,
-        "budget": {"limit": budget, "estimated_tokens": estimated_tokens},
-    })
-
-
-def _full_item(section: SectionOccurrence, budget: int) -> dict[str, object]:
-    """Build a full-text item while preserving manifest provenance.
-
-    Args:
-        section: Exact source occurrence to return.
-        budget: Active budget used for the provenance fit indicator.
-
-    Returns:
-        Manifest provenance augmented with the exact unmodified section body.
-    """
-    item = manifest_record(section, budget)
-    item["body"] = section.body
-    return item
-
-
-def _chunk_required_payload(
-    section: SectionOccurrence,
-    scan: ScanResult,
-    log_directory: Path,
-    budget: int,
-) -> dict[str, object]:
-    """Build a body-free control response for one oversized section.
-
-    Args:
-        section: Oversized occurrence that requires exact chunks.
-        scan: Current journal scan bound into the chunk cursor.
-        log_directory: Resolved journal directory bound into the cursor.
-        budget: Active response budget.
-
-    Returns:
-        Budget-safe control response with the initial chunk cursor.
-    """
-    body_fingerprint = _body_fingerprint(section.body)
-    chunk_cursor = _encode_chunk_cursor(
-        section.result_id, body_fingerprint, log_directory, scan.journal_fingerprint, 0, budget
-    )
-    payload = _sized_payload(lambda estimated_tokens: {
-        "ok": True,
-        "status": "chunk_required",
-        "requested_ids": [section.result_id],
-        "item": manifest_record(section, budget),
-        "chunk_cursor": chunk_cursor,
-        "journal_fingerprint": scan.journal_fingerprint,
-        "budget": {"limit": budget, "estimated_tokens": estimated_tokens},
-    })
-    _require_budget(payload, budget)
-    return payload
-
-
-def _fetch_chunk_response(
-    cursor_text: str, scan: ScanResult, log_directory: Path, budget: int
-) -> dict[str, object]:
-    """Validate a chunk cursor and emit its exact source substring.
-
-    Args:
-        cursor_text: Opaque chunk cursor supplied by the caller.
-        scan: Current scan used to validate source freshness and resolve IDs.
-        log_directory: Resolved journal directory bound into cursors.
-        budget: Active response budget.
-
-    Returns:
-        One budget-safe exact body chunk and an optional continuation cursor.
-
-    Raises:
-        CursorError: Cursor binding or continuation index is not valid.
-        BudgetError: Chunk response metadata cannot fit the active budget.
-    """
-    cursor = decode_cursor(cursor_text)
-    if cursor["kind"] != "fetch_chunk":
-        raise CursorError("cursor_kind_mismatch", "Cursor belongs to a different command.")
-    if cursor["directory"] != str(log_directory):
-        raise CursorError("cursor_directory_mismatch", "Cursor belongs to a different directory.")
-    if cursor["journal_fingerprint"] != scan.journal_fingerprint:
-        raise CursorError("cursor_journal_mismatch", "Journal contents changed after cursor creation.")
-    if cursor["budget"] != budget:
-        raise CursorError("cursor_budget_mismatch", "Cursor budget does not match the request.")
-    sections_by_id = {section.result_id: section for section in scan.sections}
-    result_id = cursor["result_id"]
-    section = sections_by_id.get(result_id)
-    if section is None:
-        raise CursorError("cursor_journal_mismatch", "Cursor section no longer exists.")
-    body_fingerprint = _body_fingerprint(section.body)
-    if cursor["body_fingerprint"] != body_fingerprint:
-        raise CursorError("cursor_body_mismatch", "Section body changed after cursor creation.")
-    chunk_plan = _chunk_plan(section, scan, log_directory, budget, body_fingerprint)
-    range_index = cursor["range_index"]
-    if range_index >= len(chunk_plan.ranges):
-        raise CursorError("cursor_invalid", "Cursor continuation index is out of range.")
-    start, end = chunk_plan.ranges[range_index]
-    total_chunks = len(chunk_plan.ranges)
-    next_cursor = (
-        _encode_chunk_cursor(
-            section.result_id, body_fingerprint, log_directory, scan.journal_fingerprint,
-            range_index + 1, budget,
-        )
-        if range_index + 1 < total_chunks else None
-    )
-    payload = _chunk_payload(
-        section, start, end, range_index, total_chunks, next_cursor,
-        scan.journal_fingerprint, budget,
-    )
-    _require_budget(payload, budget)
-    return payload
-
-
-def _chunk_plan(
-    section: SectionOccurrence,
-    scan: ScanResult,
-    log_directory: Path,
-    budget: int,
-    body_fingerprint: str,
-) -> ChunkPlan:
-    """Plan exact source ranges using the same complete response as retrieval.
-
-    Args:
-        section: Oversized source occurrence to partition.
-        scan: Current scan bound into continuation cursors.
-        log_directory: Resolved journal directory bound into cursors.
-        budget: Active response budget.
-        body_fingerprint: SHA-256 fingerprint of the exact section body.
-
-    Returns:
-        Stable exact source ranges for the oversized body.
-    """
-    def build_chunk(
-        start: int, end: int, chunk_index: int, total_chunks: int
-    ) -> dict[str, object]:
-        """Build the precise response candidate used for budget planning."""
-        next_cursor = (
-            _encode_chunk_cursor(
-                section.result_id, body_fingerprint, log_directory, scan.journal_fingerprint,
-                chunk_index + 1, budget,
-            )
-            if chunk_index + 1 < total_chunks else None
-        )
-        return _chunk_payload(
-            section, start, end, chunk_index, total_chunks, next_cursor,
-            scan.journal_fingerprint, budget,
-        )
-
-    return plan_chunks(section.body, build_chunk, budget)
-
-
-def _chunk_payload(
-    section: SectionOccurrence,
-    start: int,
-    end: int,
-    chunk_index: int,
-    total_chunks: int,
-    next_cursor: str | None,
-    journal_fingerprint: str,
-    budget: int,
-) -> dict[str, object]:
-    """Build one fixed-point-sized exact source chunk response."""
-    return _sized_payload(lambda estimated_tokens: {
-        "ok": True,
-        "status": "chunk",
-        "id": section.result_id,
-        "journal_fingerprint": journal_fingerprint,
-        "chunk": {
-            "label": f"chunk {chunk_index + 1}/{total_chunks}",
-            "start": start,
-            "end": end,
-            "text": section.body[start:end],
-        },
-        "next_chunk_cursor": next_cursor,
-        "budget": {"limit": budget, "estimated_tokens": estimated_tokens},
-    })
-
-
-def _encode_chunk_cursor(
-    result_id: str,
-    body_fingerprint: str,
-    log_directory: Path,
-    journal_fingerprint: str,
-    range_index: int,
-    budget: int,
-) -> str:
-    """Encode a cursor bound to exact content, source state, and budget."""
-    return encode_cursor({
-        "version": 1,
-        "kind": "fetch_chunk",
-        "result_id": result_id,
-        "body_fingerprint": body_fingerprint,
-        "directory": str(log_directory),
-        "journal_fingerprint": journal_fingerprint,
-        "range_index": range_index,
-        "budget": budget,
-    })
-
-
-def _body_fingerprint(body: str) -> str:
-    """Return the SHA-256 digest of exact UTF-8 section source text."""
-    return sha256(body.encode("utf-8")).hexdigest()
-
-
-def _sized_payload(
-    payload_builder: Callable[[int], dict[str, object]],
-) -> dict[str, object]:
-    """Build a response whose embedded token estimate reaches a fixed point.
-
-    Args:
-        payload_builder: Callable accepting the current estimate and returning a payload.
-
-    Returns:
-        Complete JSON-compatible payload with an exact size estimate.
-    """
-    estimated_tokens = 0
-    while True:
-        payload = payload_builder(estimated_tokens)
-        calculated_tokens = estimate_json_tokens(payload)
-        if calculated_tokens == estimated_tokens:
-            return payload
-        estimated_tokens = calculated_tokens
-
-
-def _require_budget(payload: Mapping[str, object], budget: int) -> None:
-    """Raise a typed error when a body-free fetch control response is too large."""
-    estimated_tokens = estimate_json_tokens(payload)
-    if estimated_tokens > budget:
-        raise BudgetError(
-            "metadata_exceeds_budget",
-            "Fetch response metadata exceeds the requested budget.",
-            {"budget": budget, "estimated_tokens": estimated_tokens},
-        )
 
 
 def _cursor_start_index(

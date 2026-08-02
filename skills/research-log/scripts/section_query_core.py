@@ -95,16 +95,19 @@ class DateBounds:
 
 
 class JournalReadError(Exception):
-    """Report a log file that cannot be decoded as UTF-8."""
+    """Report a log file that cannot be read or decoded."""
 
-    def __init__(self, path: Path) -> None:
-        """Initialize the decoding failure for one log path.
+    def __init__(self, code: str, path: Path, message: str) -> None:
+        """Initialize a typed source failure for one log path.
 
         Args:
-            path: Path of the invalid UTF-8 log.
+            code: Stable public identifier for the source failure.
+            path: Path of the unreadable or invalid UTF-8 log.
+            message: Stable human-readable explanation of the failure.
         """
+        self.code = code
         self.path = path
-        super().__init__(f"Could not decode {path} as UTF-8.")
+        super().__init__(message)
 
 
 class QueryInputError(ValueError):
@@ -151,14 +154,14 @@ def scan_journal(log_dir: Path) -> ScanResult:
         Parsed section occurrences, metadata warnings, and a content fingerprint.
 
     Raises:
-        JournalReadError: A selected Markdown file is not valid UTF-8.
+        JournalReadError: A selected Markdown file cannot be read or decoded.
     """
     if not log_dir.is_dir():
         return ScanResult((), (), sha256().hexdigest())
 
     markdown_paths = sorted(
         (
-            path for path in log_dir.rglob("*.md")
+            path for path in log_dir.glob("*.md")
             if path.is_file() and path.name not in _EXCLUDED_NAMES
         ),
         key=lambda path: path.relative_to(log_dir).as_posix(),
@@ -168,14 +171,21 @@ def scan_journal(log_dir: Path) -> ScanResult:
     all_warnings: list[QueryWarning] = []
     for path in markdown_paths:
         relative_path = path.relative_to(log_dir).as_posix()
-        content_bytes = path.read_bytes()
+        try:
+            content_bytes = path.read_bytes()
+        except OSError as error:
+            raise JournalReadError(
+                "source_read_error", path, f"Could not read {path}."
+            ) from error
         digest.update(relative_path.encode("utf-8"))
         digest.update(b"\0")
         digest.update(content_bytes)
         try:
             text = content_bytes.decode("utf-8")
         except UnicodeDecodeError as error:
-            raise JournalReadError(path) from error
+            raise JournalReadError(
+                "invalid_utf8", path, f"Could not decode {path} as UTF-8."
+            ) from error
         sections, warnings = _scan_log(path, relative_path, text)
         all_sections.extend(sections)
         all_warnings.extend(warnings)
@@ -281,21 +291,19 @@ def search_sections(
     return tuple(sorted(matching_sections, key=_section_sort_key))
 
 
-def manifest_record(section: SectionOccurrence, budget: int) -> dict[str, object]:
+def manifest_record(
+    section: SectionOccurrence, fits_fetch_budget: bool
+) -> dict[str, object]:
     """Build a source-preserving summary without returning the full body.
 
     Args:
         section: Section occurrence to summarize.
-        budget: Maximum estimated body tokens allowed for a future fetch.
+        fits_fetch_budget: Whether a complete single-item fetch response fits.
 
     Returns:
         Stable manifest fields excluding the section body.
 
-    Raises:
-        ValueError: The supplied fetch budget is negative.
     """
-    if budget < 0:
-        raise ValueError("Fetch budget must be non-negative.")
     normalized_body = " ".join(section.body.split())
     estimated_tokens = (len(section.body) + 3) // 4
     return {
@@ -310,7 +318,7 @@ def manifest_record(section: SectionOccurrence, budget: int) -> dict[str, object
         "body_chars": len(section.body),
         "estimated_body_tokens": estimated_tokens,
         "preview": normalized_body[:160],
-        "fits_fetch_budget": estimated_tokens <= budget,
+        "fits_fetch_budget": fits_fetch_budget,
     }
 
 
@@ -386,8 +394,11 @@ def _unquote_scalar(value: str) -> str:
 def _parse_date(
     raw_date: str | None, relative_path: str, warnings: list[QueryWarning]
 ) -> date | None:
-    """Parse a scalar date and add a warning when it is malformed."""
+    """Parse a scalar date and warn when it is missing or malformed."""
     if raw_date is None:
+        warnings.append(QueryWarning(
+            "missing_date", relative_path, "Missing date frontmatter field."
+        ))
         return None
     try:
         return date.fromisoformat(raw_date)
