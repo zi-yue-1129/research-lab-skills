@@ -34,6 +34,35 @@ def _payload(result: subprocess.CompletedProcess[str]) -> dict[str, Any]:
     return payload
 
 
+def _assert_empty_types_payload(payload: dict[str, Any]) -> None:
+    """Assert the successful zero-count taxonomy response contract."""
+    assert payload["warnings"] == []
+    assert [item["name"] for item in payload["types"]] == [
+        "Goal", "Changes", "Setup", "Results", "Failures",
+        "Analysis", "Charts", "Conclusion", "Next Steps",
+    ]
+    for type_summary in payload["types"]:
+        assert type_summary["occurrence_count"] == 0
+        assert type_summary["log_count"] == 0
+
+
+def test_types_returns_empty_canonical_taxonomy_for_missing_directory(tmp_path: Path) -> None:
+    """Return a successful zero-count taxonomy when the directory is absent."""
+    payload = _payload(_run("types", "--dir", str(tmp_path / "missing")))
+
+    _assert_empty_types_payload(payload)
+
+
+def test_types_returns_empty_canonical_taxonomy_for_empty_directory(tmp_path: Path) -> None:
+    """Return a successful zero-count taxonomy when the directory is empty."""
+    log_dir = tmp_path / "research_log"
+    log_dir.mkdir()
+
+    payload = _payload(_run("types", "--dir", str(log_dir)))
+
+    _assert_empty_types_payload(payload)
+
+
 def test_types_lists_canonical_first_and_discovers_custom(tmp_path: Path) -> None:
     """List zero-count canonical types before discovered custom headings."""
     log_dir = tmp_path / "research_log"
