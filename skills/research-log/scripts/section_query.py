@@ -1,15 +1,28 @@
 #!/usr/bin/env python3
-"""Expose research-log section discovery through a JSON command-line interface."""
+"""Expose budgeted research-log section queries through a JSON CLI."""
 
 from __future__ import annotations
 
 import argparse
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict
 from datetime import date
-import json
 from pathlib import Path
 from typing import Any
 
+from section_query_budget import (
+    DEFAULT_BUDGET,
+    MAX_BUDGET,
+    BudgetError,
+    CursorError,
+    Page,
+    decode_cursor,
+    encode_cursor,
+    estimate_json_tokens,
+    paginate_records,
+    query_fingerprint,
+    serialize_json,
+)
 from section_query_core import (
     JournalReadError,
     QueryWarning,
@@ -33,20 +46,16 @@ def main(arguments: list[str] | None = None) -> int:
         arguments: Optional command-line arguments excluding the executable name.
 
     Returns:
-        Zero for a successful query and one for a typed read error.
+        Zero for a successful query and one for a typed JSON error.
     """
     parser = argparse.ArgumentParser(
         description="Discover and search section types used in research logs."
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
     types_parser = subparsers.add_parser("types", help="List discovered section types.")
-    types_parser.add_argument(
-        "--dir", default="docs/research_log", metavar="PATH", help="Research-log directory."
-    )
+    _add_pagination_arguments(types_parser)
     search_parser = subparsers.add_parser("search", help="Search sections by type and date.")
-    search_parser.add_argument(
-        "--dir", default="docs/research_log", metavar="PATH", help="Research-log directory."
-    )
+    _add_pagination_arguments(search_parser)
     search_parser.add_argument(
         "--sections", nargs="+", required=True, metavar="SECTION", help="Section types to include."
     )
@@ -57,51 +66,132 @@ def main(arguments: list[str] | None = None) -> int:
     search_parser.add_argument("--to", dest="to_text", metavar="YYYY-MM-DD", help="Inclusive ISO upper bound.")
     search_parser.add_argument("--today", metavar="YYYY-MM-DD", help="Reference date for reproducible ranges.")
     parsed_arguments = parser.parse_args(arguments)
-
     try:
-        scan = scan_journal(Path(parsed_arguments.dir))
+        budget = _validate_budget(parsed_arguments.budget)
+        log_directory = Path(parsed_arguments.dir).resolve()
+        scan = scan_journal(log_directory)
+        if parsed_arguments.command == "types":
+            return _run_types(scan, log_directory, budget, parsed_arguments.cursor)
+        if parsed_arguments.command == "search":
+            return _run_search(
+                parser, parsed_arguments, scan, log_directory, budget
+            )
     except JournalReadError as error:
         _emit({
             "ok": False,
             "error": {"code": "invalid_utf8", "path": str(error.path), "message": str(error)},
         })
         return 1
-    if parsed_arguments.command == "types":
-        return _run_types(scan)
-    if parsed_arguments.command == "search":
-        return _run_search(parser, parsed_arguments, scan)
+    except BudgetError as error:
+        _emit({
+            "ok": False,
+            "error": {"code": error.code, "message": str(error), "details": error.details},
+        })
+        return 1
+    except CursorError as error:
+        _emit({
+            "ok": False,
+            "error": {"code": error.code, "message": str(error)},
+        })
+        return 1
     parser.error(f"Unsupported command: {parsed_arguments.command}")
     return 2
 
 
-def _run_types(scan: ScanResult) -> int:
-    """Emit the existing stable type-discovery payload.
+def _add_pagination_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add common directory, response-budget, and cursor CLI arguments.
+
+    Args:
+        parser: Subcommand parser that accepts a paginated response request.
+    """
+    parser.add_argument(
+        "--dir", default="docs/research_log", metavar="PATH", help="Research-log directory."
+    )
+    parser.add_argument(
+        "--budget", type=int, default=DEFAULT_BUDGET, metavar="TOKENS",
+        help=f"Maximum response tokens (default {DEFAULT_BUDGET}, maximum {MAX_BUDGET}).",
+    )
+    parser.add_argument("--cursor", metavar="CURSOR", help="Opaque continuation cursor.")
+
+
+def _validate_budget(budget: int) -> int:
+    """Return a supported positive response budget.
+
+    Args:
+        budget: Requested response token ceiling.
+
+    Returns:
+        The validated requested budget.
+
+    Raises:
+        BudgetError: The requested budget is non-positive or over the hard maximum.
+    """
+    if budget <= 0:
+        raise BudgetError(
+            "budget_below_minimum", "Budget must be a positive integer.", {"budget": budget}
+        )
+    if budget > MAX_BUDGET:
+        raise BudgetError(
+            "budget_above_maximum",
+            f"Budget must not exceed {MAX_BUDGET}.",
+            {"budget": budget, "maximum": MAX_BUDGET},
+        )
+    return budget
+
+
+def _run_types(
+    scan: ScanResult,
+    log_directory: Path,
+    budget: int,
+    cursor_text: str | None,
+) -> int:
+    """Emit one budgeted canonical-first type-discovery page.
 
     Args:
         scan: Scan result returned by the research-log scanner.
+        log_directory: Resolved research-log directory bound into cursors.
+        budget: Valid response budget.
+        cursor_text: Optional opaque continuation cursor.
 
     Returns:
-        Zero after emitting the taxonomy payload.
+        Zero after emitting the taxonomy page.
     """
     summaries = discover_types(scan)
     sections_by_key: dict[str, list[SectionOccurrence]] = {}
     for section in scan.sections:
         sections_by_key.setdefault(section.type_key, []).append(section)
-    serialized_types: list[dict[str, Any]] = []
+    serialized_types: list[dict[str, object]] = []
     for summary in summaries:
-        payload = _serialize(summary)
+        record = _serialize(summary)
         occurrences = sections_by_key.get(summary.key, [])
-        payload["occurrence_numbers"] = [
+        record["occurrence_numbers"] = [
             occurrence.occurrence_number for occurrence in occurrences
         ]
-        payload["result_ids"] = [occurrence.result_id for occurrence in occurrences]
-        serialized_types.append(payload)
-    _emit({
+        record["result_ids"] = [occurrence.result_id for occurrence in occurrences]
+        serialized_types.append(record)
+
+    conditions = {"command": "types"}
+    start_index = _cursor_start_index(
+        cursor_text,
+        "types",
+        log_directory,
+        conditions,
+        scan.journal_fingerprint,
+        budget,
+    )
+    base_payload: dict[str, object] = {
         "ok": True,
-        "types": serialized_types,
         "warnings": [_serialize(warning) for warning in scan.warnings],
         "journal_fingerprint": scan.journal_fingerprint,
-    })
+        "total_types": len(serialized_types),
+    }
+    page = _paginate_response(
+        serialized_types, start_index, budget, base_payload, "types", log_directory,
+        conditions, scan.journal_fingerprint, "types", "returned_types",
+    )
+    _emit(_build_budgeted_payload(
+        base_payload, "types", "returned_types", page.records, page.next_cursor, budget
+    ))
     return 0
 
 
@@ -109,16 +199,20 @@ def _run_search(
     parser: argparse.ArgumentParser,
     parsed_arguments: argparse.Namespace,
     scan: ScanResult,
+    log_directory: Path,
+    budget: int,
 ) -> int:
-    """Validate, execute, and emit one section search.
+    """Validate, execute, and emit one budgeted section-search page.
 
     Args:
         parser: Parser used to report command-line validation errors.
         parsed_arguments: Parsed search command options.
         scan: Scan result returned by the research-log scanner.
+        log_directory: Resolved research-log directory bound into cursors.
+        budget: Valid response budget.
 
     Returns:
-        Zero after emitting an unpaginated manifest payload.
+        Zero after emitting the requested manifest page.
     """
     try:
         reference_date = _resolve_reference_date(parsed_arguments.today)
@@ -136,25 +230,168 @@ def _run_search(
     matches = search_sections(scan, normalized_types, bounds)
     warnings = list(scan.warnings)
     warnings.extend(_undated_exclusion_warnings(scan, normalized_types, bounds.range_name))
-    _emit({
+    query: dict[str, object] = {
+        "sections": list(normalized_types),
+        "range": bounds.range_name,
+        "from": parsed_arguments.from_text,
+        "to": parsed_arguments.to_text,
+        "today": bounds.reference_date.isoformat(),
+        "resolved_from": bounds.start.isoformat() if bounds.start is not None else None,
+        "resolved_to": bounds.end.isoformat() if bounds.end is not None else None,
+    }
+    conditions = {"command": "search", "query": query}
+    start_index = _cursor_start_index(
+        parsed_arguments.cursor,
+        "search",
+        log_directory,
+        conditions,
+        scan.journal_fingerprint,
+        budget,
+    )
+    records = [manifest_record(section, _MANIFEST_FETCH_BUDGET) for section in matches]
+    base_payload: dict[str, object] = {
         "ok": True,
-        "query": {
-            "sections": list(normalized_types),
-            "range": bounds.range_name,
-            "from": parsed_arguments.from_text,
-            "to": parsed_arguments.to_text,
-            "today": bounds.reference_date.isoformat(),
-            "resolved_from": bounds.start.isoformat() if bounds.start is not None else None,
-            "resolved_to": bounds.end.isoformat() if bounds.end is not None else None,
-        },
+        "query": query,
         "warnings": [_serialize(warning) for warning in warnings],
         "journal_fingerprint": scan.journal_fingerprint,
-        "total_matches": len(matches),
-        "matches": [
-            manifest_record(section, _MANIFEST_FETCH_BUDGET) for section in matches
-        ],
-    })
+        "total_matches": len(records),
+    }
+    page = _paginate_response(
+        records, start_index, budget, base_payload, "search", log_directory,
+        conditions, scan.journal_fingerprint, "matches", "returned_matches",
+    )
+    _emit(_build_budgeted_payload(
+        base_payload, "matches", "returned_matches", page.records, page.next_cursor, budget
+    ))
     return 0
+
+
+def _cursor_start_index(
+    cursor_text: str | None,
+    kind: str,
+    log_directory: Path,
+    conditions: Mapping[str, object],
+    journal_fingerprint: str,
+    budget: int,
+) -> int:
+    """Validate an optional cursor and return its record continuation index.
+
+    Args:
+        cursor_text: Optional encoded cursor supplied by the caller.
+        kind: Current query kind.
+        log_directory: Resolved journal directory.
+        conditions: Normalized query conditions.
+        journal_fingerprint: Fingerprint of the currently scanned journal.
+        budget: Current requested response budget.
+
+    Returns:
+        Zero without a cursor or the validated next record index.
+
+    Raises:
+        CursorError: The cursor does not exactly match current query conditions.
+    """
+    if cursor_text is None:
+        return 0
+    cursor = decode_cursor(cursor_text)
+    if cursor["kind"] != kind:
+        raise CursorError("cursor_kind_mismatch", "Cursor belongs to a different command.")
+    if cursor["directory"] != str(log_directory):
+        raise CursorError("cursor_directory_mismatch", "Cursor belongs to a different directory.")
+    if cursor["query_fingerprint"] != query_fingerprint(conditions):
+        raise CursorError("cursor_query_mismatch", "Cursor query conditions do not match.")
+    if cursor["journal_fingerprint"] != journal_fingerprint:
+        raise CursorError("cursor_journal_mismatch", "Journal contents changed after cursor creation.")
+    if cursor["budget"] != budget:
+        raise CursorError("cursor_budget_mismatch", "Cursor budget does not match the request.")
+    return cursor["next_index"]
+
+
+def _paginate_response(
+    records: Sequence[dict[str, object]],
+    start_index: int,
+    budget: int,
+    base_payload: Mapping[str, object],
+    kind: str,
+    log_directory: Path,
+    conditions: Mapping[str, object],
+    journal_fingerprint: str,
+    record_key: str,
+    returned_key: str,
+) -> Page:
+    """Paginate records using a complete-response builder and bound cursor.
+
+    Args:
+        records: Fully ordered response records.
+        start_index: Index from which to begin this page.
+        budget: Valid response budget.
+        base_payload: Static response metadata.
+        kind: Current query kind.
+        log_directory: Resolved research-log directory.
+        conditions: Normalized query conditions.
+        journal_fingerprint: Fingerprint of the currently scanned journal.
+        record_key: JSON field containing the record sequence.
+        returned_key: JSON field containing the page record count.
+
+    Returns:
+        Budget-safe page returned by :func:`paginate_records`.
+    """
+    fingerprint = query_fingerprint(conditions)
+
+    def build_cursor(next_index: int) -> str:
+        """Encode a continuation bound to the active response conditions."""
+        return encode_cursor({
+            "version": 1,
+            "kind": kind,
+            "next_index": next_index,
+            "directory": str(log_directory),
+            "query_fingerprint": fingerprint,
+            "journal_fingerprint": journal_fingerprint,
+            "budget": budget,
+        })
+
+    def build_response(
+        page_records: Sequence[dict[str, object]], next_cursor: str | None
+    ) -> dict[str, object]:
+        """Build the exact budgeted JSON response for one candidate page."""
+        return _build_budgeted_payload(
+            base_payload, record_key, returned_key, page_records, next_cursor, budget
+        )
+
+    return paginate_records(records, start_index, budget, build_response, build_cursor)
+
+
+def _build_budgeted_payload(
+    base_payload: Mapping[str, object],
+    record_key: str,
+    returned_key: str,
+    records: Sequence[dict[str, object]],
+    next_cursor: str | None,
+    budget: int,
+) -> dict[str, object]:
+    """Build a response whose embedded estimate equals its serialized size.
+
+    Args:
+        base_payload: Static JSON response metadata.
+        record_key: JSON field containing the page records.
+        returned_key: JSON field containing the page record count.
+        records: Records included on the page.
+        next_cursor: Optional opaque continuation cursor.
+        budget: Active response budget.
+
+    Returns:
+        Complete JSON-compatible response with a fixed-point size estimate.
+    """
+    estimated_tokens = 0
+    while True:
+        payload = dict(base_payload)
+        payload[record_key] = list(records)
+        payload[returned_key] = len(records)
+        payload["next_cursor"] = next_cursor
+        payload["budget"] = {"limit": budget, "estimated_tokens": estimated_tokens}
+        calculated_tokens = estimate_json_tokens(payload)
+        if calculated_tokens == estimated_tokens:
+            return payload
+        estimated_tokens = calculated_tokens
 
 
 def _resolve_reference_date(today_text: str | None) -> date:
@@ -254,16 +491,27 @@ def _undated_exclusion_warnings(
     )
 
 
-def _serialize(value: Any) -> dict[str, Any]:
-    """Convert a query dataclass into JSON-compatible primitives."""
-    return {
-        key: _serialize_value(item)
-        for key, item in asdict(value).items()
-    }
+def _serialize(value: Any) -> dict[str, object]:
+    """Convert a query dataclass into JSON-compatible primitives.
+
+    Args:
+        value: Dataclass value emitted by the query interface.
+
+    Returns:
+        JSON-compatible dataclass field mapping.
+    """
+    return {key: _serialize_value(item) for key, item in asdict(value).items()}
 
 
-def _serialize_value(value: Any) -> Any:
-    """Convert date-like values nested in dataclass output to JSON values."""
+def _serialize_value(value: Any) -> object:
+    """Convert date-like values nested in dataclass output to JSON values.
+
+    Args:
+        value: Potentially nested dataclass field value.
+
+    Returns:
+        JSON-compatible primitive, list, or mapping.
+    """
     if isinstance(value, date):
         return value.isoformat()
     if isinstance(value, Path):
@@ -277,9 +525,13 @@ def _serialize_value(value: Any) -> Any:
     return value
 
 
-def _emit(payload: dict[str, Any]) -> None:
-    """Print one Unicode-preserving JSON payload."""
-    print(json.dumps(payload, ensure_ascii=False))
+def _emit(payload: Mapping[str, Any]) -> None:
+    """Print one compact Unicode-preserving JSON payload.
+
+    Args:
+        payload: JSON-compatible output response.
+    """
+    print(serialize_json(payload))
 
 
 if __name__ == "__main__":
