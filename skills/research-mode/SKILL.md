@@ -92,6 +92,23 @@ GIT_CTX="$(find ~/.claude -path "*/research-log/scripts/git_context.py" | head -
 GIT_HEAD=$(python "$GIT_CTX" --head 2>/dev/null || echo "")
 ```
 
+## Historical Experience Check
+
+After activation routing and before research execution, apply the
+`research-log` Historical Experience Check at the decision point defined for
+the active mode. This adds prior evidence to the decision; it does not require
+mode activation and does not replace the selected mode's primary workflow.
+
+For direct research intent, use the `research-log` protocol even when no mode
+is active. Query history only when the project has a non-empty
+`docs/research_log/` journal and the next action is research planning,
+recommendation, execution, repetition, or diagnosis. Follow the documented
+`types → search → fetch` sequence, disclose query failures, and do not treat
+an error as empty history.
+
+Use the per-mode decision points in `references/routing_guide.md`. Keep all
+banners, prompts, and user-visible research-mode output in English.
+
 ---
 
 ## `/mode status`

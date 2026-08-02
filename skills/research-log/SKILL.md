@@ -1,6 +1,6 @@
 ---
 name: research-log
-description: Record, manage, and query research experiment logs. Use when the user wants to log an experiment result, amend an existing entry, view recent logs, or rebuild the index. Triggers on phrases like "log this experiment", "record results", "add a log entry", "show recent experiments", "amend log". Each entry creates a structured Markdown file in docs/research_log/. Suggest running this before /report-slides when new results have not been logged yet.
+description: Record, manage, and query research experiment logs. Use when the user wants to log an experiment result, amend an existing entry, view recent logs, rebuild the index, or plan, execute, repeat, or diagnose research in a project containing docs/research_log/. Triggers on phrases like "log this experiment", "record results", "add a log entry", "show recent experiments", "amend log", "try this method", "change these experiment parameters", and "why did this run fail?". Each entry creates a structured Markdown file in docs/research_log/. Suggest running this before /report-slides when new results have not been logged yet.
 metadata:
   data_access_level: raw
   task_type: open-ended
@@ -314,6 +314,163 @@ above):
 ### show [n]
 
 Show the n most recent entries (default 5). For each, print a compact summary: date, experiment, goal excerpt, next steps excerpt, git_head, slide status.
+
+---
+
+### query
+
+Query historical sections without modifying the journal. First locate the public
+CLI; do not assume an installed skill path.
+
+```bash
+# macOS / Linux / Git Bash:
+SECTION_QUERY="$(find ~/.claude -path "*/research-log/scripts/section_query.py" | head -1)"
+python "$SECTION_QUERY" types --dir docs/research_log --budget 4000
+```
+
+```powershell
+# Windows (PowerShell):
+$SECTION_QUERY = (Get-ChildItem $env:USERPROFILE\.claude -Recurse -Filter section_query.py |
+    Where-Object FullName -like "*research-log*" | Select-Object -First 1).FullName
+python $SECTION_QUERY types --dir docs\research_log --budget 4000
+```
+
+Use the strict `types → search → fetch` sequence. `types` discovers the stable
+canonical taxonomy and any custom headings before selecting a query. It may be
+skipped only when the request already names valid canonical types and custom
+discovery is not relevant. If `types` returns `next_cursor`, perform full
+type-cursor traversal with the same directory and budget before claiming that a
+custom type does not exist:
+
+```bash
+python "$SECTION_QUERY" types --dir docs/research_log --budget 4000 --cursor "<opaque-cursor>"
+```
+
+Then search the selected types to receive a manifest, never full bodies:
+
+```bash
+python "$SECTION_QUERY" search \
+  --dir docs/research_log \
+  --sections Failures Analysis "Open Problems" \
+  --range 90d \
+  --budget 4000
+```
+
+The named presets are `all`, `7d`, `30d`, `90d`, and `year`; omitting a range
+uses `all`. Use inclusive custom dates when the request supplies a meaningful
+boundary, not as a substitute for history-wide repetition checks:
+
+```bash
+python "$SECTION_QUERY" search \
+  --dir docs/research_log \
+  --sections Changes Setup Results Analysis \
+  --from 2026-01-01 --to 2026-06-30 \
+  --budget 4000
+```
+
+`--range` and custom `--from` / `--to` bounds are mutually exclusive. Normal
+use obtains the current date from the runtime; `--today YYYY-MM-DD` is only for
+reproducible automation. Follow every manifest `next_cursor` with the same
+normalized search conditions, directory, and budget before making a claim about
+the searched scope.
+
+```bash
+python "$SECTION_QUERY" search \
+  --dir docs/research_log \
+  --sections Failures Analysis "Open Problems" \
+  --range 90d \
+  --budget 4000 \
+  --cursor "<opaque-cursor>"
+```
+
+The default response budget is 4,000 estimated tokens. A lower positive
+`--budget` is allowed; 8,000 is the hard maximum. Every response includes its
+budget estimate. A budget error, malformed command, unreadable source, or stale
+cursor is an explicit query failure, not an empty result.
+
+Fetch only selected manifest IDs. `fetch` returns every requested body
+atomically when the selection fits:
+
+```bash
+python "$SECTION_QUERY" fetch \
+  --dir docs/research_log \
+  --ids "2026-05-18_bert_finetuned_full::failures" \
+  --budget 4000
+```
+
+If the result has `status: overflow`, fetch each listed `suggested_batches` in
+separate calls. It deliberately returns no partial bodies. If one body is too
+large, the result has `status: chunk_required`; follow `chunk_cursor` using
+`--chunk-cursor` and then every `next_chunk_cursor`. Complete full chunk
+traversal before claiming the oversized section was reviewed. Preserve chunks
+in order to reconstruct the exact source body: never silently truncate,
+summarize, or omit a requested section.
+
+```bash
+python "$SECTION_QUERY" fetch \
+  --dir docs/research_log \
+  --chunk-cursor "<opaque-chunk-cursor>" \
+  --budget 4000
+```
+
+## Historical Experience Check
+
+Run this protocol when both conditions are true:
+
+1. The current project contains a non-empty `docs/research_log/` journal.
+2. The agent is about to plan, recommend, execute, repeat, or diagnose research work.
+
+Mode activation is not required. A direct research request such as "try this
+method", "change these experiment parameters", or "why did this run fail?" is
+sufficient intent even without an active `research-mode`. Do not run the check
+for unrelated maintenance, simple conceptual questions, prose editing,
+formatting, or slide layout unless a research decision or evidence
+reconstruction is required.
+
+Use checks at decision boundaries, not before every action:
+
+- at the start of a new research objective;
+- before proposing a new experimental method or configuration;
+- before a costly or long-running experiment;
+- when an error, anomalous result, or research blockage appears; and
+- before repeating an experiment or operation that may already exist in the journal.
+
+| Research intent | Initial types |
+|---|---|
+| New method or experiment | Goal, Setup, Results, Failures, Conclusion |
+| Error or anomaly | Failures, Analysis, Next Steps, discovered problem-oriented custom types |
+| Parameter or implementation change | Changes, Setup, Results, Analysis |
+| Costly rerun | Goal, Setup, Results, Failures |
+
+Start with `types` so discovered problem-oriented custom types, for example
+`Open Problems`, are included when relevant. Use the `query` flow above and
+retrieve only the selected source bodies. Within one session, record normalized
+query conditions and the journal state fingerprint. This is session-local
+decision state, not a persistent index: the agent does not repeat an identical
+query while the relevant files remain unchanged.
+
+After retrieval, classify the evidence without collapsing distinct cases:
+
+- previously attempted and unsuccessful;
+- previously solved with an effective fix;
+- attempted with inconclusive results;
+- similar but materially different in data, code version, parameters, or goal;
+- no relevant record found.
+
+"No relevant record found" applies only to the successfully searched journal
+and query scope; it is not evidence that no prior attempt exists elsewhere.
+Historical records inform a decision but do not automatically prohibit work.
+
+- **General research discussion: advisory.** Disclose a query failure and
+  continue the discussion with that limitation.
+- **Costly or long-running operation: preflight gate.** Complete the check
+  before execution. If the query mechanism fails, pause execution and disclose
+  the failure; the agent must not report a query failure as empty history.
+- If the journal is missing or contains no log entries, the check passes
+  without requiring the user to create one.
+- An explicit user request to reproduce or verify prior work permits execution
+  after the history and rerun rationale are surfaced. A changed-condition
+  experiment follows the same disclosure rule.
 
 ---
 

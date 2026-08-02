@@ -12,6 +12,29 @@ Maps each work mode to the skills it uses and the behaviors it expects.
 | `report` | report-slides | research-log | academic-pipeline |
 | `publish` | academic-pipeline | research-log | — |
 
+## Historical Experience Check
+
+Direct research intent triggers the `research-log` protocol even when no mode
+is active. When the project has a non-empty `docs/research_log/` journal and
+the next action is research planning, recommendation, execution, repetition,
+or diagnosis, use `types → search → fetch` before the relevant decision. This
+is an evidence check, not a prerequisite for activating a mode.
+
+| Mode | History-check decision point |
+|------|------------------------------|
+| `exp` | Check before a new setup, run, failure, or rerun. |
+| `daily` | Check only when notes lead to a proposed research action. |
+| `explore` | Check before committing to a research direction already investigated. |
+| `report` | Check only when evidence or decision provenance must be recovered. |
+| `publish` | Check when reconstructing decisions, limitations, fixes, or prior evidence. |
+
+For a costly or long-running operation, the history check is a preflight gate:
+complete it before execution and disclose a query failure instead of calling it
+empty history. General research discussion remains advisory. A missing or empty
+journal passes the check. An explicit reproduction, verification, or
+changed-condition request may proceed after prior history and its rationale are
+made visible.
+
 ## Mode Transition Recommendations
 
 | From | To | Trigger |
