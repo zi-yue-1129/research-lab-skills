@@ -83,10 +83,7 @@ def main(arguments: list[str] | None = None) -> int:
         })
         return 1
     except BudgetError as error:
-        _emit({
-            "ok": False,
-            "error": {"code": error.code, "message": str(error), "details": error.details},
-        })
+        _emit_budget_error(error)
         return 1
     except CursorError as error:
         _emit({
@@ -137,6 +134,22 @@ def _validate_budget(budget: int) -> int:
             {"budget": budget, "maximum": MAX_BUDGET},
         )
     return budget
+
+
+def _emit_budget_error(error: BudgetError) -> None:
+    """Print a compact control-plane diagnostic for a budget failure.
+
+    Successful data responses are budgeted by their complete serialized JSON.
+    An insufficient requested budget cannot represent its own useful JSON error,
+    so failure diagnostics retain only the stable code and machine-useful details.
+
+    Args:
+        error: Typed budget failure to expose to the command caller.
+    """
+    _emit({
+        "ok": False,
+        "error": {"code": error.code, "details": error.details},
+    })
 
 
 def _run_types(

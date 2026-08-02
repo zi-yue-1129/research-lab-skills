@@ -137,7 +137,12 @@ def test_lower_budget_and_metadata_overflow_are_typed(tmp_path: Path) -> None:
     assert rejected.returncode != 0
     error = json.loads(rejected.stdout)
     assert error["ok"] is False
-    assert error["error"]["code"] == "metadata_exceeds_budget"
+    diagnostic = error["error"]
+    assert diagnostic["code"] == "metadata_exceeds_budget"
+    assert set(diagnostic) == {"code", "details"}
+    assert diagnostic["details"]["budget"] == 1
+    assert diagnostic["details"]["estimated_tokens"] > 1
+    assert _estimated_tokens(error) < 40
 
 
 def test_cursors_are_opaque_and_reject_changed_query_or_journal(tmp_path: Path) -> None:
