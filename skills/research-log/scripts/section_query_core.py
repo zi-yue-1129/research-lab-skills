@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from hashlib import sha256
 from pathlib import Path
 import re
@@ -30,6 +30,8 @@ _CANONICAL_BY_NORMALIZED = {
     " ".join(type_name.split()).casefold(): type_name
     for type_name in CANONICAL_TYPES
 }
+_PRESET_RANGE_DAYS = {"7d": 7, "30d": 30, "90d": 90}
+_ALL_RANGE_NAMES = frozenset(("all", "year", *_PRESET_RANGE_DAYS))
 
 
 @dataclass(frozen=True)
@@ -80,6 +82,16 @@ class TypeSummary:
     log_count: int
     earliest_date: date | None
     latest_date: date | None
+
+
+@dataclass(frozen=True)
+class DateBounds:
+    """Describe inclusive resolved bounds for one query."""
+
+    range_name: str
+    start: date | None
+    end: date | None
+    reference_date: date
 
 
 class JournalReadError(Exception):
@@ -185,6 +197,101 @@ def discover_types(scan: ScanResult) -> tuple[TypeSummary, ...]:
     return tuple(summaries + custom_summaries)
 
 
+def resolve_date_bounds(
+    range_name: str | None,
+    from_text: str | None,
+    to_text: str | None,
+    today: date,
+) -> DateBounds:
+    """Validate and resolve preset or custom inclusive date bounds.
+
+    Args:
+        range_name: Optional named range selected by the caller.
+        from_text: Optional ISO 8601 inclusive lower bound.
+        to_text: Optional ISO 8601 inclusive upper bound.
+        today: Reference date used to make preset ranges reproducible.
+
+    Returns:
+        Resolved date bounds with the supplied reference date.
+
+    Raises:
+        ValueError: A range name or date bound is invalid or conflicting.
+    """
+    if range_name is not None and range_name not in _ALL_RANGE_NAMES:
+        valid_ranges = ", ".join(sorted(_ALL_RANGE_NAMES))
+        raise ValueError(f"Unknown range '{range_name}'. Valid ranges: {valid_ranges}.")
+    if range_name is not None and (from_text is not None or to_text is not None):
+        raise ValueError("--range cannot be combined with --from or --to.")
+    start = _parse_query_date(from_text, "--from")
+    end = _parse_query_date(to_text, "--to")
+    if start is not None and end is not None and start > end:
+        raise ValueError("--from must not be later than --to.")
+    if range_name is None:
+        return DateBounds("custom" if start is not None or end is not None else "all", start, end, today)
+    if range_name == "all":
+        return DateBounds("all", None, None, today)
+    if range_name == "year":
+        return DateBounds("year", date(today.year, 1, 1), today, today)
+    range_days = _PRESET_RANGE_DAYS[range_name]
+    return DateBounds(range_name, today - timedelta(days=range_days - 1), today, today)
+
+
+def search_sections(
+    scan: ScanResult,
+    requested_types: tuple[str, ...],
+    bounds: DateBounds,
+) -> tuple[SectionOccurrence, ...]:
+    """Filter and deterministically order matching section occurrences.
+
+    Args:
+        scan: Parsed research-log result to filter.
+        requested_types: Canonical, alias, or discovered type names to include.
+        bounds: Inclusive resolved date bounds.
+
+    Returns:
+        Matching occurrences ordered by date, filename, and source position.
+    """
+    requested_keys = {normalize_heading(type_name)[1] for type_name in requested_types}
+    matching_sections = [
+        section for section in scan.sections
+        if section.type_key in requested_keys and _is_within_bounds(section, bounds)
+    ]
+    return tuple(sorted(matching_sections, key=_section_sort_key))
+
+
+def manifest_record(section: SectionOccurrence, budget: int) -> dict[str, object]:
+    """Build a source-preserving summary without returning the full body.
+
+    Args:
+        section: Section occurrence to summarize.
+        budget: Maximum estimated body tokens allowed for a future fetch.
+
+    Returns:
+        Stable manifest fields excluding the section body.
+
+    Raises:
+        ValueError: The supplied fetch budget is negative.
+    """
+    if budget < 0:
+        raise ValueError("Fetch budget must be non-negative.")
+    normalized_body = " ".join(section.body.split())
+    estimated_tokens = (len(section.body) + 3) // 4
+    return {
+        "id": section.result_id,
+        "date": section.log_date.isoformat() if section.log_date is not None else None,
+        "experiment": section.experiment,
+        "path": section.path.as_posix(),
+        "type": section.type_name,
+        "type_key": section.type_key,
+        "original_heading": section.original_heading,
+        "occurrence": section.occurrence_number,
+        "body_chars": len(section.body),
+        "estimated_body_tokens": estimated_tokens,
+        "preview": normalized_body[:160],
+        "fits_fetch_budget": estimated_tokens <= budget,
+    }
+
+
 def _scan_log(
     path: Path, relative_path: str, text: str
 ) -> tuple[list[SectionOccurrence], list[QueryWarning]]:
@@ -215,7 +322,7 @@ def _scan_log(
             result_id = f"{result_id}::{occurrence_number}"
         sections.append(SectionOccurrence(
             result_id=result_id,
-            path=path,
+            path=Path(relative_path),
             log_stem=path.stem,
             log_date=log_date,
             experiment=experiment,
@@ -319,3 +426,31 @@ def _summarize_type(
         earliest_date=min(known_dates, default=None),
         latest_date=max(known_dates, default=None),
     )
+
+
+def _parse_query_date(date_text: str | None, option_name: str) -> date | None:
+    """Parse one ISO query bound without treating malformed values as absent."""
+    if date_text is None:
+        return None
+    try:
+        return date.fromisoformat(date_text)
+    except ValueError as error:
+        raise ValueError(f"{option_name} must be an ISO date (YYYY-MM-DD).") from error
+
+
+def _is_within_bounds(section: SectionOccurrence, bounds: DateBounds) -> bool:
+    """Return whether a section date is included by the resolved bounds."""
+    if section.log_date is None:
+        return bounds.start is None and bounds.end is None
+    if bounds.start is not None and section.log_date < bounds.start:
+        return False
+    if bounds.end is not None and section.log_date > bounds.end:
+        return False
+    return True
+
+
+def _section_sort_key(section: SectionOccurrence) -> tuple[bool, int, str, int]:
+    """Create the stable newest-first ordering key for one section."""
+    if section.log_date is None:
+        return True, 0, section.path.as_posix(), section.body_start
+    return False, -section.log_date.toordinal(), section.path.as_posix(), section.body_start

@@ -230,3 +230,142 @@ def test_invalid_utf8_returns_json_error(tmp_path: Path) -> None:
     payload: dict[str, Any] = json.loads(result.stdout)
     assert payload["ok"] is False
     assert payload["error"]["code"] == "invalid_utf8"
+
+
+def test_search_multiple_types_with_inclusive_custom_bounds(tmp_path: Path) -> None:
+    """Return every requested type inside inclusive custom date bounds."""
+    log_dir = tmp_path / "research_log"
+    log_dir.mkdir()
+    for day in ("2025-12-31", "2026-01-01", "2026-06-30", "2026-07-01"):
+        _write_log(
+            log_dir,
+            f"{day}_run.md",
+            f"""---
+date: {day}
+experiment: run-{day}
+---
+## Failures
+Failure on {day}.
+## Analysis
+Analysis on {day}.
+""",
+        )
+
+    payload = _payload(_run(
+        "search", "--dir", str(log_dir), "--sections", "Failures", "Analysis",
+        "--from", "2026-01-01", "--to", "2026-06-30",
+    ))
+
+    assert payload["total_matches"] == 4
+    assert [item["date"] for item in payload["matches"]] == [
+        "2026-06-30", "2026-06-30", "2026-01-01", "2026-01-01",
+    ]
+    assert payload["query"]["resolved_from"] == "2026-01-01"
+    assert payload["query"]["resolved_to"] == "2026-06-30"
+
+
+def test_year_range_uses_explicit_today_for_reproducibility(tmp_path: Path) -> None:
+    """Resolve year ranges from an explicit reference date."""
+    log_dir = tmp_path / "research_log"
+    log_dir.mkdir()
+    _write_log(log_dir, "2026-01-01_run.md", "---\ndate: 2026-01-01\nexperiment: run\n---\n## Goal\nIncluded.\n")
+    _write_log(log_dir, "2025-12-31_old.md", "---\ndate: 2025-12-31\nexperiment: old\n---\n## Goal\nExcluded.\n")
+
+    payload = _payload(_run(
+        "search", "--dir", str(log_dir), "--sections", "Goal", "--range", "year",
+        "--today", "2026-08-02",
+    ))
+
+    assert payload["total_matches"] == 1
+    assert payload["query"]["resolved_from"] == "2026-01-01"
+    assert payload["query"]["resolved_to"] == "2026-08-02"
+
+
+def test_preset_ranges_and_all_default_are_inclusive(tmp_path: Path) -> None:
+    """Resolve each preset range to its inclusive calendar-day interval."""
+    log_dir = tmp_path / "research_log"
+    log_dir.mkdir()
+    for day in ("2026-05-05", "2026-05-06", "2026-07-04", "2026-07-05", "2026-07-26", "2026-07-27", "2026-08-02"):
+        _write_log(log_dir, f"{day}.md", f"---\ndate: {day}\nexperiment: run\n---\n## Goal\n{day}\n")
+
+    expected_counts = {"7d": 2, "30d": 5, "90d": 7}
+    for range_name, expected_count in expected_counts.items():
+        payload = _payload(_run(
+            "search", "--dir", str(log_dir), "--sections", "Goal", "--range", range_name,
+            "--today", "2026-08-02",
+        ))
+        assert payload["total_matches"] == expected_count
+    all_payload = _payload(_run("search", "--dir", str(log_dir), "--sections", "Goal"))
+    assert all_payload["total_matches"] == 7
+    assert all_payload["query"]["range"] == "all"
+
+
+def test_search_accepts_one_sided_bounds_and_rejects_conflicts(tmp_path: Path) -> None:
+    """Support a single custom bound but reject mixed range selection."""
+    log_dir = tmp_path / "research_log"
+    log_dir.mkdir()
+    _write_log(log_dir, "old.md", "---\ndate: 2026-01-01\nexperiment: old\n---\n## Goal\nOld.\n")
+    _write_log(log_dir, "new.md", "---\ndate: 2026-08-02\nexperiment: new\n---\n## Goal\nNew.\n")
+
+    payload = _payload(_run("search", "--dir", str(log_dir), "--sections", "Goal", "--from", "2026-08-01"))
+    assert [item["experiment"] for item in payload["matches"]] == ["new"]
+    result = _run("search", "--dir", str(log_dir), "--sections", "Goal", "--range", "7d", "--from", "2026-08-01")
+    assert result.returncode != 0
+    assert "cannot be combined" in result.stderr
+
+
+def test_search_rejects_invalid_dates_and_unknown_sections(tmp_path: Path) -> None:
+    """Return useful parser errors for invalid dates and grouped unknown types."""
+    log_dir = tmp_path / "research_log"
+    log_dir.mkdir()
+    _write_log(log_dir, "run.md", "## Goal\nBody.\n")
+
+    invalid_date = _run("search", "--dir", str(log_dir), "--sections", "Goal", "--from", "not-a-date")
+    assert invalid_date.returncode != 0
+    assert "ISO" in invalid_date.stderr
+    unknown = _run("search", "--dir", str(log_dir), "--sections", "Missing", "Absent")
+    assert unknown.returncode != 0
+    assert "Missing, Absent" in unknown.stderr
+    assert "Goal" in unknown.stderr
+
+
+def test_search_manifests_preserve_provenance_without_body(tmp_path: Path) -> None:
+    """Emit stable manifest summaries with source and nested-content provenance."""
+    log_dir = tmp_path / "research_log"
+    log_dir.mkdir()
+    long_text = " ".join(["word"] * 40)
+    _write_log(
+        log_dir,
+        "2026-08-02_run.md",
+        f"---\ndate: 2026-08-02\nexperiment: run\n---\n## results\n{long_text}\n### Detail\nNested text.\n## results\nSecond.\n",
+    )
+
+    payload = _payload(_run("search", "--dir", str(log_dir), "--sections", "Results"))
+    matches = payload["matches"]
+    assert [item["id"] for item in matches] == [
+        "2026-08-02_run::results", "2026-08-02_run::results::2",
+    ]
+    first_match = matches[0]
+    assert first_match["path"] == "2026-08-02_run.md"
+    assert first_match["original_heading"] == "results"
+    assert first_match["occurrence"] == 1
+    assert first_match["body_chars"] == len(f"{long_text}\n### Detail\nNested text.\n")
+    assert first_match["preview"] == long_text[:160]
+    assert "body" not in first_match
+    assert first_match["fits_fetch_budget"] is True
+
+
+def test_search_undated_records_sort_last_for_all_and_warn_when_bounded(tmp_path: Path) -> None:
+    """Keep undated logs only in all-time searches and report bounded omissions."""
+    log_dir = tmp_path / "research_log"
+    log_dir.mkdir()
+    _write_log(log_dir, "undated.md", "---\nexperiment: unknown\n---\n## Goal\nUndated.\n")
+    _write_log(log_dir, "dated.md", "---\ndate: 2026-08-02\nexperiment: dated\n---\n## Goal\nDated.\n")
+
+    all_payload = _payload(_run("search", "--dir", str(log_dir), "--sections", "Goal"))
+    assert [item["path"] for item in all_payload["matches"]] == ["dated.md", "undated.md"]
+    bounded_payload = _payload(_run(
+        "search", "--dir", str(log_dir), "--sections", "Goal", "--from", "2026-01-01",
+    ))
+    assert [item["path"] for item in bounded_payload["matches"]] == ["dated.md"]
+    assert any(warning["code"] == "undated_excluded" for warning in bounded_payload["warnings"])
