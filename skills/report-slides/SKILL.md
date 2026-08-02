@@ -216,6 +216,84 @@ Read only the references needed for the selected route and gate:
   `PPTX-render` statuses, remaining raster layers, and the rationale for each
   raster layer.
 
+### 3.4 Response-facing contract
+
+Fresh plans and completion responses must expose these required fields and
+claims:
+
+- **High-priority reuse scenario:** When the user asks whether to modify/redraw
+  an existing visual, the answer **MUST** be a filled concrete record using
+  `manifest_asset_search`, `slide`, `diagram_id`, `action`, `reused_source`,
+  `based_on_revision`, `changes` with a numeric `bbox` expressed as
+  `[x1, y1, x2, y2]` endpoint coordinates, `change`, and `reason`,
+  and `delivery_summary`; do not answer with instructions such as `report
+  <actual slide>`, angle-bracket placeholders, `[x,y]` placeholders, or a
+  prose-only checklist. If no source or revision can actually be discovered,
+  output an explicit blocker record instead of fabricating continuity. Planning
+  examples may use the concrete representative record already shown.
+
+- `regions`: Architecture and flow plans enumerate every named subfigure or
+  semantic region in `diagram-plan.yaml` and repeat the same names in the
+  response.
+- `review`: State explicitly that each subfigure and the complete slide were
+  rendered to pixels, inspected with model vision, and revised and re-rendered
+  until passing; validation-status lists alone are insufficient.
+- `generation` and `editability`: For `route: generative` /
+  `authoring_route: generative` `[V:AI]` and `route: hybrid` /
+  `authoring_route: hybrid` `[V:HYBRID]`, name `prompt.md` and report manifest
+  `generation.prompt`, `generation.output`, and `generation.references`
+  provenance, plus editability and any raster, embedding, or conversion-loss
+  disclosures.
+- Filled example: `manifest_asset_search: "found assets/diagram-library/human-review-flow.svg"; slide: 4; diagram_id: human-review-flow-v2; action: modified; reused_source: assets/diagram-library/human-review-flow.svg; based_on_revision: git:4b29f2a; changes: [{region: human-review-branch, bbox: [612, 184, 860, 316], change: "clarified approval branch", reason: "approval branch"}]; delivery_summary: "Modified slide 4 using the reused human-review flow asset."`
+- `reuse.action`, `based_on_revision`, and `changes`: State that the
+  asset-library/manifest search happened first. Same-core-message-and-model
+  revisions use a concrete, non-placeholder `based_on_revision` value and
+  list every changed `region` with its `bbox` and `reason`. Unchanged
+  placement-only assets remain `reuse` in the plan and `reused` in the
+  response; core-message or model changes use a new ID with `derived_from`.
+  Reuse/change prompts must return a filled record (not instructions), with
+  `manifest_asset_search` set to a found result or blocker and all of `slide`,
+  `diagram_id`, `action`, `reused_source`, `based_on_revision`, `changes`
+  (named `region`, numeric `bbox` in `[x1, y1, x2, y2]` endpoint-coordinate
+  form, `change`, and `reason`), and
+  `delivery_summary`.
+
+#### Reuse/change response template
+
+Every fresh execution answer must be a filled concrete record, not
+instructions. Begin by stating the `manifest/asset-library search` result,
+including the found source or blocker. Then include `slide`, `diagram_id`,
+`action`, `reused_source`, and `based_on_revision`; list `changes` with a
+named `region`, numeric `bbox`, `change`, and `reason` for each entry; finish
+with a change-focused `delivery_summary`.
+Every `bbox` is an endpoint-coordinate tuple `[x1, y1, x2, y2]` within the
+1200x675 slide; never use `[x, y, width, height]`.
+
+Planning examples may use clearly labeled representative concrete values.
+Execution responses must use the discovered revision and never fabricate
+continuity. An unavailable source or revision blocks completion. Placement-
+only changes remain `reuse` in plans and `reused` in responses; a changed
+core message or model still derives a new ID with `derived_from`.
+
+```yaml
+manifest_asset_search: "Found source via assets/manifest.yaml: assets/diagram-library/human-review-flow.svg"
+slide: 4
+diagram_id: human-review-flow-v2
+action: modified
+reused_source: assets/diagram-library/human-review-flow.svg
+based_on_revision: "git:4b29f2a"
+changes:
+  - region: human-review-branch
+    bbox: [612, 184, 860, 316]
+    change: "Added the reviewer decision split."
+    reason: "Make approval and rejection outcomes explicit."
+  - region: failure-return-path
+    bbox: [780, 356, 1084, 452]
+    change: "Rerouted the return connector to the retry node."
+    reason: "Show the actual failure recovery path."
+delivery_summary: "Modified slide 4 from git:4b29f2a; changed two regions and preserved placement-only reuse."
+```
+
 **Dynamic inclusion rules:**
 - Timeline: only with ≥2 entries linked via `follows:`
 - Architecture: only if logs describe structural/model changes
