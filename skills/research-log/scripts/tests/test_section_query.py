@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 SCRIPT = Path(__file__).resolve().parent.parent / "section_query.py"
 
 
@@ -31,6 +33,18 @@ def _payload(result: subprocess.CompletedProcess[str]) -> dict[str, Any]:
     assert result.returncode == 0, result.stderr or result.stdout
     payload: dict[str, Any] = json.loads(result.stdout)
     assert payload["ok"] is True
+    return payload
+
+
+def _error_payload(result: subprocess.CompletedProcess[str]) -> dict[str, Any]:
+    """Decode and validate a standard structured CLI error response."""
+    assert result.returncode != 0
+    assert result.stderr == ""
+    payload: dict[str, Any] = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert isinstance(payload["error"]["code"], str)
+    assert isinstance(payload["error"]["message"], str)
+    assert isinstance(payload["error"]["details"], dict)
     return payload
 
 
@@ -226,10 +240,11 @@ def test_invalid_utf8_returns_json_error(tmp_path: Path) -> None:
 
     result = _run("types", "--dir", str(log_dir))
 
-    assert result.returncode != 0
-    payload: dict[str, Any] = json.loads(result.stdout)
-    assert payload["ok"] is False
+    payload = _error_payload(result)
     assert payload["error"]["code"] == "invalid_utf8"
+    assert payload["error"]["details"] == {
+        "path": str(log_dir / "2026-01-02_run.md"),
+    }
 
 
 def test_search_multiple_types_with_inclusive_custom_bounds(tmp_path: Path) -> None:
@@ -310,23 +325,26 @@ def test_search_accepts_one_sided_bounds_and_rejects_conflicts(tmp_path: Path) -
     payload = _payload(_run("search", "--dir", str(log_dir), "--sections", "Goal", "--from", "2026-08-01"))
     assert [item["experiment"] for item in payload["matches"]] == ["new"]
     result = _run("search", "--dir", str(log_dir), "--sections", "Goal", "--range", "7d", "--from", "2026-08-01")
-    assert result.returncode != 0
-    assert "cannot be combined" in result.stderr
+    error = _error_payload(result)
+    assert error["error"]["code"] == "conflicting_date_filters"
+    assert "cannot be combined" in error["error"]["message"]
 
 
 def test_search_rejects_invalid_dates_and_unknown_sections(tmp_path: Path) -> None:
-    """Return useful parser errors for invalid dates and grouped unknown types."""
+    """Return typed errors for invalid dates and grouped unknown section types."""
     log_dir = tmp_path / "research_log"
     log_dir.mkdir()
     _write_log(log_dir, "run.md", "## Goal\nBody.\n")
 
     invalid_date = _run("search", "--dir", str(log_dir), "--sections", "Goal", "--from", "not-a-date")
-    assert invalid_date.returncode != 0
-    assert "ISO" in invalid_date.stderr
+    invalid_date_error = _error_payload(invalid_date)
+    assert invalid_date_error["error"]["code"] == "invalid_date_filter"
+    assert "ISO" in invalid_date_error["error"]["message"]
     unknown = _run("search", "--dir", str(log_dir), "--sections", "Missing", "Absent")
-    assert unknown.returncode != 0
-    assert "Missing, Absent" in unknown.stderr
-    assert "Goal" in unknown.stderr
+    unknown_error = _error_payload(unknown)
+    assert unknown_error["error"]["code"] == "unknown_section_type"
+    assert "Missing, Absent" in unknown_error["error"]["message"]
+    assert "Goal" in unknown_error["error"]["message"]
 
 
 def test_search_rejects_case_variant_of_discovered_custom_type(tmp_path: Path) -> None:
@@ -337,9 +355,10 @@ def test_search_rejects_case_variant_of_discovered_custom_type(tmp_path: Path) -
 
     result = _run("search", "--dir", str(log_dir), "--sections", "my custom")
 
-    assert result.returncode != 0
-    assert "Unknown section types: my custom" in result.stderr
-    assert "My Custom" in result.stderr
+    error = _error_payload(result)
+    assert error["error"]["code"] == "unknown_section_type"
+    assert "Unknown section types: my custom" in error["error"]["message"]
+    assert "My Custom" in error["error"]["message"]
 
 
 def test_search_manifests_preserve_provenance_without_body(tmp_path: Path) -> None:
@@ -382,3 +401,57 @@ def test_search_undated_records_sort_last_for_all_and_warn_when_bounded(tmp_path
     ))
     assert [item["path"] for item in bounded_payload["matches"]] == ["dated.md"]
     assert any(warning["code"] == "undated_excluded" for warning in bounded_payload["warnings"])
+
+
+ERROR_CASES = (
+    ("unknown_section_type", ("search", "--sections", "Does Not Exist")),
+    ("invalid_date_filter", ("search", "--sections", "Goal", "--from", "bad-date")),
+    (
+        "conflicting_date_filters",
+        ("search", "--sections", "Goal", "--range", "7d", "--from", "2026-01-01"),
+    ),
+    ("invalid_result_id", ("fetch", "--ids", "missing::analysis")),
+    ("budget_above_maximum", ("types", "--budget", "8001")),
+    ("metadata_exceeds_budget", ("types", "--budget", "1")),
+)
+
+
+@pytest.mark.parametrize(("expected_code", "arguments"), ERROR_CASES)
+def test_expected_errors_use_standard_json_envelope(
+    tmp_path: Path, expected_code: str, arguments: tuple[str, ...]
+) -> None:
+    """Expose documented query failures as one stable JSON envelope."""
+    log_dir = tmp_path / "research_log"
+    log_dir.mkdir()
+    _write_log(log_dir, "run.md", "## Goal\nKnown.\n")
+
+    operation, *remaining_arguments = arguments
+    result = _run(operation, "--dir", str(log_dir), *remaining_arguments)
+    if expected_code == "metadata_exceeds_budget":
+        assert result.returncode != 0
+        assert result.stderr == ""
+        error: dict[str, Any] = json.loads(result.stdout)
+        assert error["ok"] is False
+        assert set(error["error"]) == {"code", "details"}
+        assert isinstance(error["error"]["details"], dict)
+    else:
+        error = _error_payload(result)
+
+    assert error["error"]["code"] == expected_code
+
+
+def test_required_or_malformed_arguments_use_standard_json_envelope() -> None:
+    """Keep argparse failures on stdout in the stable public envelope."""
+    for arguments in (("search",), ("fetch",), ("types", "--budget", "not-an-integer")):
+        error = _error_payload(_run(*arguments))
+        assert error["error"]["code"] == "invalid_arguments"
+
+
+def test_malformed_cursor_uses_standard_json_envelope(tmp_path: Path) -> None:
+    """Report malformed opaque cursors without argparse or stderr output."""
+    log_dir = tmp_path / "research_log"
+    log_dir.mkdir()
+
+    error = _error_payload(_run("types", "--dir", str(log_dir), "--cursor", "%%%"))
+
+    assert error["error"]["code"] == "cursor_invalid"

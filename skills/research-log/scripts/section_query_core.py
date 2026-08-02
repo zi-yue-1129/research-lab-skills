@@ -107,6 +107,20 @@ class JournalReadError(Exception):
         super().__init__(f"Could not decode {path} as UTF-8.")
 
 
+class QueryInputError(ValueError):
+    """Report one invalid query input with a stable public error code."""
+
+    def __init__(self, code: str, message: str) -> None:
+        """Initialize a machine-readable query input error.
+
+        Args:
+            code: Stable code identifying the invalid query input.
+            message: Human-readable explanation of the failure.
+        """
+        super().__init__(message)
+        self.code = code
+
+
 def normalize_heading(heading: str) -> tuple[str, str]:
     """Return a display name and URL-safe stable key for a heading.
 
@@ -215,17 +229,25 @@ def resolve_date_bounds(
         Resolved date bounds with the supplied reference date.
 
     Raises:
-        ValueError: A range name or date bound is invalid or conflicting.
+        QueryInputError: A range name or date bound is invalid or conflicting.
     """
     if range_name is not None and range_name not in _ALL_RANGE_NAMES:
         valid_ranges = ", ".join(sorted(_ALL_RANGE_NAMES))
-        raise ValueError(f"Unknown range '{range_name}'. Valid ranges: {valid_ranges}.")
+        raise QueryInputError(
+            "invalid_date_filter",
+            f"Unknown range '{range_name}'. Valid ranges: {valid_ranges}.",
+        )
     if range_name is not None and (from_text is not None or to_text is not None):
-        raise ValueError("--range cannot be combined with --from or --to.")
+        raise QueryInputError(
+            "conflicting_date_filters",
+            "--range cannot be combined with --from or --to.",
+        )
     start = _parse_query_date(from_text, "--from")
     end = _parse_query_date(to_text, "--to")
     if start is not None and end is not None and start > end:
-        raise ValueError("--from must not be later than --to.")
+        raise QueryInputError(
+            "invalid_date_filter", "--from must not be later than --to."
+        )
     if range_name is None:
         return DateBounds("custom" if start is not None or end is not None else "all", start, end, today)
     if range_name == "all":
@@ -435,7 +457,10 @@ def _parse_query_date(date_text: str | None, option_name: str) -> date | None:
     try:
         return date.fromisoformat(date_text)
     except ValueError as error:
-        raise ValueError(f"{option_name} must be an ISO date (YYYY-MM-DD).") from error
+        raise QueryInputError(
+            "invalid_date_filter",
+            f"{option_name} must be an ISO date (YYYY-MM-DD).",
+        ) from error
 
 
 def _is_within_bounds(section: SectionOccurrence, bounds: DateBounds) -> bool:

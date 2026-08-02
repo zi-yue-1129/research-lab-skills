@@ -29,6 +29,7 @@ from section_query_budget import (
 )
 from section_query_core import (
     JournalReadError,
+    QueryInputError,
     QueryWarning,
     ScanResult,
     SectionOccurrence,
@@ -43,18 +44,62 @@ from section_query_core import (
 _MANIFEST_FETCH_BUDGET = 1_000
 
 
-class FetchRequestError(ValueError):
-    """Report invalid full-text retrieval identifiers."""
+class QueryCliError(Exception):
+    """Carry a stable code, message, details, and process exit status."""
 
-    def __init__(self, code: str, message: str) -> None:
-        """Initialize a machine-readable full-text retrieval error.
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        details: dict[str, object] | None = None,
+        exit_status: int = 2,
+    ) -> None:
+        """Initialize a structured CLI error.
 
         Args:
-            code: Stable code identifying the invalid fetch request.
+            code: Stable public identifier for the failure.
             message: Human-readable explanation of the failure.
+            details: JSON-compatible machine-readable diagnostic values.
+            exit_status: Non-zero status returned by the CLI process.
         """
         super().__init__(message)
         self.code = code
+        self.details = details or {}
+        self.exit_status = exit_status
+
+
+class QueryArgumentParser(argparse.ArgumentParser):
+    """Raise structured errors instead of writing argparse diagnostics to stderr."""
+
+    def error(self, message: str) -> None:
+        """Raise a stable error for malformed required or option arguments.
+
+        Args:
+            message: Argument validation detail supplied by :mod:`argparse`.
+
+        Raises:
+            QueryCliError: Always, with the public invalid-arguments code.
+        """
+        raise QueryCliError("invalid_arguments", message)
+
+
+def error_payload(error: QueryCliError) -> dict[str, object]:
+    """Convert one CLI error into the stable public JSON envelope.
+
+    Args:
+        error: Structured command failure to serialize.
+
+    Returns:
+        JSON-compatible error response.
+    """
+    return {
+        "ok": False,
+        "error": {
+            "code": error.code,
+            "message": str(error),
+            "details": error.details,
+        },
+    }
 
 
 def main(arguments: list[str] | None = None) -> int:
@@ -66,10 +111,50 @@ def main(arguments: list[str] | None = None) -> int:
     Returns:
         Zero for a successful query and one for a typed JSON error.
     """
-    parser = argparse.ArgumentParser(
+    parser = _build_parser()
+    try:
+        parsed_arguments = parser.parse_args(arguments)
+        budget = _validate_budget(parsed_arguments.budget)
+        log_directory = Path(parsed_arguments.dir).resolve()
+        scan = scan_journal(log_directory)
+        if parsed_arguments.command == "types":
+            return _run_types(scan, log_directory, budget, parsed_arguments.cursor)
+        if parsed_arguments.command == "search":
+            return _run_search(parsed_arguments, scan, log_directory, budget)
+        if parsed_arguments.command == "fetch":
+            return _run_fetch(parsed_arguments, scan, log_directory, budget)
+        raise QueryCliError(
+            "invalid_arguments", f"Unsupported command: {parsed_arguments.command}."
+        )
+    except QueryCliError as error:
+        _emit(error_payload(error))
+        return error.exit_status
+    except JournalReadError as error:
+        _emit_error(QueryCliError("invalid_utf8", str(error), {"path": str(error.path)}))
+        return 1
+    except QueryInputError as error:
+        _emit_error(QueryCliError(error.code, str(error)))
+        return 1
+    except BudgetError as error:
+        _emit_budget_error(error)
+        return 1
+    except CursorError as error:
+        _emit_error(QueryCliError(error.code, str(error)))
+        return 1
+
+
+def _build_parser() -> QueryArgumentParser:
+    """Build the public command parser with structured error behavior.
+
+    Returns:
+        Configured parser for all supported query operations.
+    """
+    parser = QueryArgumentParser(
         description="Discover and search section types used in research logs."
     )
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers = parser.add_subparsers(
+        dest="command", required=True, parser_class=QueryArgumentParser
+    )
     types_parser = subparsers.add_parser("types", help="List discovered section types.")
     _add_pagination_arguments(types_parser)
     search_parser = subparsers.add_parser("search", help="Search sections by type and date.")
@@ -85,42 +170,7 @@ def main(arguments: list[str] | None = None) -> int:
     search_parser.add_argument("--today", metavar="YYYY-MM-DD", help="Reference date for reproducible ranges.")
     fetch_parser = subparsers.add_parser("fetch", help="Fetch exact full-text section occurrences.")
     _add_fetch_arguments(fetch_parser)
-    parsed_arguments = parser.parse_args(arguments)
-    try:
-        budget = _validate_budget(parsed_arguments.budget)
-        log_directory = Path(parsed_arguments.dir).resolve()
-        scan = scan_journal(log_directory)
-        if parsed_arguments.command == "types":
-            return _run_types(scan, log_directory, budget, parsed_arguments.cursor)
-        if parsed_arguments.command == "search":
-            return _run_search(
-                parser, parsed_arguments, scan, log_directory, budget
-            )
-        if parsed_arguments.command == "fetch":
-            return _run_fetch(parsed_arguments, scan, log_directory, budget)
-    except JournalReadError as error:
-        _emit({
-            "ok": False,
-            "error": {"code": "invalid_utf8", "path": str(error.path), "message": str(error)},
-        })
-        return 1
-    except BudgetError as error:
-        _emit_budget_error(error)
-        return 1
-    except CursorError as error:
-        _emit({
-            "ok": False,
-            "error": {"code": error.code, "message": str(error)},
-        })
-        return 1
-    except FetchRequestError as error:
-        _emit({
-            "ok": False,
-            "error": {"code": error.code, "message": str(error)},
-        })
-        return 1
-    parser.error(f"Unsupported command: {parsed_arguments.command}")
-    return 2
+    return parser
 
 
 def _add_pagination_arguments(parser: argparse.ArgumentParser) -> None:
@@ -188,16 +238,28 @@ def _emit_budget_error(error: BudgetError) -> None:
     """Print a compact control-plane diagnostic for a budget failure.
 
     Successful data responses are budgeted by their complete serialized JSON.
-    An insufficient requested budget cannot represent its own useful JSON error,
-    so failure diagnostics retain only the stable code and machine-useful details.
+    Only a metadata-overflow error stays compact because its requested ceiling
+    cannot represent the full standard error envelope.
 
     Args:
         error: Typed budget failure to expose to the command caller.
     """
-    _emit({
-        "ok": False,
-        "error": {"code": error.code, "details": error.details},
-    })
+    if error.code == "metadata_exceeds_budget":
+        _emit({
+            "ok": False,
+            "error": {"code": error.code, "details": error.details},
+        })
+        return
+    _emit_error(QueryCliError(error.code, str(error), error.details))
+
+
+def _emit_error(error: QueryCliError) -> None:
+    """Write one standard JSON error envelope to stdout.
+
+    Args:
+        error: Structured failure to expose through the public CLI.
+    """
+    _emit(error_payload(error))
 
 
 def _run_types(
@@ -257,7 +319,6 @@ def _run_types(
 
 
 def _run_search(
-    parser: argparse.ArgumentParser,
     parsed_arguments: argparse.Namespace,
     scan: ScanResult,
     log_directory: Path,
@@ -266,7 +327,6 @@ def _run_search(
     """Validate, execute, and emit one budgeted section-search page.
 
     Args:
-        parser: Parser used to report command-line validation errors.
         parsed_arguments: Parsed search command options.
         scan: Scan result returned by the research-log scanner.
         log_directory: Resolved research-log directory bound into cursors.
@@ -275,19 +335,14 @@ def _run_search(
     Returns:
         Zero after emitting the requested manifest page.
     """
-    try:
-        reference_date = _resolve_reference_date(parsed_arguments.today)
-        bounds = resolve_date_bounds(
-            parsed_arguments.range,
-            parsed_arguments.from_text,
-            parsed_arguments.to_text,
-            reference_date,
-        )
-    except ValueError as error:
-        parser.error(str(error))
-    normalized_types = _validate_requested_types(
-        parser, tuple(parsed_arguments.sections), scan
+    reference_date = _resolve_reference_date(parsed_arguments.today)
+    bounds = resolve_date_bounds(
+        parsed_arguments.range,
+        parsed_arguments.from_text,
+        parsed_arguments.to_text,
+        reference_date,
     )
+    normalized_types = _validate_requested_types(tuple(parsed_arguments.sections), scan)
     matches = search_sections(scan, normalized_types, bounds)
     warnings = list(scan.warnings)
     warnings.extend(_undated_exclusion_warnings(scan, normalized_types, bounds.range_name))
@@ -345,7 +400,7 @@ def _run_fetch(
         Zero after emitting a budget-safe fetch control or data response.
 
     Raises:
-        FetchRequestError: IDs are duplicated or do not exist in the journal.
+        QueryInputError: IDs are duplicated or do not exist in the journal.
         CursorError: A chunk cursor is malformed, stale, or mismatched.
         BudgetError: Required fetch control metadata cannot fit the budget.
     """
@@ -405,15 +460,15 @@ def _validate_fetch_ids(item_ids: Sequence[str], scan: ScanResult) -> None:
         scan: Current journal scan used as the authoritative ID source.
 
     Raises:
-        FetchRequestError: The request contains duplicate or unknown IDs.
+        QueryInputError: The request contains duplicate or unknown IDs.
     """
     if len(set(item_ids)) != len(item_ids):
-        raise FetchRequestError("duplicate_ids", "Fetch requests must not repeat an ID.")
+        raise QueryInputError("duplicate_ids", "Fetch requests must not repeat an ID.")
     known_ids = {section.result_id for section in scan.sections}
     unknown_ids = [item_id for item_id in item_ids if item_id not in known_ids]
     if unknown_ids:
-        raise FetchRequestError(
-            "unknown_ids", f"Unknown section IDs: {', '.join(unknown_ids)}."
+        raise QueryInputError(
+            "invalid_result_id", f"Unknown section IDs: {', '.join(unknown_ids)}."
         )
 
 
@@ -807,25 +862,25 @@ def _resolve_reference_date(today_text: str | None) -> date:
         The parsed supplied date or today's date when not supplied.
 
     Raises:
-        ValueError: The supplied reference date is not valid ISO format.
+        QueryInputError: The supplied reference date is not valid ISO format.
     """
     if today_text is None:
         return date.today()
     try:
         return date.fromisoformat(today_text)
     except ValueError as error:
-        raise ValueError("--today must be an ISO date (YYYY-MM-DD).") from error
+        raise QueryInputError(
+            "invalid_date_filter", "--today must be an ISO date (YYYY-MM-DD)."
+        ) from error
 
 
 def _validate_requested_types(
-    parser: argparse.ArgumentParser,
     requested_types: tuple[str, ...],
     scan: ScanResult,
 ) -> tuple[str, ...]:
     """Return normalized requested names or report grouped unknown types.
 
     Args:
-        parser: Parser used to report command-line validation errors.
         requested_types: Raw requested section type names.
         scan: Scan result used to discover current custom types.
 
@@ -855,7 +910,8 @@ def _validate_requested_types(
             normalized_names.append(resolved_name)
     if unknown_names:
         valid_names = ", ".join(summary.name for summary in summaries)
-        parser.error(
+        raise QueryInputError(
+            "unknown_section_type",
             f"Unknown section types: {', '.join(unknown_names)}. Valid types: {valid_names}."
         )
     return tuple(normalized_names)

@@ -35,6 +35,18 @@ def _payload(result: subprocess.CompletedProcess[str]) -> dict[str, Any]:
     return payload
 
 
+def _error_payload(result: subprocess.CompletedProcess[str]) -> dict[str, Any]:
+    """Decode and validate a standard structured CLI error response."""
+    assert result.returncode != 0
+    assert result.stderr == ""
+    payload: dict[str, Any] = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert isinstance(payload["error"]["code"], str)
+    assert isinstance(payload["error"]["message"], str)
+    assert isinstance(payload["error"]["details"], dict)
+    return payload
+
+
 def _estimated_tokens(payload: dict[str, Any]) -> int:
     """Calculate the documented JSON-size token estimate for one payload."""
     serialized = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
@@ -50,9 +62,7 @@ def test_default_budget_is_4000_and_maximum_is_8000(tmp_path: Path) -> None:
     assert default_result["budget"]["limit"] == 4000
 
     rejected = _run("types", "--dir", str(log_dir), "--budget", "8001")
-    assert rejected.returncode != 0
-    error = json.loads(rejected.stdout)
-    assert error["ok"] is False
+    error = _error_payload(rejected)
     assert error["error"]["code"] == "budget_above_maximum"
 
 
@@ -135,6 +145,7 @@ def test_lower_budget_and_metadata_overflow_are_typed(tmp_path: Path) -> None:
 
     rejected = _run("types", "--dir", str(log_dir), "--budget", "1")
     assert rejected.returncode != 0
+    assert rejected.stderr == ""
     error = json.loads(rejected.stdout)
     assert error["ok"] is False
     diagnostic = error["error"]
@@ -167,8 +178,8 @@ def test_cursors_are_opaque_and_reject_changed_query_or_journal(tmp_path: Path) 
         "search", "--dir", str(log_dir), "--sections", "Analysis", "--budget", "600",
         "--cursor", search_cursor,
     )
-    assert changed_query.returncode != 0
-    assert json.loads(changed_query.stdout)["error"]["code"] == "cursor_query_mismatch"
+    changed_query_error = _error_payload(changed_query)
+    assert changed_query_error["error"]["code"] == "cursor_query_mismatch"
 
     taxonomy = _payload(_run("types", "--dir", str(log_dir), "--budget", "600"))
     taxonomy_cursor = taxonomy["next_cursor"]
@@ -180,10 +191,10 @@ def test_cursors_are_opaque_and_reject_changed_query_or_journal(tmp_path: Path) 
         "search", "--dir", str(log_dir), "--sections", "Failures", "--budget", "600",
         "--cursor", search_cursor,
     )
-    assert stale_types.returncode != 0
-    assert stale_search.returncode != 0
-    assert json.loads(stale_types.stdout)["error"]["code"] == "cursor_journal_mismatch"
-    assert json.loads(stale_search.stdout)["error"]["code"] == "cursor_journal_mismatch"
+    stale_types_error = _error_payload(stale_types)
+    stale_search_error = _error_payload(stale_search)
+    assert stale_types_error["error"]["code"] == "cursor_journal_mismatch"
+    assert stale_search_error["error"]["code"] == "cursor_journal_mismatch"
 
 
 def test_fetch_returns_requested_exact_bodies_and_provenance(tmp_path: Path) -> None:
@@ -228,10 +239,10 @@ def test_fetch_rejects_duplicate_and_unknown_ids(tmp_path: Path) -> None:
     )
     unknown = _run("fetch", "--dir", str(log_dir), "--ids", "missing::goal")
 
-    assert duplicate.returncode != 0
-    assert json.loads(duplicate.stdout)["error"]["code"] == "duplicate_ids"
-    assert unknown.returncode != 0
-    assert json.loads(unknown.stdout)["error"]["code"] == "unknown_ids"
+    duplicate_error = _error_payload(duplicate)
+    unknown_error = _error_payload(unknown)
+    assert duplicate_error["error"]["code"] == "duplicate_ids"
+    assert unknown_error["error"]["code"] == "invalid_result_id"
 
 
 def test_fetch_overflow_returns_no_partial_body_and_safe_batches(tmp_path: Path) -> None:
@@ -328,12 +339,12 @@ def test_chunk_cursor_rejects_source_or_budget_changes(tmp_path: Path) -> None:
     different_budget = _run(
         "fetch", "--dir", str(log_dir), "--chunk-cursor", cursor, "--budget", "601",
     )
-    assert different_budget.returncode != 0
-    assert json.loads(different_budget.stdout)["error"]["code"] == "cursor_budget_mismatch"
+    different_budget_error = _error_payload(different_budget)
+    assert different_budget_error["error"]["code"] == "cursor_budget_mismatch"
 
     path.write_text("## Analysis\nChanged.\n", encoding="utf-8")
     changed_source = _run(
         "fetch", "--dir", str(log_dir), "--chunk-cursor", cursor, "--budget", "600",
     )
-    assert changed_source.returncode != 0
-    assert json.loads(changed_source.stdout)["error"]["code"] == "cursor_journal_mismatch"
+    changed_source_error = _error_payload(changed_source)
+    assert changed_source_error["error"]["code"] == "cursor_journal_mismatch"
