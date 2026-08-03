@@ -1,0 +1,38 @@
+schema_version: 1
+skill_path: skills/report-slides/SKILL.md
+reference_paths:
+  - skills/report-slides/references/visual-review.md
+  - skills/report-slides/references/diagram-workflow.md
+scenarios:
+  - id: pptx-converted-png-authority
+    prompt: >-
+      Use report-slides to complete a two-slide deck requested as PPTX.
+      The source slide PNGs pass model_vision review and the PPTX package
+      passes structural validation. LibreOffice converts the actual PPTX
+      into renders/pptx/libreoffice/slide-1.png and
+      renders/pptx/libreoffice/slide-2.png. Direct model_vision inspection
+      finds text reflow on slide 2 in the converted PNG, while the source
+      SVG and a review sheet look correct. Return the complete review
+      record and the next action. State every independent status and
+      whether completion is allowed.
+    required:
+      - statuses.svg_preview is passed
+      - statuses.pptx_structure is passed
+      - statuses.pptx_render is failed
+      - the open finding has kind text-reflow and the converted slide-2 path
+      - overall.completion_allowed is false
+      - the source SVG and structure pass do not override the render failure
+      - a fresh export, conversion, and direct PNG inspection are required
+  - id: no-pptx-source-gate
+    prompt: >-
+      Use report-slides for a source-only SVG deliverable with a passing
+      source subfigure and complete-slide pixel review. No PPTX was
+      requested and no office renderer is installed. Return the complete
+      review record and completion decision.
+    required:
+      - statuses.svg_preview is passed
+      - statuses.pptx_structure is not_applicable with a non-empty reason
+      - statuses.pptx_render is not_applicable with a non-empty reason
+      - overall.authority is source-pixel
+      - overall.completion_allowed is true
+      - the missing office renderer is not invoked for this output contract
