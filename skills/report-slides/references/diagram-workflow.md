@@ -208,10 +208,40 @@ Report one record per visual with:
 - selected authoring route and editability level;
 - action: created, reused, modified, or derived;
 - reused source and each changed region with its reason;
-- visual-review status and revision-round count;
-- SVG or slide-preview review, native PPTX structural validation, and
-  post-export rendered-deck validation as separate signals; and
-- any remaining raster layers and why they remain raster.
+- the three independent statuses — `statuses.svg_preview`,
+  `statuses.pptx_structure`, `statuses.pptx_render` — never collapsed into one
+  generic status;
+- for a PPTX deliverable, the direct converted PNG paths under
+  `statuses.pptx_render.rendered_png_paths` and the identical set model_vision
+  inspected under `statuses.pptx_render.model_vision.inspected_paths`,
+  renderer metadata (`renderer.name`, `renderer.version`,
+  `renderer.conversion_format`) and `conversion_artifacts`;
+- review-round count per gate, every finding (`kind`, `scope`,
+  `artifact_path`, `source`, `disposition`), and `revision_required`; and
+- any remaining raster layers and why they remain raster, and any `blocked`
+  status with its exact blocker or `not_applicable` status with its reason.
 
 Do not collapse render review, PPTX structure, and post-export rendering into a
-single generic status.
+single generic status. `overall.completion_allowed` follows only from the
+three independent statuses (`pptx-render` authority for a PPTX request,
+`source-pixel` authority otherwise) — never assert completion from a subset of
+them.
+
+Validate a review record deterministically before reporting it complete:
+
+```bash
+python3 skills/report-slides/scripts/validate_visual_review.py \
+  --record docs/slides/reports/2026-08-03_pptx-review-gate/review.json \
+  --root docs/slides/reports/2026-08-03_pptx-review-gate
+```
+
+This validator checks the record's shape — required fields, status
+independence, path safety, and the derived `overall` result — and rejects a
+record whose `model_vision.inspected_paths` do not exactly match the final
+converted PNG set. It does not replace direct model_vision inspection of the
+rendered pixels themselves: a structurally valid record can still describe a
+run where the required inspection never happened, if the runtime lied about
+which paths it inspected. `render_review_sheet.py` remains the supplemental,
+unchanged tool for assembling already-rendered PNG/JPEG previews into one
+comparison sheet; it never substitutes for the individual paths validated
+above.
