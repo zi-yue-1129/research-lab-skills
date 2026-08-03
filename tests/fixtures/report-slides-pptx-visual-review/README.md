@@ -38,8 +38,9 @@ actually used for each run rather than a fixed constant).
   `_estimate_text_width`) is a character-count heuristic
   (`chars * font_size * 0.65`), not real font metrics. A long bold title
   renders wider than that estimate in LibreOffice, so the converted textbox
-  (`word_wrap=False`) does not wrap — it truncates behind the adjacent
-  content instead of remaining a single readable line. `pptx_render` fails
+  (`word_wrap=False`) does not wrap — the run overruns the slide's right
+  boundary and is sheared off there, instead of remaining a single fully
+  visible line. `pptx_render` fails
   with an open `text-reflow` finding; `svg_preview` and `pptx_structure`
   both pass, and neither pass overrides the render failure.
 

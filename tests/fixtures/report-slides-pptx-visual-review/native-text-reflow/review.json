@@ -52,7 +52,7 @@
             "region": "title"
           },
           "artifact_path": "native-text-reflow/renders/pptx/slide-01.png",
-          "description": "The converter estimates native textbox width from character count alone; the bold title's actual rendered width exceeds that estimate, so the line is truncated behind the milestone card instead of remaining a single readable line.",
+          "description": "The converter estimates native textbox width from character count alone; the bold title's actual rendered width exceeds that estimate, so the untruncated run overruns the 12,192,000 EMU slide boundary by roughly 0.96in and is sheared off at the slide's right edge, instead of remaining a single fully visible line.",
           "source": "pptx-render",
           "disposition": "open"
         }
