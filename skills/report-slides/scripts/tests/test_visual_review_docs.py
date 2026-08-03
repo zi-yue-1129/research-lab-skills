@@ -9,6 +9,7 @@ silently drift away from the machine-checkable contract in
 from pathlib import Path
 
 _SKILL_ROOT = Path(__file__).resolve().parents[2]
+_SKILL_DOC = _SKILL_ROOT / "SKILL.md"
 _VISUAL_REVIEW_DOC = _SKILL_ROOT / "references" / "visual-review.md"
 _DIAGRAM_WORKFLOW_DOC = _SKILL_ROOT / "references" / "diagram-workflow.md"
 
@@ -77,3 +78,48 @@ def test_diagram_workflow_doc_states_validator_does_not_replace_direct_inspectio
     assert "does not replace direct model_vision inspection" in normalized
     assert "render_review_sheet.py" in normalized
     assert "supplemental" in normalized
+
+
+def test_skill_names_every_required_token() -> None:
+    """Require SKILL.md to name every review-record contract token."""
+    text = _read(_SKILL_DOC)
+    missing = [token for token in _REQUIRED_TOKENS if token not in text]
+    assert not missing, f"SKILL.md is missing required tokens: {missing}"
+
+
+def test_skill_states_pptx_render_is_authoritative() -> None:
+    """Require SKILL.md to name pptx_render as the authoritative PPTX gate."""
+    normalized = _read_normalized(_SKILL_DOC)
+    assert "statuses.pptx_render" in normalized
+    assert "authoritative" in normalized
+
+
+def test_skill_requires_actual_conversion_and_direct_inspection() -> None:
+    """Require SKILL.md to describe real conversion and direct PNG inspection."""
+    normalized = _read_normalized(_SKILL_DOC)
+    assert "LibreOffice" in normalized
+    assert "rendered_png_paths" in normalized
+    assert "model_vision.inspected_paths" in normalized
+    assert "direct" in normalized
+
+
+def test_skill_requires_completion_allowed_false_for_blockers() -> None:
+    """Require SKILL.md to state that a blocker prevents completion."""
+    normalized = _read_normalized(_SKILL_DOC)
+    assert "completion_allowed" in normalized
+    assert "blocked" in normalized
+
+
+def test_skill_requires_not_applicable_for_non_pptx_output() -> None:
+    """Require SKILL.md to mark both PPTX gates not_applicable without PPTX."""
+    normalized = _read_normalized(_SKILL_DOC)
+    assert "not_applicable" in normalized
+    assert "reasons" in normalized or "reason" in normalized
+
+
+def test_skill_preserves_existing_native_editability_and_converter_wording() -> None:
+    """Require SKILL.md to keep its existing svg_to_pptx/native editability wording."""
+    normalized = _read_normalized(_SKILL_DOC)
+    assert "svg_to_pptx" in normalized
+    assert "native" in normalized
+    assert "editable" in normalized

@@ -161,11 +161,36 @@ conceptual illustrations:
    `python3 scripts/validate_diagram_manifest.py --plan <plan>`,
    `python3 scripts/validate_diagram_manifest.py --manifest <manifest>`, and
    `python3 scripts/validate_diagram_manifest.py --root <asset-root>`.
-9. **native PPTX export and separate validation:** for a PPTX deliverable,
-   export native PPTX and report `SVG-preview`, `PPTX-structure`, and
-   `PPTX-render` statuses as separate validation stages. If PPTX export is not
-   requested, record the two PPTX stages as not requested rather than collapsing
-   them into preview.
+9. **output-format branch — export, convert, and directly inspect, or mark
+   not applicable:**
+
+   ```
+   if output_format is pptx:
+       require statuses.svg_preview passed before export
+       export the actual deck.pptx
+       validate package structure into statuses.pptx_structure
+       convert the actual deck.pptx with LibreOffice or an equivalent
+           office renderer (never the source SVG)
+       produce exactly one final PNG for every expected slide under
+           rendered_png_paths
+       send every final PNG path directly to model_vision as
+           model_vision.inspected_paths
+       record statuses.pptx_render
+       allow completion only when statuses.svg_preview,
+           statuses.pptx_structure, and statuses.pptx_render are all passed
+   otherwise:
+       record both statuses.pptx_structure and statuses.pptx_render as
+           not_applicable with a non-empty reason
+       use statuses.svg_preview as the final, authoritative visual gate
+   ```
+
+   `statuses.pptx_render` is the authoritative final visual gate for a PPTX
+   deliverable: a source SVG preview and a passing `statuses.pptx_structure`
+   never override it. Unavailable conversion or unavailable/partial direct
+   final-PNG inspection is `blocked`, not `passed` — a source PNG, a review
+   sheet, or the structure report cannot satisfy the missing
+   `model_vision.inspected_paths` evidence. A `blocked` or `failed` status on
+   any required gate sets `overall.completion_allowed` to `false`.
 
 Missing rendering or model-vision review is a hard blocker: retain the failing
 artifact, record the blocker, and do not mark the visual or deck complete.
@@ -212,9 +237,20 @@ Read only the references needed for the selected route and gate:
 - The completion report records, for every visual: `diagram_type`, `slide`,
   `authoring_route` and route tag, `diagram_id`, action (`created`, `reused`,
   `modified`, or `derived`), reused source, changed regions with reasons,
-  editability, review rounds, separate `SVG-preview`/`PPTX-structure`/
-  `PPTX-render` statuses, remaining raster layers, and the rationale for each
-  raster layer.
+  editability, remaining raster layers, and the rationale for each raster
+  layer. It records the review evidence using the exact record field names —
+  `statuses.svg_preview`, `statuses.pptx_structure`, `statuses.pptx_render`,
+  each with `reviewed_by`, `inspected_paths`, `findings`, `revision_required`,
+  and its review-round number — never the three gates collapsed into one
+  status. For a PPTX deliverable, the `statuses.pptx_render` entry also
+  carries `renderer.name`, `renderer.version`, `renderer.conversion_format`,
+  `conversion_artifacts`, `rendered_png_paths`, `model_vision.inspected_paths`,
+  and `visual_checks`; `model_vision.inspected_paths` must equal the converted
+  PNG set named in `rendered_png_paths` — `comparison_reference_paths` are
+  optional diagnostics only and never substitute for that set. `overall`
+  reports `overall.authority` (`pptx-render` for PPTX output,
+  `source-pixel` otherwise) and `overall.completion_allowed`; an open finding
+  or an incomplete direct-inspection set keeps `completion_allowed` `false`.
 
 ### 3.4 Response-facing contract
 
@@ -237,7 +273,13 @@ claims:
   response.
 - `review`: State explicitly that each subfigure and the complete slide were
   rendered to pixels, inspected with model vision, and revised and re-rendered
-  until passing; validation-status lists alone are insufficient.
+  until passing; validation-status lists alone are insufficient. For a PPTX
+  deliverable, additionally state that the actual `deck.pptx` was converted
+  with LibreOffice (or an equivalent office renderer) and that every
+  converted PNG under `rendered_png_paths` was directly inspected by
+  `model_vision` before `statuses.pptx_render` was recorded — a source-pixel
+  pass and a passing `statuses.pptx_structure` are not substitutes for that
+  direct inspection.
 - `generation` and `editability`: For `route: generative` /
   `authoring_route: generative` `[V:AI]` and `route: hybrid` /
   `authoring_route: hybrid` `[V:HYBRID]`, name `prompt.md` and report manifest
@@ -497,6 +539,31 @@ python3 to_pptx.py \
 
 Only `python-pptx` and `lxml` required — no cairosvg, Pillow, or image converter needed.
 
+**A PPTX export is not the final visual check.** Exporting `deck.pptx` only
+produces the artifact `statuses.pptx_render` will judge — it is not itself
+evidence that the deck looks correct, and neither is inspecting the SVG
+source or the PPTX's internal object tree. Immediately after export:
+
+1. Validate the produced package's structure (relationships, editable
+   objects, image references) into `statuses.pptx_structure`. This never
+   inspects visual placement.
+2. Convert the actual `deck.pptx` — never the source SVG — with LibreOffice
+   or an equivalent available office renderer, producing exactly one PNG per
+   expected slide (see `references/visual-review.md` for the concrete
+   `libreoffice`/`pdftoppm` commands).
+3. Send every converted PNG path directly to model vision as
+   `model_vision.inspected_paths` and record the outcome as
+   `statuses.pptx_render` — the authoritative final visual gate.
+4. Validate the resulting review record with
+   `python3 skills/report-slides/scripts/validate_visual_review.py --record <path> --root <path>`
+   (see `references/diagram-workflow.md`).
+
+If LibreOffice or an equivalent renderer is unavailable, or the direct
+final-PNG inspection cannot be completed, record `statuses.pptx_render` as
+`blocked` with the exact missing capability and set
+`overall.completion_allowed` to `false` — do not report the deck complete
+from the SVG preview, the review sheet, or the PPTX structure result alone.
+
 ---
 
 ## Summary output
@@ -505,8 +572,13 @@ After all slides are generated, print:
 - Output directory and slide list with rendering path tags ([A] / [B] / [C])
 - One completion record per non-trivial visual with its route tag, `diagram_id`,
   type, slide, action, reused source, changed regions and reasons, editability,
-  review rounds, separate SVG-preview/PPTX-structure/PPTX-render statuses, and
-  remaining raster layers with their rationale
+  `statuses.svg_preview`, `statuses.pptx_structure`, and `statuses.pptx_render`
+  (each with `reviewed_by`, `inspected_paths`, `findings`, `revision_required`,
+  and round count — for PPTX, also `renderer.name`/`version`/
+  `conversion_format`, `conversion_artifacts`, `rendered_png_paths`, and
+  `model_vision.inspected_paths`), `overall.authority` and
+  `overall.completion_allowed`, and remaining raster layers with their
+  rationale
 - `slide_data.json` re-render tip for [A] slides
 - `chart_list.md` note if applicable
 - Updated log files
