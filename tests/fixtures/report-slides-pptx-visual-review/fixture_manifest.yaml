@@ -1,0 +1,100 @@
+schema_version: 1
+cases:
+  - deck_id: clean-two-slide
+    output_format: pptx
+    expected_slides: [1, 2]
+    source_artifacts:
+      - clean-two-slide/source/slide-01.svg
+      - clean-two-slide/source/slide-02.svg
+      - clean-two-slide/source/asset_curve.png
+    artifacts:
+      pptx: clean-two-slide/deck.pptx
+      review_record: clean-two-slide/review.json
+    expected_statuses:
+      svg_preview: passed
+      pptx_structure: passed
+      pptx_render: passed
+    expected_finding_kind: null
+    renderer_conversion_format: pdf-to-png
+    expected_completion_allowed: true
+
+  - deck_id: native-text-reflow
+    output_format: pptx
+    expected_slides: [1]
+    source_artifacts:
+      - native-text-reflow/source/slide-01.svg
+    artifacts:
+      pptx: native-text-reflow/deck.pptx
+      review_record: native-text-reflow/review.json
+    expected_statuses:
+      svg_preview: passed
+      pptx_structure: passed
+      pptx_render: failed
+    expected_finding_kind: text-reflow
+    renderer_conversion_format: pdf-to-png
+    expected_completion_allowed: false
+
+  - deck_id: connector-endpoint-drift
+    output_format: pptx
+    expected_slides: [1]
+    source_artifacts:
+      - connector-endpoint-drift/source/slide-01.svg
+    artifacts:
+      pptx: connector-endpoint-drift/deck.pptx
+      review_record: connector-endpoint-drift/review.json
+    expected_statuses:
+      svg_preview: passed
+      pptx_structure: passed
+      pptx_render: failed
+    expected_finding_kind: connector-drift
+    renderer_conversion_format: pdf-to-png
+    expected_completion_allowed: false
+
+  - deck_id: image-crop-regression
+    output_format: pptx
+    expected_slides: [1]
+    source_artifacts:
+      - image-crop-regression/source/slide-01.svg
+      - image-crop-regression/source/asset_curve.png
+    artifacts:
+      pptx: image-crop-regression/deck.pptx
+      review_record: image-crop-regression/review.json
+    expected_statuses:
+      svg_preview: passed
+      pptx_structure: passed
+      pptx_render: failed
+    expected_finding_kind: crop
+    renderer_conversion_format: pdf-to-png
+    expected_completion_allowed: false
+
+  - deck_id: missing-image-relationship
+    output_format: pptx
+    expected_slides: [1]
+    source_artifacts:
+      - missing-image-relationship/source/slide-01.svg
+    artifacts:
+      pptx: missing-image-relationship/deck.pptx
+      review_record: missing-image-relationship/review.json
+    expected_statuses:
+      svg_preview: passed
+      pptx_structure: failed
+      pptx_render: failed
+    expected_finding_kind: missing-image
+    renderer_conversion_format: pdf-to-png
+    expected_completion_allowed: false
+
+  - deck_id: unreadably-small-text
+    output_format: pptx
+    expected_slides: [1]
+    source_artifacts:
+      - unreadably-small-text/source/slide-01.svg
+    artifacts:
+      pptx: unreadably-small-text/deck.pptx
+      review_record: unreadably-small-text/review.json
+    expected_statuses:
+      svg_preview: passed
+      pptx_structure: passed
+      pptx_render: failed
+    expected_finding_kind: unreadably-small-text
+    renderer_conversion_format: pdf-to-png
+    expected_completion_allowed: false

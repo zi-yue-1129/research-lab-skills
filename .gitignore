@@ -3,8 +3,10 @@ __pycache__/
 .DS_Store
 *.pptx
 !examples/**/*.pptx
+!tests/fixtures/report-slides-pptx-visual-review/**/*.pptx
 *.png
 !examples/report-slides/visual-authoring/**/*.png
+!tests/fixtures/report-slides-pptx-visual-review/**/*.png
 node_modules/
 .claude/worktrees/
 

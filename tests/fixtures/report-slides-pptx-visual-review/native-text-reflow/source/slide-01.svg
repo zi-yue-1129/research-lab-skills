@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675">
+  <rect x="0" y="0" width="1200" height="675" fill="#ffffff"/>
+  <rect x="0" y="0" width="1200" height="6" fill="#1e3a5f"/>
+  <rect x="900" y="220" width="260" height="140" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="2"/>
+  <text x="930" y="270" font-size="18" font-family="Helvetica" fill="#374151">Next milestone</text>
+  <text x="930" y="300" font-size="18" font-family="Helvetica" fill="#059669">Publishing gate</text>
+  <text x="560" y="120" font-size="40" font-weight="bold" font-family="Helvetica" fill="#1e3a5f">Reviewer approval milestone</text>
+</svg>

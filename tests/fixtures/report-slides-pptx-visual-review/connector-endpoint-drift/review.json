@@ -1,0 +1,106 @@
+{
+  "schema_version": 1,
+  "deck_id": "connector-endpoint-drift",
+  "output_format": "pptx",
+  "expected_slides": [
+    1
+  ],
+  "source_artifacts": [
+    "connector-endpoint-drift/source/slide-01.svg"
+  ],
+  "artifacts": {
+    "pptx": "connector-endpoint-drift/deck.pptx",
+    "review_record": "connector-endpoint-drift/review.json"
+  },
+  "statuses": {
+    "svg_preview": {
+      "status": "passed",
+      "round": 1,
+      "reviewed_by": "model_vision",
+      "inspected_paths": [
+        "connector-endpoint-drift/renders/source/slide-01.png"
+      ],
+      "findings": [],
+      "revision_required": false,
+      "started_at": "2026-08-04T00:20:00Z",
+      "completed_at": "2026-08-04T00:21:00Z"
+    },
+    "pptx_structure": {
+      "status": "passed",
+      "round": 1,
+      "reviewed_by": "pptx_structure_validator",
+      "inspected_paths": [
+        "connector-endpoint-drift/deck.pptx"
+      ],
+      "findings": [],
+      "revision_required": false,
+      "started_at": "2026-08-04T00:21:30Z",
+      "completed_at": "2026-08-04T00:22:00Z"
+    },
+    "pptx_render": {
+      "status": "failed",
+      "round": 1,
+      "reviewed_by": "model_vision",
+      "inspected_paths": [
+        "connector-endpoint-drift/renders/pptx/slide-01.png"
+      ],
+      "findings": [
+        {
+          "kind": "connector-drift",
+          "scope": {
+            "slide": 1,
+            "region": "approval-branch"
+          },
+          "artifact_path": "connector-endpoint-drift/renders/pptx/slide-01.png",
+          "description": "The converter does not apply the SVG group transform on the 'Approved' shape, so that shape converts at its untransformed local coordinates and lands on top of the 'Draft output' shape; the straight connector still ends at its original absolute coordinate and no longer touches any shape.",
+          "source": "pptx-render",
+          "disposition": "open"
+        }
+      ],
+      "revision_required": true,
+      "started_at": "2026-08-04T00:22:30Z",
+      "completed_at": "2026-08-04T00:24:00Z",
+      "renderer": {
+        "name": "LibreOffice",
+        "version": "7.3.7.2",
+        "conversion_format": "pdf-to-png"
+      },
+      "conversion_artifacts": [
+        "connector-endpoint-drift/renders/pptx/deck.pdf"
+      ],
+      "rendered_png_paths": [
+        "connector-endpoint-drift/renders/pptx/slide-01.png"
+      ],
+      "model_vision": {
+        "inspected_paths": [
+          "connector-endpoint-drift/renders/pptx/slide-01.png"
+        ],
+        "comparison_reference_paths": [
+          "connector-endpoint-drift/renders/source/slide-01.png"
+        ]
+      },
+      "visual_checks": {
+        "clipping": "passed",
+        "overlap": "failed",
+        "text_reflow": "passed",
+        "connector_drift": "failed",
+        "crop": "passed",
+        "unreadably_small_text": "passed",
+        "missing_image": "passed",
+        "other_layout_regressions": "passed"
+      }
+    }
+  },
+  "overall": {
+    "status": "failed",
+    "completion_allowed": false,
+    "authority": "pptx-render"
+  },
+  "history": [
+    {
+      "round": 1,
+      "result": "failed",
+      "revision": "Open connector-drift finding; the 'Approved' shape must be authored without a group transform (or the converter must apply it) before a fresh export/conversion/inspection cycle."
+    }
+  ]
+}

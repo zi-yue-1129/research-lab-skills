@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675">
+  <rect x="0" y="0" width="1200" height="675" fill="#ffffff"/>
+  <rect x="0" y="0" width="1200" height="6" fill="#1e3a5f"/>
+  <text x="60" y="70" font-size="30" font-weight="bold" font-family="Helvetica" fill="#1e3a5f">Evaluation curve, full subject</text>
+  <g transform="translate(-920,0)">
+    <image x="1000" y="260" width="320" height="208" href="asset_curve.png"/>
+  </g>
+</svg>

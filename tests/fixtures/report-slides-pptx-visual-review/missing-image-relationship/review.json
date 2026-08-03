@@ -1,0 +1,118 @@
+{
+  "schema_version": 1,
+  "deck_id": "missing-image-relationship",
+  "output_format": "pptx",
+  "expected_slides": [
+    1
+  ],
+  "source_artifacts": [
+    "missing-image-relationship/source/slide-01.svg"
+  ],
+  "artifacts": {
+    "pptx": "missing-image-relationship/deck.pptx",
+    "review_record": "missing-image-relationship/review.json"
+  },
+  "statuses": {
+    "svg_preview": {
+      "status": "passed",
+      "round": 1,
+      "reviewed_by": "model_vision",
+      "inspected_paths": [
+        "missing-image-relationship/renders/source/slide-01.png"
+      ],
+      "findings": [],
+      "revision_required": false,
+      "started_at": "2026-08-04T00:40:00Z",
+      "completed_at": "2026-08-04T00:41:00Z"
+    },
+    "pptx_structure": {
+      "status": "failed",
+      "round": 1,
+      "reviewed_by": "pptx_structure_validator",
+      "inspected_paths": [
+        "missing-image-relationship/deck.pptx"
+      ],
+      "findings": [
+        {
+          "kind": "missing-image",
+          "scope": {
+            "slide": 1,
+            "region": "evaluation-curve"
+          },
+          "artifact_path": "missing-image-relationship/deck.pptx",
+          "description": "The source SVG embeds the reference image as a data: URI. The converter's image dispatch explicitly skips any href starting with 'data:' and returns without adding a picture shape, so the exported package has zero picture shapes and no ppt/media relationship for the image at all (confirmed by inspecting the package with python-pptx and unzipping ppt/media/).",
+          "source": "pptx-structure",
+          "disposition": "open"
+        }
+      ],
+      "revision_required": true,
+      "started_at": "2026-08-04T00:41:30Z",
+      "completed_at": "2026-08-04T00:42:30Z"
+    },
+    "pptx_render": {
+      "status": "failed",
+      "round": 1,
+      "reviewed_by": "model_vision",
+      "inspected_paths": [
+        "missing-image-relationship/renders/pptx/slide-01.png"
+      ],
+      "findings": [
+        {
+          "kind": "missing-image",
+          "scope": {
+            "slide": 1,
+            "region": "evaluation-curve"
+          },
+          "artifact_path": "missing-image-relationship/renders/pptx/slide-01.png",
+          "description": "Independently observed in the converted render: the evaluation-curve image is entirely absent from the rendered slide, consistent with the missing package relationship found under pptx_structure.",
+          "source": "pptx-render",
+          "disposition": "open"
+        }
+      ],
+      "revision_required": true,
+      "started_at": "2026-08-04T00:42:45Z",
+      "completed_at": "2026-08-04T00:43:30Z",
+      "renderer": {
+        "name": "LibreOffice",
+        "version": "7.3.7.2",
+        "conversion_format": "pdf-to-png"
+      },
+      "conversion_artifacts": [
+        "missing-image-relationship/renders/pptx/deck.pdf"
+      ],
+      "rendered_png_paths": [
+        "missing-image-relationship/renders/pptx/slide-01.png"
+      ],
+      "model_vision": {
+        "inspected_paths": [
+          "missing-image-relationship/renders/pptx/slide-01.png"
+        ],
+        "comparison_reference_paths": [
+          "missing-image-relationship/renders/source/slide-01.png"
+        ]
+      },
+      "visual_checks": {
+        "clipping": "passed",
+        "overlap": "passed",
+        "text_reflow": "passed",
+        "connector_drift": "passed",
+        "crop": "passed",
+        "unreadably_small_text": "passed",
+        "missing_image": "failed",
+        "other_layout_regressions": "passed"
+      }
+    }
+  },
+  "overall": {
+    "status": "failed",
+    "completion_allowed": false,
+    "authority": "pptx-render"
+  },
+  "history": [
+    {
+      "round": 1,
+      "result": "failed",
+      "revision": "Open missing-image finding under both pptx_structure and pptx_render; the source must reference the image by file path instead of a data: URI before a fresh export/conversion/inspection cycle."
+    }
+  ]
+}

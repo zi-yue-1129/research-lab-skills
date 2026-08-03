@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "deck_id": "image-crop-regression",
+  "output_format": "pptx",
+  "expected_slides": [
+    1
+  ],
+  "source_artifacts": [
+    "image-crop-regression/source/slide-01.svg",
+    "image-crop-regression/source/asset_curve.png"
+  ],
+  "artifacts": {
+    "pptx": "image-crop-regression/deck.pptx",
+    "review_record": "image-crop-regression/review.json"
+  },
+  "statuses": {
+    "svg_preview": {
+      "status": "passed",
+      "round": 1,
+      "reviewed_by": "model_vision",
+      "inspected_paths": [
+        "image-crop-regression/renders/source/slide-01.png"
+      ],
+      "findings": [],
+      "revision_required": false,
+      "started_at": "2026-08-04T00:30:00Z",
+      "completed_at": "2026-08-04T00:31:00Z"
+    },
+    "pptx_structure": {
+      "status": "passed",
+      "round": 1,
+      "reviewed_by": "pptx_structure_validator",
+      "inspected_paths": [
+        "image-crop-regression/deck.pptx"
+      ],
+      "findings": [],
+      "revision_required": false,
+      "started_at": "2026-08-04T00:31:30Z",
+      "completed_at": "2026-08-04T00:32:00Z"
+    },
+    "pptx_render": {
+      "status": "failed",
+      "round": 1,
+      "reviewed_by": "model_vision",
+      "inspected_paths": [
+        "image-crop-regression/renders/pptx/slide-01.png"
+      ],
+      "findings": [
+        {
+          "kind": "crop",
+          "scope": {
+            "slide": 1,
+            "region": "evaluation-curve"
+          },
+          "artifact_path": "image-crop-regression/renders/pptx/slide-01.png",
+          "description": "The image sits inside an SVG group transform that the converter ignores, so it converts at its untransformed local x (1000) instead of the intended translated position; at that raw position the picture extends past the 1200-wide canvas and the slide edge crops its two rightmost data points.",
+          "source": "pptx-render",
+          "disposition": "open"
+        }
+      ],
+      "revision_required": true,
+      "started_at": "2026-08-04T00:32:30Z",
+      "completed_at": "2026-08-04T00:34:00Z",
+      "renderer": {
+        "name": "LibreOffice",
+        "version": "7.3.7.2",
+        "conversion_format": "pdf-to-png"
+      },
+      "conversion_artifacts": [
+        "image-crop-regression/renders/pptx/deck.pdf"
+      ],
+      "rendered_png_paths": [
+        "image-crop-regression/renders/pptx/slide-01.png"
+      ],
+      "model_vision": {
+        "inspected_paths": [
+          "image-crop-regression/renders/pptx/slide-01.png"
+        ],
+        "comparison_reference_paths": [
+          "image-crop-regression/renders/source/slide-01.png"
+        ]
+      },
+      "visual_checks": {
+        "clipping": "failed",
+        "overlap": "passed",
+        "text_reflow": "passed",
+        "connector_drift": "passed",
+        "crop": "failed",
+        "unreadably_small_text": "passed",
+        "missing_image": "passed",
+        "other_layout_regressions": "passed"
+      }
+    }
+  },
+  "overall": {
+    "status": "failed",
+    "completion_allowed": false,
+    "authority": "pptx-render"
+  },
+  "history": [
+    {
+      "round": 1,
+      "result": "failed",
+      "revision": "Open crop finding; the image must be authored without a group transform (or the converter must apply it) before a fresh export/conversion/inspection cycle."
+    }
+  ]
+}
