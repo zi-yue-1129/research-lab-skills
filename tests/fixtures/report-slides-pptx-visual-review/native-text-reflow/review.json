@@ -80,7 +80,7 @@
         ]
       },
       "visual_checks": {
-        "clipping": "passed",
+        "clipping": "failed",
         "overlap": "passed",
         "text_reflow": "failed",
         "connector_drift": "passed",

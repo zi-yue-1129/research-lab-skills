@@ -198,6 +198,39 @@ is `not_applicable`, naming the output contract that excludes the gate.
 `revision_required` is `true` for a `failed` status and `false` for a `passed`
 status.
 
+### Finding fields
+
+Every entry in a gate's `findings` list is a mapping with exactly these
+fields:
+
+| Field | Requirement |
+|---|---|
+| `kind` | One of `clipping`, `overlap`, `text-reflow`, `connector-drift`, `crop`, `unreadably-small-text`, `missing-image`, `z-order`, `alignment`, or `other`. No other value is accepted. |
+| `scope` | A mapping naming at least the affected `slide`, and a `region` when known. |
+| `artifact_path` | The rendered or source artifact where the finding is visible. |
+| `description` | A concrete, specific observation — not a generic quality label. |
+| `source` | One of `svg-preview`, `pptx-structure`, or `pptx-render`: the gate that observed the finding. |
+| `disposition` | One of `open`, `fixed`, or `rechecked`. |
+
+A `failed` status requires at least one finding with `disposition: open`.
+A `passed` status must not retain any `open` finding. State every field by
+name — a prose description of the defect is not a substitute for the
+literal `kind` value. For example, a failed `pptx_render` round with a
+converted-only text overflow records:
+
+```json
+"findings": [
+  {
+    "kind": "text-reflow",
+    "scope": { "slide": 2, "region": "title" },
+    "artifact_path": "renders/pptx/libreoffice/slide-02.png",
+    "description": "The native textbox width estimate is narrower than the actual rendered run, so the title overruns the slide's right edge instead of remaining a single fully visible line.",
+    "source": "pptx-render",
+    "disposition": "open"
+  }
+]
+```
+
 **Source-only record rule (adjacent to the example above):** when PPTX was
 not requested, both `statuses.pptx_structure` and `statuses.pptx_render` are
 `not_applicable` with an explicit, non-empty `reason`, `overall.authority` is
