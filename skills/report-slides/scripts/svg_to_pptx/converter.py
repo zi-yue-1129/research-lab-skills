@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Any, Dict, List, Optional, Tuple
 
 from lxml import etree
 from pptx import Presentation
@@ -13,6 +14,7 @@ PPTX_W = 12_192_000
 PPTX_H = 6_858_000
 _SVG_NS = "http://www.w3.org/2000/svg"
 _XLINK_NS = "http://www.w3.org/1999/xlink"
+_CANVAS_TOLERANCE = 1e-6
 
 
 @dataclass
@@ -54,6 +56,8 @@ class SvgConverter:
         self.root = tree.getroot()
         vb = self.root.get("viewBox", "0 0 1200 675")
         self.cs = CoordSystem.from_viewbox(vb)
+        self._shape_labels: Dict[int, List[Any]] = {}
+        self._text_to_shape: Dict[int, Any] = {}
         self._defs: Dict[str, Any] = {}
         self._connector_registry: List = []
         self._shape_registry: List = []
@@ -62,10 +66,13 @@ class SvgConverter:
     def convert(self, prs: Presentation, slide_layout: Any) -> Any:
         self._connector_registry = []
         self._shape_registry = []
+        self._shape_labels = {}
+        self._text_to_shape = {}
         self._pending_texts = []
         slide = prs.slides.add_slide(slide_layout)
         self._resolve_defs()
         self._resolve_use_elements()
+        self._compute_text_attachments()
         self._dispatch_children(slide, self.root, {})
         # Add all text boxes after shapes so they appear on top
         from .text_converter import add_textbox
@@ -108,6 +115,79 @@ class SvgConverter:
                 parent.insert(idx, clone)
                 parent.remove(use_elem)
 
+    def _compute_text_attachments(self) -> None:
+        """Attach text to the smallest semantic shape containing its baseline.
+
+        A full-canvas rectangle is commonly emitted as a rendering background.
+        It remains a native PPTX shape, but is deliberately excluded from this
+        semantic attachment pass so labels outside smaller shapes stay editable
+        standalone textboxes. Positions are still conservatively based on the
+        SVG ``x``/``y`` attributes; transformed text is not inferred here.
+        """
+        shape_bboxes: List[Tuple[Any, float, float, float, float]] = []
+        for elem in self.root.iter():
+            tag = _local_tag(elem)
+            try:
+                if tag == "rect":
+                    x = float(elem.get("x", 0))
+                    y = float(elem.get("y", 0))
+                    w = float(elem.get("width", 0))
+                    h = float(elem.get("height", 0))
+                    if self._is_canvas_background(x, y, w, h):
+                        continue
+                    shape_bboxes.append((elem, x, y, w, h))
+                elif tag == "circle":
+                    cx = float(elem.get("cx", 0))
+                    cy = float(elem.get("cy", 0))
+                    r = float(elem.get("r", 0))
+                    shape_bboxes.append((elem, cx - r, cy - r, 2 * r, 2 * r))
+                elif tag == "ellipse":
+                    cx = float(elem.get("cx", 0))
+                    cy = float(elem.get("cy", 0))
+                    rx = float(elem.get("rx", 0))
+                    ry = float(elem.get("ry", 0))
+                    shape_bboxes.append((elem, cx - rx, cy - ry, 2 * rx, 2 * ry))
+            except ValueError:
+                pass
+
+        for text_elem in self.root.iter():
+            if _local_tag(text_elem) != "text":
+                continue
+            try:
+                tx = float(text_elem.get("x", 0))
+                ty = float(text_elem.get("y", 0))
+            except ValueError:
+                continue
+            candidates = []
+            for shape_elem, sx, sy, sw, sh in shape_bboxes:
+                if sx <= tx <= sx + sw and sy <= ty <= sy + sh:
+                    candidates.append((sw * sh, shape_elem))
+            if not candidates:
+                continue
+            candidates.sort(key=lambda c: c[0])
+            best_shape = candidates[0][1]
+            self._shape_labels.setdefault(id(best_shape), []).append(text_elem)
+            self._text_to_shape[id(text_elem)] = best_shape
+
+    def _is_canvas_background(self, x: float, y: float,
+                              width: float, height: float) -> bool:
+        """Return whether a rectangle covers the converter's SVG canvas.
+
+        The tolerance absorbs harmless decimal serialization noise while
+        keeping rectangles that are materially smaller than the viewBox
+        eligible as semantic text containers.
+        """
+        return all(
+            math.isclose(value, expected, rel_tol=1e-9,
+                         abs_tol=_CANVAS_TOLERANCE)
+            for value, expected in (
+                (x, 0.0),
+                (y, 0.0),
+                (width, self.cs.svg_w),
+                (height, self.cs.svg_h),
+            )
+        )
+
     def _dispatch_children(self, slide: Any, parent: Any, inherited: Dict) -> None:
         from .style_parser import compute_style
         for elem in parent:
@@ -123,7 +203,9 @@ class SvgConverter:
         tag = _local_tag(elem)
         if tag in ("rect", "circle", "ellipse", "image"):
             from .shapes import dispatch_shape
-            shape = dispatch_shape(slide, elem, style, self.cs, None)
+            shape = dispatch_shape(
+                slide, elem, style, self.cs, self._shape_labels.get(id(elem))
+            )
             if shape is not None and tag in ("rect", "circle", "ellipse"):
                 try:
                     if tag == "rect":
@@ -146,7 +228,8 @@ class SvgConverter:
                 except Exception:
                     pass
         elif tag == "text":
-            self._pending_texts.append((elem, style))
+            if id(elem) not in self._text_to_shape:
+                self._pending_texts.append((elem, style))
         elif tag in ("line", "polyline", "polygon"):
             from .connector import dispatch_connector
             conns = dispatch_connector(slide, elem, style, self.cs)

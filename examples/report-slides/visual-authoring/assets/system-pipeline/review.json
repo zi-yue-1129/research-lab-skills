@@ -70,9 +70,9 @@
         "width": 1200,
         "height": 675
       },
-      "mean_absolute_pixel_delta_rgb_0_255": 8.935925,
-      "p95_absolute_channel_delta_rgb_0_255": 56.0,
-      "p99_per_pixel_mean_delta_rgb_0_255": 198.0,
+      "mean_absolute_pixel_delta_rgb_0_255": 9.333373,
+      "p95_absolute_channel_delta_rgb_0_255": 60.0,
+      "p99_per_pixel_mean_delta_rgb_0_255": 199.333333,
       "pass_threshold_mean_absolute_pixel_delta_rgb_0_255": 12.0,
       "normalization": "Dropped the rightmost one-pixel PDF raster rounding column (1601x900 to 1600x900), then resized with Pillow LANCZOS to the approved 1200x675 preview size."
     },

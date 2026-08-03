@@ -2,6 +2,7 @@ import pytest
 from lxml import etree
 from pptx import Presentation
 from pptx.util import Emu
+from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 
 from svg_to_pptx.converter import CoordSystem
 from svg_to_pptx.shapes import dispatch_shape
@@ -57,6 +58,88 @@ def test_rect_with_label_writes_text_in_shape():
     shape = slide.shapes[0]
     assert shape.has_text_frame
     assert shape.text_frame.paragraphs[0].runs[0].text == "Hello"
+
+
+def test_attached_labels_use_explicit_svg_text_layout() -> None:
+    """Verify attached labels use a frame offset and preserve paragraph layout."""
+    slide, _ = _blank_slide()
+    rect_elem = etree.fromstring(
+        '<rect x="40" y="80" width="160" height="70" fill="#3b82f6"/>'
+    )
+    label_elems = [
+        etree.fromstring(
+            '<text x="120" y="112" fill="white" text-anchor="middle" '
+            'font-size="14">Title</text>'
+        ),
+        etree.fromstring(
+            '<text x="180" y="132" fill="white" text-anchor="end" '
+            'font-size="11">Subtitle</text>'
+        ),
+    ]
+    style = compute_style(rect_elem, {})
+    dispatch_shape(slide, rect_elem, style, CS, label_elems)
+
+    tf = slide.shapes[0].text_frame
+    assert tf.margin_left == Emu(0)
+    assert tf.margin_right == Emu(0)
+    assert tf.margin_bottom == Emu(0)
+    assert tf.vertical_anchor == MSO_ANCHOR.TOP
+
+    paragraphs = tf.paragraphs
+    assert [paragraph.alignment for paragraph in paragraphs] == [
+        PP_ALIGN.CENTER,
+        PP_ALIGN.RIGHT,
+    ]
+    assert [
+        run.text
+        for paragraph in paragraphs
+        for run in paragraph.runs
+    ] == ["Title", "Subtitle"]
+    expected_top_margin = CS.y(112 - 80 - 14 * 0.75 + 4.0)
+    assert tf.margin_top == Emu(expected_top_margin)
+    assert tf.margin_top > Emu(0)
+    assert paragraphs[0].space_before == Emu(0)
+    assert paragraphs[0].space_after == Emu(0)
+    assert paragraphs[0].line_spacing == Emu(CS.y(14 * 1.2))
+    assert paragraphs[1].space_before == Emu(CS.y(132 - 112 - 14 * 1.2))
+    assert paragraphs[1].space_after == Emu(0)
+    assert paragraphs[1].line_spacing == Emu(CS.y(11 * 1.2))
+
+
+def test_attached_label_top_margin_is_bounded_by_shape_slack() -> None:
+    """Verify the attached frame offset cannot consume later-line space."""
+    slide, _ = _blank_slide()
+    rect_elem = etree.fromstring(
+        '<rect x="40" y="80" width="160" height="40" fill="#3b82f6"/>'
+    )
+    label_elems = [
+        etree.fromstring(
+            '<text x="120" y="112" fill="white" text-anchor="middle" '
+            'font-size="14">Title</text>'
+        ),
+        etree.fromstring(
+            '<text x="180" y="132" fill="white" text-anchor="end" '
+            'font-size="11">Subtitle</text>'
+        ),
+    ]
+    style = compute_style(rect_elem, {})
+    dispatch_shape(slide, rect_elem, style, CS, label_elems)
+
+    tf = slide.shapes[0].text_frame
+    paragraphs = tf.paragraphs
+    expected_bounded_margin = CS.y(40.0 - (16.8 + 3.2 + 13.2))
+    assert tf.margin_top == Emu(expected_bounded_margin)
+    assert tf.margin_top > Emu(0)
+    assert tf.margin_top < Emu(CS.y(21.5 + 4.0))
+    assert paragraphs[0].space_before == Emu(0)
+    assert paragraphs[1].space_before == Emu(CS.y(3.2))
+    assert (
+        tf.margin_top
+        + paragraphs[0].line_spacing
+        + paragraphs[1].space_before
+        + paragraphs[1].line_spacing
+        <= Emu(CS.y(40.0))
+    )
 
 
 def test_ellipse_creates_oval():

@@ -55,7 +55,7 @@
     "status": "passed",
     "renderer": "LibreOffice",
     "version": "7.3.7.2",
-    "conversion_command": "libreoffice --headless --convert-to pdf --outdir /tmp/report-slides-lo-check examples/report-slides/visual-authoring/deck.pptx",
+    "conversion_command": "libreoffice --headless --convert-to pdf --outdir /tmp/report-slides-lo-check-fixed-v3-20260803/pdf examples/report-slides/visual-authoring/deck.pptx",
     "raw_png_directory": "renders/lo-rendered",
     "normalized_png_directory": "renders/lo-normalized"
   },
@@ -119,9 +119,9 @@
           "width": 1200,
           "height": 675
         },
-        "mean_absolute_pixel_delta_rgb_0_255": 8.935925,
-        "p95_absolute_channel_delta_rgb_0_255": 56.0,
-        "p99_per_pixel_mean_delta_rgb_0_255": 198.0,
+        "mean_absolute_pixel_delta_rgb_0_255": 9.333373,
+        "p95_absolute_channel_delta_rgb_0_255": 60.0,
+        "p99_per_pixel_mean_delta_rgb_0_255": 199.333333,
         "verdict": "passed"
       },
       {
@@ -142,9 +142,9 @@
           "width": 1200,
           "height": 675
         },
-        "mean_absolute_pixel_delta_rgb_0_255": 6.647181,
-        "p95_absolute_channel_delta_rgb_0_255": 26.0,
-        "p99_per_pixel_mean_delta_rgb_0_255": 126.0,
+        "mean_absolute_pixel_delta_rgb_0_255": 6.867255,
+        "p95_absolute_channel_delta_rgb_0_255": 27.0,
+        "p99_per_pixel_mean_delta_rgb_0_255": 131.0,
         "verdict": "passed"
       },
       {

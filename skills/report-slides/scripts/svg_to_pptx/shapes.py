@@ -2,15 +2,16 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from pptx.util import Emu, Pt
-from pptx.enum.text import PP_ALIGN
+from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 
 from .style_parser import apply_fill, apply_stroke, resolve_color, compute_style
 from .converter import CoordSystem, _local_tag
 
 _ALIGN = {"start": PP_ALIGN.LEFT, "middle": PP_ALIGN.CENTER, "end": PP_ALIGN.RIGHT}
+_ATTACHED_LABEL_TOP_PADDING_SVG = 4.0
 
 
 def dispatch_shape(slide: Any, elem: Any, style: Dict,
@@ -27,15 +28,20 @@ def dispatch_shape(slide: Any, elem: Any, style: Dict,
 
 def _add_rect(slide: Any, elem: Any, style: Dict,
               cs: CoordSystem, label_elem: Optional[Any]) -> Any:
-    x = cs.x(float(elem.get("x", 0)))
-    y = cs.y(float(elem.get("y", 0)))
-    w = max(1, cs.x(float(elem.get("width", 0))))
-    h = max(1, cs.y(float(elem.get("height", 0))))
+    svg_x = float(elem.get("x", 0))
+    svg_y = float(elem.get("y", 0))
+    svg_w = float(elem.get("width", 0))
+    svg_h = float(elem.get("height", 0))
+    x = cs.x(svg_x)
+    y = cs.y(svg_y)
+    w = max(1, cs.x(svg_w))
+    h = max(1, cs.y(svg_h))
     shape = slide.shapes.add_shape(1, Emu(x), Emu(y), Emu(w), Emu(h))
     apply_fill(shape, style.get("fill", "black"))
     apply_stroke(shape, style)
     if label_elem is not None:
-        _write_label(shape, label_elem, style)
+        _write_label(shape, label_elem, style, cs,
+                     (svg_x, svg_y, svg_w, svg_h))
     return shape
 
 
@@ -61,7 +67,7 @@ def _add_oval(slide: Any, elem: Any, style: Dict,
     apply_fill(shape, style.get("fill", "black"))
     apply_stroke(shape, style)
     if label_elem is not None:
-        _write_label(shape, label_elem, style)
+        _write_label(shape, label_elem, style, cs, (x, y, w, h))
     return shape
 
 
@@ -80,40 +86,115 @@ def _add_image(slide: Any, elem: Any, style: Dict, cs: CoordSystem) -> Optional[
         return None
 
 
-def _write_label(shape: Any, text_elem: Any, parent_style: Dict) -> None:
+def _write_label(shape: Any, text_elem: Any, parent_style: Dict,
+                 cs: CoordSystem, shape_bbox: Tuple[float, float, float, float]) -> None:
+    """Write attached SVG labels into a deterministic native shape text frame.
+
+    PowerPoint does not expose SVG baseline coordinates directly. The
+    conservative mapping below uses a top-anchored text frame, explicit line
+    heights, and paragraph spacing derived from each SVG baseline. The first
+    paragraph's vertical offset is moved into a positive frame margin because
+    LibreOffice can collapse first-paragraph spacing; that margin is bounded
+    by the height remaining after later paragraphs. This preserves relative
+    vertical placement and text-anchor alignment without turning labels into
+    non-editable overlays; labels that overlap in SVG remain separate
+    paragraphs and cannot be made pixel-perfect in every PowerPoint-compatible
+    renderer.
+    """
     tf = shape.text_frame
-    tf.word_wrap = True
+    tf.word_wrap = False
+    tf.margin_left = Emu(0)
+    tf.margin_right = Emu(0)
+    tf.margin_top = Emu(0)
+    tf.margin_bottom = Emu(0)
+    tf.vertical_anchor = MSO_ANCHOR.TOP
     # Accept a single text element or a list
     elems = text_elem if isinstance(text_elem, list) else [text_elem]
-    all_lines = []
+    all_lines: List[Tuple[str, Dict, float]] = []
     for te in elems:
         all_lines.extend(_collect_text_lines(te, parent_style))
-    for i, (text, line_style) in enumerate(all_lines):
+
+    shape_top = shape_bbox[1]
+    base_space_befores: List[float] = []
+    line_heights: List[float] = []
+    previous_baseline: Optional[float] = None
+    previous_line_height = 0.0
+    content_height = 0.0
+    for _, line_style, baseline_y in all_lines:
+        font_size = _font_size_svg(line_style)
+        line_height = max(font_size * 1.2, 1.0)
+        if previous_baseline is None:
+            space_before = max(
+                0.0, baseline_y - shape_top - font_size * 0.75
+            )
+        else:
+            space_before = max(
+                0.0, baseline_y - previous_baseline - previous_line_height
+            )
+        base_space_befores.append(space_before)
+        line_heights.append(line_height)
+        content_height += space_before + line_height
+        previous_baseline = baseline_y
+        previous_line_height = line_height
+
+    first_space_before = base_space_befores[0]
+    remaining_shape_height = max(
+        0.0, shape_bbox[3] - (content_height - first_space_before)
+    )
+    first_paragraph_margin = min(
+        first_space_before + _ATTACHED_LABEL_TOP_PADDING_SVG,
+        remaining_shape_height,
+    )
+    tf.margin_top = Emu(cs.y(first_paragraph_margin))
+
+    for i, (text, line_style, _) in enumerate(all_lines):
         para = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
         anchor = line_style.get("text-anchor", parent_style.get("text-anchor", "middle"))
         para.alignment = _ALIGN.get(anchor, PP_ALIGN.CENTER)
+        space_before = base_space_befores[i]
+        if i == 0:
+            space_before = 0.0
+        para.space_before = Emu(cs.y(space_before))
+        para.space_after = Emu(0)
+        para.line_spacing = Emu(cs.y(line_heights[i]))
         run = para.add_run()
         run.text = text
         _apply_font(run, line_style, parent_style)
 
 
-def _collect_text_lines(text_elem: Any, parent_style: Dict):
-    lines = []
+def _collect_text_lines(text_elem: Any, parent_style: Dict) -> List[Tuple[str, Dict, float]]:
+    """Collect attached text content with its SVG baseline coordinates."""
+    lines: List[Tuple[str, Dict, float]] = []
     # Compute the text element's own style first so tspan children inherit correctly
     # (not from the enclosing shape's style, which is the parent_style here)
     text_style = compute_style(text_elem, parent_style)
+    baseline_y = float(text_elem.get("y", 0))
     direct_text = (text_elem.text or "").strip()
     if direct_text:
-        lines.append((direct_text, text_style))
+        lines.append((direct_text, text_style, baseline_y))
+    current_baseline = baseline_y
     for tspan in text_elem:
         if _local_tag(tspan) == "tspan":
             ts = compute_style(tspan, text_style)
+            if tspan.get("y") is not None:
+                current_baseline = float(tspan.get("y"))
+            else:
+                current_baseline += float(tspan.get("dy", 0) or 0)
             t = (tspan.text or "").strip()
             if t:
-                lines.append((t, ts))
+                lines.append((t, ts, current_baseline))
     if not lines:
-        lines.append(("", text_style))
+        lines.append(("", text_style, baseline_y))
     return lines
+
+
+def _font_size_svg(style: Dict) -> float:
+    """Return an attached-label font size in SVG user units."""
+    size_raw = style.get("font-size", "14")
+    try:
+        return float(re.sub(r"[^0-9.]", "", str(size_raw)) or "14")
+    except ValueError:
+        return 14.0
 
 
 def _apply_font(run: Any, style: Dict, parent_style: Dict) -> None:
