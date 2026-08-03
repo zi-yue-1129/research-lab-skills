@@ -231,6 +231,13 @@ def _validate_status_object(
 
     inspected_paths = status.get("inspected_paths")
     issues.extend(_check_artifact_paths(f"{gate_path}.inspected_paths", inspected_paths, artifact_root))
+    if status_value == "passed" and gate in _VISUAL_GATES and not inspected_paths:
+        issues.append(
+            ValidationIssue(
+                f"{gate_path}.inspected_paths",
+                "a passing visual gate requires at least one directly inspected path",
+            )
+        )
 
     if not isinstance(status.get("revision_required"), bool):
         issues.append(ValidationIssue(f"{gate_path}.revision_required", "must be a boolean"))

@@ -471,3 +471,18 @@ def test_passing_render_rejects_open_finding(tmp_path: Path) -> None:
         and "open" in issue.message.lower()
         for issue in issues
     )
+
+
+def test_passing_visual_gate_requires_inspected_paths(tmp_path: Path) -> None:
+    """Reject a passing visual gate that names no directly inspected path."""
+    record = _base_record()
+    record["statuses"]["svg_preview"]["inspected_paths"] = []
+    record_path = _write_record(tmp_path, record)
+
+    issues = validate_review_record(record_path, tmp_path)
+
+    assert any(
+        issue.path == "statuses.svg_preview.inspected_paths"
+        and "inspected" in issue.message.lower()
+        for issue in issues
+    )
