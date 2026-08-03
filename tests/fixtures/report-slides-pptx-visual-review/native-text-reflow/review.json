@@ -1,0 +1,106 @@
+{
+  "schema_version": 1,
+  "deck_id": "native-text-reflow",
+  "output_format": "pptx",
+  "expected_slides": [
+    1
+  ],
+  "source_artifacts": [
+    "native-text-reflow/source/slide-01.svg"
+  ],
+  "artifacts": {
+    "pptx": "native-text-reflow/deck.pptx",
+    "review_record": "native-text-reflow/review.json"
+  },
+  "statuses": {
+    "svg_preview": {
+      "status": "passed",
+      "round": 1,
+      "reviewed_by": "model_vision",
+      "inspected_paths": [
+        "native-text-reflow/renders/source/slide-01.png"
+      ],
+      "findings": [],
+      "revision_required": false,
+      "started_at": "2026-08-04T00:10:00Z",
+      "completed_at": "2026-08-04T00:11:00Z"
+    },
+    "pptx_structure": {
+      "status": "passed",
+      "round": 1,
+      "reviewed_by": "pptx_structure_validator",
+      "inspected_paths": [
+        "native-text-reflow/deck.pptx"
+      ],
+      "findings": [],
+      "revision_required": false,
+      "started_at": "2026-08-04T00:11:30Z",
+      "completed_at": "2026-08-04T00:12:00Z"
+    },
+    "pptx_render": {
+      "status": "failed",
+      "round": 1,
+      "reviewed_by": "model_vision",
+      "inspected_paths": [
+        "native-text-reflow/renders/pptx/slide-01.png"
+      ],
+      "findings": [
+        {
+          "kind": "text-reflow",
+          "scope": {
+            "slide": 1,
+            "region": "title"
+          },
+          "artifact_path": "native-text-reflow/renders/pptx/slide-01.png",
+          "description": "The converter estimates native textbox width from character count alone; the bold title's actual rendered width exceeds that estimate, so the line is truncated behind the milestone card instead of remaining a single readable line.",
+          "source": "pptx-render",
+          "disposition": "open"
+        }
+      ],
+      "revision_required": true,
+      "started_at": "2026-08-04T00:12:30Z",
+      "completed_at": "2026-08-04T00:14:00Z",
+      "renderer": {
+        "name": "LibreOffice",
+        "version": "7.3.7.2",
+        "conversion_format": "pdf-to-png"
+      },
+      "conversion_artifacts": [
+        "native-text-reflow/renders/pptx/deck.pdf"
+      ],
+      "rendered_png_paths": [
+        "native-text-reflow/renders/pptx/slide-01.png"
+      ],
+      "model_vision": {
+        "inspected_paths": [
+          "native-text-reflow/renders/pptx/slide-01.png"
+        ],
+        "comparison_reference_paths": [
+          "native-text-reflow/renders/source/slide-01.png"
+        ]
+      },
+      "visual_checks": {
+        "clipping": "passed",
+        "overlap": "passed",
+        "text_reflow": "failed",
+        "connector_drift": "passed",
+        "crop": "passed",
+        "unreadably_small_text": "passed",
+        "missing_image": "passed",
+        "other_layout_regressions": "passed"
+      }
+    }
+  },
+  "overall": {
+    "status": "failed",
+    "completion_allowed": false,
+    "authority": "pptx-render"
+  },
+  "history": [
+    {
+      "round": 1,
+      "result": "failed",
+      "revision": "Open text-reflow finding on the converted title; needs a native textbox width fix and a fresh export/conversion/inspection cycle."
+    }
+  ]
+}

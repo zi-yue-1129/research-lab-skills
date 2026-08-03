@@ -1,0 +1,106 @@
+{
+  "schema_version": 1,
+  "deck_id": "unreadably-small-text",
+  "output_format": "pptx",
+  "expected_slides": [
+    1
+  ],
+  "source_artifacts": [
+    "unreadably-small-text/source/slide-01.svg"
+  ],
+  "artifacts": {
+    "pptx": "unreadably-small-text/deck.pptx",
+    "review_record": "unreadably-small-text/review.json"
+  },
+  "statuses": {
+    "svg_preview": {
+      "status": "passed",
+      "round": 1,
+      "reviewed_by": "model_vision",
+      "inspected_paths": [
+        "unreadably-small-text/renders/source/slide-01.png"
+      ],
+      "findings": [],
+      "revision_required": false,
+      "started_at": "2026-08-04T00:50:00Z",
+      "completed_at": "2026-08-04T00:51:00Z"
+    },
+    "pptx_structure": {
+      "status": "passed",
+      "round": 1,
+      "reviewed_by": "pptx_structure_validator",
+      "inspected_paths": [
+        "unreadably-small-text/deck.pptx"
+      ],
+      "findings": [],
+      "revision_required": false,
+      "started_at": "2026-08-04T00:51:30Z",
+      "completed_at": "2026-08-04T00:52:00Z"
+    },
+    "pptx_render": {
+      "status": "failed",
+      "round": 1,
+      "reviewed_by": "model_vision",
+      "inspected_paths": [
+        "unreadably-small-text/renders/pptx/slide-01.png"
+      ],
+      "findings": [
+        {
+          "kind": "unreadably-small-text",
+          "scope": {
+            "slide": 1,
+            "region": "body-copy"
+          },
+          "artifact_path": "unreadably-small-text/renders/pptx/slide-01.png",
+          "description": "The body text is authored at font-size 10 inside an SVG group scaled 3x, which renders at an effective, readable size in any transform-aware viewer. The converter ignores the group transform and uses the raw font-size 10 at the raw untransformed position, so the converted text is tiny and partly hidden behind the top bar.",
+          "source": "pptx-render",
+          "disposition": "open"
+        }
+      ],
+      "revision_required": true,
+      "started_at": "2026-08-04T00:52:30Z",
+      "completed_at": "2026-08-04T00:54:00Z",
+      "renderer": {
+        "name": "LibreOffice",
+        "version": "7.3.7.2",
+        "conversion_format": "pdf-to-png"
+      },
+      "conversion_artifacts": [
+        "unreadably-small-text/renders/pptx/deck.pdf"
+      ],
+      "rendered_png_paths": [
+        "unreadably-small-text/renders/pptx/slide-01.png"
+      ],
+      "model_vision": {
+        "inspected_paths": [
+          "unreadably-small-text/renders/pptx/slide-01.png"
+        ],
+        "comparison_reference_paths": [
+          "unreadably-small-text/renders/source/slide-01.png"
+        ]
+      },
+      "visual_checks": {
+        "clipping": "failed",
+        "overlap": "failed",
+        "text_reflow": "passed",
+        "connector_drift": "passed",
+        "crop": "passed",
+        "unreadably_small_text": "failed",
+        "missing_image": "passed",
+        "other_layout_regressions": "passed"
+      }
+    }
+  },
+  "overall": {
+    "status": "failed",
+    "completion_allowed": false,
+    "authority": "pptx-render"
+  },
+  "history": [
+    {
+      "round": 1,
+      "result": "failed",
+      "revision": "Open unreadably-small-text finding; the body text must be authored at its intended literal font-size without relying on an ignored group transform before a fresh export/conversion/inspection cycle."
+    }
+  ]
+}
