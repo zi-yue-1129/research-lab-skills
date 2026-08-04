@@ -97,11 +97,11 @@ class TestReadmeJaSections(unittest.TestCase):
 
     def test_aligned_ja_readme_passes(self) -> None:
         """A README.ja-JP.md whose badge / tag link agree with suite version
-        v1.0.0 and has the required ARS heading and integrity gate must pass."""
+        v1.1.0 and has the required ARS heading and integrity gate must pass."""
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             csc.ROOT = root
-            _write_ja_readme(root, version="1.0.0")
+            _write_ja_readme(root, version="1.1.0")
 
             csc.check_readme_ja_sections()
 
@@ -112,21 +112,21 @@ class TestReadmeJaSections(unittest.TestCase):
 
     def test_stale_ja_badge_fails(self) -> None:
         """If README.ja-JP.md keeps a stale v0.9.0 badge while the suite
-        version is v1.0.0, the lint must surface the drift."""
+        version is v1.1.0, the lint must surface the drift."""
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             csc.ROOT = root
-            stale = JA_README_TEMPLATE.format(ver="1.0.0").replace(
-                "version-v1.0.0-blue", "version-v0.9.0-blue"
+            stale = JA_README_TEMPLATE.format(ver="1.1.0").replace(
+                "version-v1.1.0-blue", "version-v0.9.0-blue"
             ).replace(
-                "releases/tag/v1.0.0", "releases/tag/v0.9.0"
+                "releases/tag/v1.1.0", "releases/tag/v0.9.0"
             )
             (root / "README.ja-JP.md").write_text(stale, encoding="utf-8")
 
             csc.check_readme_ja_sections()
 
             self.assertTrue(
-                any("README.ja-JP.md" in e and "1.0.0" in e for e in csc.ERRORS),
+                any("README.ja-JP.md" in e and "1.1.0" in e for e in csc.ERRORS),
                 msg=f"expected ja-JP drift error in: {csc.ERRORS!r}",
             )
 
@@ -147,13 +147,13 @@ class TestReadmeZhSections(unittest.TestCase):
         csc.ERRORS.extend(self._orig_errors)
 
     def test_aligned_zh_cn_readme_passes(self) -> None:
-        """Both zh-TW and zh-CN fixtures aligned to v1.0.0 with required ARS
+        """Both zh-TW and zh-CN fixtures aligned to v1.1.0 with required ARS
         headings and Stage 2.5 references produce no lint errors."""
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             csc.ROOT = root
-            _write_zh_tw_readme(root, version="1.0.0")
-            _write_zh_cn_readme(root, version="1.0.0")
+            _write_zh_tw_readme(root, version="1.1.0")
+            _write_zh_cn_readme(root, version="1.1.0")
 
             csc.check_readme_zh_sections()
 
@@ -164,23 +164,23 @@ class TestReadmeZhSections(unittest.TestCase):
 
     def test_stale_zh_cn_badge_fails(self) -> None:
         """If README.zh-CN.md keeps a stale v0.9.0 badge while the suite
-        version is v1.0.0, the lint must surface the drift on the zh-CN
+        version is v1.1.0, the lint must surface the drift on the zh-CN
         branch specifically."""
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             csc.ROOT = root
-            _write_zh_tw_readme(root, version="1.0.0")
-            stale = ZH_CN_README_TEMPLATE.format(ver="1.0.0").replace(
-                "version-v1.0.0-blue", "version-v0.9.0-blue"
+            _write_zh_tw_readme(root, version="1.1.0")
+            stale = ZH_CN_README_TEMPLATE.format(ver="1.1.0").replace(
+                "version-v1.1.0-blue", "version-v0.9.0-blue"
             ).replace(
-                "releases/tag/v1.0.0", "releases/tag/v0.9.0"
+                "releases/tag/v1.1.0", "releases/tag/v0.9.0"
             )
             (root / "README.zh-CN.md").write_text(stale, encoding="utf-8")
 
             csc.check_readme_zh_sections()
 
             self.assertTrue(
-                any("README.zh-CN.md" in e and "1.0.0" in e for e in csc.ERRORS),
+                any("README.zh-CN.md" in e and "1.1.0" in e for e in csc.ERRORS),
                 msg=f"expected zh-CN drift error in: {csc.ERRORS!r}",
             )
 
