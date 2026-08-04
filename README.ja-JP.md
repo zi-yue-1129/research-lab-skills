@@ -137,11 +137,35 @@ irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/insta
 powershell -Command "irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1 | iex"
 ```
 
-**上記コマンドがウイルス対策ソフト / EDR にブロックされる場合：** 一部のセキュリティソフトは、内容に関わらず `irm | iex`（ダウンロードして即実行）というコマンドパターン自体を検知してブロックします。その場合はリポジトリを clone してから、ローカルファイルとしてスクリプトを実行してください：
+**上記コマンドがウイルス対策ソフト / EDR にブロックされる場合：** 一部のセキュリティソフトは、内容に関わらず `irm | iex`（ダウンロードして即実行）というコマンドパターン自体を検知してブロックします — 下記の[git clone](#git-clone)方式ならこの問題を完全に回避できます。
+
+### git clone
+
+macOS、Linux、Windows で同じ手順が使え、一部のウイルス対策/EDRソフトがブロックする `curl | bash` / `irm | iex`（ダウンロードして即実行）というコマンドパターンも回避できます：
+
+```bash
+git clone --depth 1 https://github.com/starpig1129/research-lab-skills.git
+cd research-lab-skills
+```
+
+**macOS / Linux / Git Bash / WSL：**
+
+```bash
+bash install.sh                # 全スキル（グローバル）
+bash install.sh --local        # プロジェクトローカル
+bash install.sh --ars-only     # ARSスキルのみ
+bash install.sh --lab-only     # Labスキルのみ
+bash install.sh uninstall      # アンインストール
+```
+
+**Windows（PowerShell）：**
 
 ```powershell
-git clone --depth 1 https://github.com/starpig1129/research-lab-skills.git $env:TEMP\research-lab-skills
-powershell -ExecutionPolicy Bypass -File "$env:TEMP\research-lab-skills\install.ps1"
+powershell -ExecutionPolicy Bypass -File install.ps1                # 全スキル（グローバル）
+powershell -ExecutionPolicy Bypass -File install.ps1 -Local          # プロジェクトローカル
+powershell -ExecutionPolicy Bypass -File install.ps1 -ArsOnly        # ARSスキルのみ
+powershell -ExecutionPolicy Bypass -File install.ps1 -LabOnly        # Labスキルのみ
+powershell -ExecutionPolicy Bypass -File install.ps1 -Uninstall      # アンインストール
 ```
 
 ### npm

@@ -134,11 +134,35 @@ irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/insta
 powershell -Command "irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1 | iex"
 ```
 
-**If antivirus/EDR blocks the command above:** some security software flags the `irm | iex` pattern (download-and-execute) regardless of content. Clone the repo and run the script as a local file instead:
+**If antivirus/EDR blocks the command above:** some security software flags the `irm | iex` pattern (download-and-execute) regardless of content — see [git clone](#git-clone) below, which avoids it entirely.
+
+### git clone
+
+Works identically on macOS, Linux, and Windows, and avoids the `curl | bash` / `irm | iex` download-and-execute pattern that some antivirus/EDR software flags outright regardless of content:
+
+```bash
+git clone --depth 1 https://github.com/starpig1129/research-lab-skills.git
+cd research-lab-skills
+```
+
+**macOS / Linux / Git Bash / WSL:**
+
+```bash
+bash install.sh                # all skills (global)
+bash install.sh --local        # project-local
+bash install.sh --ars-only     # ARS skills only
+bash install.sh --lab-only     # Lab skills only
+bash install.sh uninstall      # uninstall
+```
+
+**Windows (PowerShell):**
 
 ```powershell
-git clone --depth 1 https://github.com/starpig1129/research-lab-skills.git $env:TEMP\research-lab-skills
-powershell -ExecutionPolicy Bypass -File "$env:TEMP\research-lab-skills\install.ps1"
+powershell -ExecutionPolicy Bypass -File install.ps1                # all skills (global)
+powershell -ExecutionPolicy Bypass -File install.ps1 -Local          # project-local
+powershell -ExecutionPolicy Bypass -File install.ps1 -ArsOnly        # ARS skills only
+powershell -ExecutionPolicy Bypass -File install.ps1 -LabOnly        # Lab skills only
+powershell -ExecutionPolicy Bypass -File install.ps1 -Uninstall      # uninstall
 ```
 
 ### npm

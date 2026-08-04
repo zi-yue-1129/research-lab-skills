@@ -137,11 +137,35 @@ irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/insta
 powershell -Command "irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1 | iex"
 ```
 
-**如果杀毒软件 / EDR 拦截了上面这行：**有些安全软件会直接拦截 `irm | iex`（下载后立即执行）这种命令样式，不论实际内容是什么。改成先把 repo clone 下来，再以本地文件执行：
+**如果杀毒软件 / EDR 拦截了上面这行：**有些安全软件会直接拦截 `irm | iex`（下载后立即执行）这种命令样式，不论实际内容是什么——见下方的[git clone](#git-clone)方式，完全避开这个问题。
+
+### git clone
+
+在 macOS、Linux、Windows 上做法一致，也能避开部分杀毒/EDR 软件会拦截的 `curl | bash` / `irm | iex`（下载后立即执行）命令样式：
+
+```bash
+git clone --depth 1 https://github.com/starpig1129/research-lab-skills.git
+cd research-lab-skills
+```
+
+**macOS / Linux / Git Bash / WSL：**
+
+```bash
+bash install.sh                # 全部技能（全局）
+bash install.sh --local        # 项目本地
+bash install.sh --ars-only     # 只安装 ARS 技能
+bash install.sh --lab-only     # 只安装 Lab 技能
+bash install.sh uninstall      # 卸载
+```
+
+**Windows（PowerShell）：**
 
 ```powershell
-git clone --depth 1 https://github.com/starpig1129/research-lab-skills.git $env:TEMP\research-lab-skills
-powershell -ExecutionPolicy Bypass -File "$env:TEMP\research-lab-skills\install.ps1"
+powershell -ExecutionPolicy Bypass -File install.ps1                # 全部技能（全局）
+powershell -ExecutionPolicy Bypass -File install.ps1 -Local          # 项目本地
+powershell -ExecutionPolicy Bypass -File install.ps1 -ArsOnly        # 只安装 ARS 技能
+powershell -ExecutionPolicy Bypass -File install.ps1 -LabOnly        # 只安装 Lab 技能
+powershell -ExecutionPolicy Bypass -File install.ps1 -Uninstall      # 卸载
 ```
 
 ### npm
