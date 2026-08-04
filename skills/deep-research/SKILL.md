@@ -358,6 +358,35 @@ See `examples/handoff_to_paper.md` for a detailed handoff example.
 
 ---
 
+## Resource Resolver Integration
+
+When the user wants the **Annotated Bibliography** (or any other research
+artifact) saved to disk rather than just handed off in-conversation, resolve
+where it belongs instead of asking ad hoc every time (see
+`skills/resource-resolver/SKILL.md`):
+
+```bash
+# macOS / Linux / Git Bash:
+RESOLVE="$(find ~/.claude -path "*/resource-resolver/scripts/resolve.py" | head -1)"
+ROLE_JSON=$(python "$RESOLVE" --role bibliography --json)
+BIBLIOGRAPHY_DIR=$(echo "$ROLE_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('primary',''))")
+```
+
+```powershell
+# Windows (PowerShell):
+$RESOLVE = (Get-ChildItem $env:USERPROFILE\.claude -Recurse -Filter resolve.py |
+    Where-Object FullName -like "*resource-resolver*" | Select-Object -First 1).FullName
+$BIBLIOGRAPHY_DIR = (python $RESOLVE --role bibliography --json | ConvertFrom-Json).primary
+```
+
+If `$BIBLIOGRAPHY_DIR` comes back empty, follow "First-use role confirmation"
+in `skills/resource-resolver/SKILL.md`: present the returned `candidates` (or
+`default_relative_path`) to the user, get their confirmation, then
+`--set bibliography --path <path> [--create]`. This replaces asking the user
+where to save on every run with a one-time-then-cached confirmation.
+
+---
+
 ## Full Academic Pipeline
 
 See `academic-pipeline/SKILL.md` for the complete workflow.
