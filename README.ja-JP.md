@@ -97,9 +97,9 @@
 
 ## インストール
 
-### curl（推奨、npmアカウント不要）
+### curl / PowerShell（推奨、npmアカウント不要）
 
-macOS、Linux、Windows（Git BashまたはWSL上）で動作します — `install.sh` は `bash` と `git` のみが必要で、どちらもGit for Windowsに同梱されています。
+**macOS / Linux / Git Bash / WSL：**
 
 ```bash
 # 全スキル（グローバル）
@@ -118,7 +118,26 @@ curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/mai
 curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- uninstall
 ```
 
-**Windowsユーザーへ：** 上記コマンドは **Git Bash**（[Git for Windows](https://git-scm.com/download/win) に同梱）または **WSL** から実行してください。PowerShellやcmd.exeからは実行できません — `install.sh` は bash スクリプトです（bash 配列を使用しており、純粋な POSIX `sh` スクリプトではありません）。
+**Windows（PowerShell）** — Git BashやWSLは不要、ネイティブに動作します：
+
+```powershell
+# 全スキル（グローバル）
+irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1 | iex
+
+# フラグを渡す場合はパイプではなくスクリプト本体を取得してから実行する必要があるため、scriptblockで包みます：
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -Local
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -ArsOnly
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -LabOnly
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -Uninstall
+```
+
+**Windows（cmd.exe）** — PowerShellコマンドでラップします：
+
+```bat
+powershell -Command "irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1 | iex"
+```
+
+`install.sh` と `install.ps1` はどちらも `PATH` 上に `git` があれば動作し、npmアカウントやログインは不要です。
 
 ### npm
 

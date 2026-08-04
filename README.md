@@ -94,9 +94,9 @@ The journal's `follows:` field links experiments into a traceable timeline. `ame
 
 ## Installation
 
-### curl (recommended, no npm account needed)
+### curl / PowerShell (recommended, no npm account needed)
 
-Works on macOS, Linux, and Windows (via Git Bash or WSL — install.sh only requires `bash` and `git`, both of which ship with Git for Windows).
+**macOS / Linux / Git Bash / WSL:**
 
 ```bash
 # All skills (global)
@@ -115,7 +115,26 @@ curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/mai
 curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- uninstall
 ```
 
-**Windows:** run these commands from **Git Bash** (bundled with [Git for Windows](https://git-scm.com/download/win)) or **WSL**, not from PowerShell or cmd.exe — `install.sh` is a bash script (it uses bash arrays), not a plain POSIX `sh` script.
+**Windows (PowerShell)** — native, no Git Bash or WSL required:
+
+```powershell
+# All skills (global)
+irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1 | iex
+
+# Flags require the script body, not a piped invocation — wrap it in a scriptblock:
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -Local
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -ArsOnly
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -LabOnly
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -Uninstall
+```
+
+**Windows (cmd.exe)** — wrap the PowerShell command:
+
+```bat
+powershell -Command "irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1 | iex"
+```
+
+Both `install.sh` and `install.ps1` just need `git` on `PATH` (no npm account, no login).
 
 ### npm
 

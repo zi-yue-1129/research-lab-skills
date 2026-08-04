@@ -99,9 +99,9 @@
 
 ## 安裝
 
-### curl（推薦，不需 npm 帳號）
+### curl / PowerShell（推薦，不需 npm 帳號）
 
-支援 macOS、Linux 與 Windows（在 Git Bash 或 WSL 中執行——`install.sh` 只需要 `bash` 與 `git`，兩者皆隨 Git for Windows 附帶）。
+**macOS / Linux / Git Bash / WSL：**
 
 ```bash
 # 全部技能（全域）
@@ -120,7 +120,26 @@ curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/mai
 curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- uninstall
 ```
 
-**Windows 使用者：**請在 **Git Bash**（隨 [Git for Windows](https://git-scm.com/download/win) 安裝）或 **WSL** 中執行以上指令，不要用 PowerShell 或 cmd.exe——`install.sh` 是 bash 腳本（使用了 bash array），不是純 POSIX `sh` 腳本。
+**Windows（PowerShell）**——原生支援，不需要 Git Bash 或 WSL：
+
+```powershell
+# 全部技能（全域）
+irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1 | iex
+
+# 帶旗標時需要取得腳本內容再執行，不能直接用管線傳給 iex，改用 scriptblock 包裝：
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -Local
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -ArsOnly
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -LabOnly
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -Uninstall
+```
+
+**Windows（cmd.exe）**——用 PowerShell 指令包起來：
+
+```bat
+powershell -Command "irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1 | iex"
+```
+
+`install.sh` 與 `install.ps1` 都只需要 `git` 在 `PATH` 中即可，不需要 npm 帳號或登入。
 
 ### npm
 
