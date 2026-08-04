@@ -157,3 +157,119 @@ def test_check_human_readable_output(tmp_path: Path) -> None:
     result = _run(project, "--check", "--registry", str(registry))
     assert result.returncode == 0, result.stderr
     assert "Unconfigured: research_log, slides" in result.stdout
+
+
+def test_role_resolved_when_configured(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    registry = _make_registry(tmp_path)
+    log_dir = project / "docs" / "research_log"
+    log_dir.mkdir(parents=True)
+    research_dir = project / ".research"
+    research_dir.mkdir()
+    (research_dir / "workspace.yaml").write_text(
+        textwrap.dedent("""\
+            version: 1
+            roles:
+              research_log:
+                primary: docs/research_log
+                readonly_sources: []
+                confirmed_at: "2026-08-04T10:00:00+08:00"
+        """),
+        encoding="utf-8",
+    )
+
+    result = _run(project, "--role", "research_log", "--json", "--registry", str(registry))
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data == {
+        "status": "resolved",
+        "role": "research_log",
+        "primary": "docs/research_log",
+        "readonly_sources": [],
+    }
+
+
+def test_role_resolved_external_uri_skips_existence_check(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    registry = _make_registry(tmp_path)
+    research_dir = project / ".research"
+    research_dir.mkdir()
+    (research_dir / "workspace.yaml").write_text(
+        textwrap.dedent("""\
+            version: 1
+            roles:
+              research_log:
+                primary: "notion://shared-lab-library"
+                readonly_sources: []
+                confirmed_at: "2026-08-04T10:00:00+08:00"
+        """),
+        encoding="utf-8",
+    )
+
+    result = _run(project, "--role", "research_log", "--json", "--registry", str(registry))
+    data = json.loads(result.stdout)
+    assert data["status"] == "resolved"
+    assert data["primary"] == "notion://shared-lab-library"
+
+
+def test_role_stale_mapping_when_primary_deleted(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    registry = _make_registry(tmp_path)
+    research_dir = project / ".research"
+    research_dir.mkdir()
+    (research_dir / "workspace.yaml").write_text(
+        textwrap.dedent("""\
+            version: 1
+            roles:
+              research_log:
+                primary: docs/research_log
+                readonly_sources: []
+                confirmed_at: "2026-08-04T10:00:00+08:00"
+        """),
+        encoding="utf-8",
+    )
+    # docs/research_log deliberately not created on disk
+
+    result = _run(project, "--role", "research_log", "--json", "--registry", str(registry))
+    data = json.loads(result.stdout)
+    assert data == {
+        "status": "stale_mapping",
+        "role": "research_log",
+        "primary": "docs/research_log",
+    }
+
+
+def test_role_unresolved_returns_ranked_candidates(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    registry = _make_registry(tmp_path)
+    (project / "docs" / "research_log").mkdir(parents=True)
+    (project / "unrelated_dir").mkdir()
+
+    result = _run(project, "--role", "research_log", "--json", "--registry", str(registry))
+    data = json.loads(result.stdout)
+    assert data["status"] == "unresolved"
+    assert data["candidates"] == [{"path": "docs/research_log", "confidence": "exact"}]
+    assert data["default_relative_path"] == "docs/research_log"
+
+
+def test_role_no_candidates_suggests_default(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    registry = _make_registry(tmp_path)
+
+    result = _run(project, "--role", "slides", "--json", "--registry", str(registry))
+    data = json.loads(result.stdout)
+    assert data == {
+        "status": "no_candidates",
+        "role": "slides",
+        "default_relative_path": "docs/slides",
+    }
+
+
+def test_role_errors_on_unknown_role(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    registry = _make_registry(tmp_path)
+
+    result = _run(project, "--role", "nonexistent", "--json", "--registry", str(registry))
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "UnknownRoleError"

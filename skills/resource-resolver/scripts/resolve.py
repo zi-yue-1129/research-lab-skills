@@ -29,6 +29,9 @@ except ImportError:
 WORKSPACE_RELATIVE_PATH = Path(".research/workspace.yaml")
 RESERVED_SUBDIRS = ("state", "events", "indexes", "cache")
 ROLE_REGISTRY_RELATIVE_PATH = Path("references/resolver_roles.yaml")
+_SKIP_DIR_NAMES = frozenset({
+    "node_modules", "__pycache__", "venv", "dist", "build", "site-packages",
+})
 
 
 class ProjectRootNotFoundError(RuntimeError):
@@ -189,12 +192,123 @@ def check_roles(
     }
 
 
+def discover_candidates(
+    role: Dict[str, Any], project_root: Path, max_depth: int = 3
+) -> List[Dict[str, str]]:
+    """Scan the project tree for directories matching a role's aliases.
+
+    Args:
+        role: A single role definition (must include an "aliases" list).
+        project_root: Directory to scan from.
+        max_depth: Maximum directory depth below project_root to descend
+            into (project_root itself is depth 0).
+
+    Returns:
+        A list of {"path": <relative posix path>, "confidence": "exact" |
+        "partial"} dicts. Exact alias matches (directory name equals an
+        alias) are ranked before partial matches (directory name contains
+        an alias as a substring). Each match appears once.
+    """
+    aliases = [a.lower() for a in role["aliases"]]
+    exact_matches: List[str] = []
+    partial_matches: List[str] = []
+    seen: set = set()
+
+    def _walk(directory: Path, depth: int) -> None:
+        if depth > max_depth:
+            return
+        try:
+            entries = sorted(directory.iterdir())
+        except (PermissionError, FileNotFoundError):
+            return
+        for entry in entries:
+            if not entry.is_dir():
+                continue
+            if entry.name.startswith(".") or entry.name in _SKIP_DIR_NAMES:
+                continue
+            name_lower = entry.name.lower()
+            relative = entry.relative_to(project_root).as_posix()
+            if name_lower in aliases:
+                if relative not in seen:
+                    exact_matches.append(relative)
+                    seen.add(relative)
+            elif any(alias in name_lower for alias in aliases):
+                if relative not in seen:
+                    partial_matches.append(relative)
+                    seen.add(relative)
+            _walk(entry, depth + 1)
+
+    _walk(project_root, 0)
+    return (
+        [{"path": p, "confidence": "exact"} for p in exact_matches]
+        + [{"path": p, "confidence": "partial"} for p in partial_matches]
+    )
+
+
+def resolve_role(
+    role_name: str,
+    registry: Dict[str, Dict[str, Any]],
+    workspace: Dict[str, Any],
+    project_root: Path,
+) -> Dict[str, Any]:
+    """Resolve a single role to a path, or report discovery candidates.
+
+    Args:
+        role_name: The role to resolve (must exist in registry).
+        registry: Role name -> role definition, from load_role_registry.
+        workspace: The workspace document, from load_workspace.
+        project_root: The project's root directory.
+
+    Returns:
+        {"status": "resolved", "role", "primary", "readonly_sources"} if
+        already configured and the primary still exists (or is a URI).
+        {"status": "stale_mapping", "role", "primary"} if the recorded
+        primary is a local path that no longer exists.
+        {"status": "unresolved", "role", "candidates", "default_relative_path"}
+        if unconfigured and directory-name candidates were found.
+        {"status": "no_candidates", "role", "default_relative_path"} if
+        unconfigured and nothing matched.
+
+    Raises:
+        UnknownRoleError: If role_name is not in the registry.
+    """
+    if role_name not in registry:
+        raise UnknownRoleError(f"Unknown role: {role_name}")
+
+    role = registry[role_name]
+    entry = workspace.get("roles", {}).get(role_name)
+
+    if entry and entry.get("primary"):
+        primary = entry["primary"]
+        if "://" not in primary and not (project_root / primary).exists():
+            return {"status": "stale_mapping", "role": role_name, "primary": primary}
+        return {
+            "status": "resolved",
+            "role": role_name,
+            "primary": primary,
+            "readonly_sources": entry.get("readonly_sources", []),
+        }
+
+    candidates = discover_candidates(role, project_root)
+    if not candidates:
+        return {
+            "status": "no_candidates",
+            "role": role_name,
+            "default_relative_path": role["default_relative_path"],
+        }
+    return {
+        "status": "unresolved",
+        "role": role_name,
+        "candidates": candidates,
+        "default_relative_path": role["default_relative_path"],
+    }
+
+
 def _format_human(result: Dict[str, Any]) -> str:
     """Render a result dict as a human-readable summary.
 
     Args:
-        result: A dict returned by check_roles (later tasks add resolve_role
-            and set_role result shapes here too).
+        result: A dict returned by check_roles or resolve_role.
 
     Returns:
         A human-readable summary string.
@@ -208,6 +322,18 @@ def _format_human(result: Dict[str, Any]) -> str:
             f"Skipped:      {', '.join(result['skipped']) or '(none)'}",
             f"Unconfigured: {', '.join(result['unconfigured']) or '(none)'}",
         ])
+
+    status = result.get("status")
+    role = result.get("role", "?")
+    if status == "resolved":
+        return f"{role}: {result['primary']}"
+    if status == "stale_mapping":
+        return f"{role}: stale mapping, {result['primary']} no longer exists"
+    if status == "unresolved":
+        candidates = ", ".join(c["path"] for c in result["candidates"])
+        return f"{role}: candidates found -- {candidates}"
+    if status == "no_candidates":
+        return f"{role}: no candidates found, suggest {result['default_relative_path']}"
     raise ValueError(f"Unrecognized result shape: {result}")
 
 
@@ -231,6 +357,10 @@ def main() -> None:
         "--check", action="store_true",
         help="Report which roles are configured/unconfigured/skipped",
     )
+    action.add_argument(
+        "--role", metavar="NAME",
+        help="Resolve a single role to a path, or report discovery candidates",
+    )
     parser.add_argument(
         "--json", action="store_true",
         help="Emit machine-readable JSON instead of human-readable text",
@@ -247,9 +377,15 @@ def main() -> None:
     try:
         project_root = find_project_root(Path.cwd())
         registry = load_role_registry(registry_path)
-        workspace = load_workspace(project_root)
-        result = check_roles(registry, workspace)
-    except (ProjectRootNotFoundError, WorkspaceParseError, RoleRegistryError) as exc:
+
+        if args.check:
+            workspace = load_workspace(project_root)
+            result = check_roles(registry, workspace)
+        else:
+            workspace = load_workspace(project_root)
+            result = resolve_role(args.role, registry, workspace, project_root)
+    except (ProjectRootNotFoundError, WorkspaceParseError, RoleRegistryError,
+            UnknownRoleError) as exc:
         error = {"error": type(exc).__name__, "message": str(exc)}
         print(json.dumps(error) if args.json else f"Error: {exc}")
         sys.exit(1)
