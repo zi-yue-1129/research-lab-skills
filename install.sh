@@ -10,12 +10,14 @@ set -e
 
 REPO="https://github.com/starpig1129/research-lab-skills.git"
 
+# Shared foundation both lab and ARS skills depend on -- always installed
+RESOLVER_SKILLS=("resource-resolver")
 # Lab skills (experiment journal + presentations + mode routing)
 LAB_SKILLS=("research-log" "report-slides" "research-mode")
 # Academic Research Skills (deep research, paper writing, review, pipeline)
 ARS_SKILLS=("deep-research" "academic-paper" "academic-paper-reviewer" "academic-pipeline")
 # Default: install everything
-SKILLS=("${LAB_SKILLS[@]}" "${ARS_SKILLS[@]}")
+SKILLS=("${RESOLVER_SKILLS[@]}" "${LAB_SKILLS[@]}" "${ARS_SKILLS[@]}")
 
 # ── parse args ────────────────────────────────────────────────────────────────
 CMD="install"
@@ -24,8 +26,8 @@ for arg in "$@"; do
   case "$arg" in
     uninstall)   CMD="uninstall" ;;
     --local)     GLOBAL=false ;;
-    --ars-only)  SKILLS=("${ARS_SKILLS[@]}") ;;
-    --lab-only)  SKILLS=("${LAB_SKILLS[@]}") ;;
+    --ars-only)  SKILLS=("${RESOLVER_SKILLS[@]}" "${ARS_SKILLS[@]}") ;;
+    --lab-only)  SKILLS=("${RESOLVER_SKILLS[@]}" "${LAB_SKILLS[@]}") ;;
   esac
 done
 
