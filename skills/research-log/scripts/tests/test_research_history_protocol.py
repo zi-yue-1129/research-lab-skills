@@ -48,7 +48,9 @@ def test_history_check_does_not_require_research_mode() -> None:
         "Historical Experience Check",
         "Mode activation is not required",
         "direct research request",
-        "non-empty `docs/research_log/` journal",
+        # Path-agnostic since the resource-resolver migration: the journal
+        # location is resolved into $RESEARCH_LOG_DIR, not hardcoded.
+        "non-empty research log journal",
         "try this method",
         "change these experiment parameters",
         "why did this run fail?",
