@@ -120,7 +120,7 @@ curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/mai
 curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- uninstall
 ```
 
-**Windows 使用者：**請在 **Git Bash**（隨 [Git for Windows](https://git-scm.com/download/win) 安裝）或 **WSL** 中執行以上指令，不要用 PowerShell 或 cmd.exe——`install.sh` 是 POSIX shell 腳本。
+**Windows 使用者：**請在 **Git Bash**（隨 [Git for Windows](https://git-scm.com/download/win) 安裝）或 **WSL** 中執行以上指令，不要用 PowerShell 或 cmd.exe——`install.sh` 是 bash 腳本（使用了 bash array），不是純 POSIX `sh` 腳本。
 
 ### npm
 

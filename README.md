@@ -115,7 +115,7 @@ curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/mai
 curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- uninstall
 ```
 
-**Windows:** run these commands from **Git Bash** (bundled with [Git for Windows](https://git-scm.com/download/win)) or **WSL**, not from PowerShell or cmd.exe — `install.sh` is a POSIX shell script.
+**Windows:** run these commands from **Git Bash** (bundled with [Git for Windows](https://git-scm.com/download/win)) or **WSL**, not from PowerShell or cmd.exe — `install.sh` is a bash script (it uses bash arrays), not a plain POSIX `sh` script.
 
 ### npm
 

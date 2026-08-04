@@ -118,7 +118,7 @@ curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/mai
 curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- uninstall
 ```
 
-**Windowsユーザーへ：** 上記コマンドは **Git Bash**（[Git for Windows](https://git-scm.com/download/win) に同梱）または **WSL** から実行してください。PowerShellやcmd.exeからは実行できません — `install.sh` はPOSIXシェルスクリプトです。
+**Windowsユーザーへ：** 上記コマンドは **Git Bash**（[Git for Windows](https://git-scm.com/download/win) に同梱）または **WSL** から実行してください。PowerShellやcmd.exeからは実行できません — `install.sh` は bash スクリプトです（bash 配列を使用しており、純粋な POSIX `sh` スクリプトではありません）。
 
 ### npm
 
