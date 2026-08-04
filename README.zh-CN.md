@@ -137,6 +137,13 @@ irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/insta
 powershell -Command "irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1 | iex"
 ```
 
+**如果杀毒软件 / EDR 拦截了上面这行：**有些安全软件会直接拦截 `irm | iex`（下载后立即执行）这种命令样式，不论实际内容是什么。改成先把 repo clone 下来，再以本地文件执行：
+
+```powershell
+git clone --depth 1 https://github.com/starpig1129/research-lab-skills.git $env:TEMP\research-lab-skills
+powershell -ExecutionPolicy Bypass -File "$env:TEMP\research-lab-skills\install.ps1"
+```
+
 ### npm
 
 ```bash
