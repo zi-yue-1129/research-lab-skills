@@ -247,20 +247,37 @@ it — don't re-ask at every stage:
 # macOS / Linux / Git Bash:
 RESOLVE="$(find ~/.claude -path "*/resource-resolver/scripts/resolve.py" | head -1)"
 ROLE_JSON=$(python "$RESOLVE" --role paper --json)
-PAPER_DIR=$(echo "$ROLE_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('primary',''))")
+PAPER_DIR=$(echo "$ROLE_JSON" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+if d.get('status') == 'resolved':
+    print(d['primary'])
+")
 ```
 
 ```powershell
 # Windows (PowerShell):
 $RESOLVE = (Get-ChildItem $env:USERPROFILE\.claude -Recurse -Filter resolve.py |
     Where-Object FullName -like "*resource-resolver*" | Select-Object -First 1).FullName
-$PAPER_DIR = (python $RESOLVE --role paper --json | ConvertFrom-Json).primary
+$RoleJson = python $RESOLVE --role paper --json | ConvertFrom-Json
+$PAPER_DIR = if ($RoleJson.status -eq "resolved") { $RoleJson.primary } else { "" }
 ```
 
-If `$PAPER_DIR` comes back empty, follow "First-use role confirmation" in
-`skills/resource-resolver/SKILL.md` before continuing intake. Carry
-`$PAPER_DIR` through pipeline state (`state_tracker_agent`) so Stage 5
-(`format-convert -> final output`) writes there without re-resolving.
+Only a `"resolved"` status yields a usable path — a `stale_mapping` response
+also carries a non-empty `primary`, so never read `primary` without checking
+`status`. If `$PAPER_DIR` comes back empty, inspect `$ROLE_JSON` and follow the
+branching rules in the "Calling convention for other skills" section of
+`skills/resource-resolver/SKILL.md`: an `error` key means surface `message` and
+stop; `status: "stale_mapping"` means the configured paper directory is gone
+and the user must re-confirm it (do not silently recreate it); only
+`"unresolved"` / `"no_candidates"` leads to the first-use confirmation flow.
+Resolve this before continuing intake.
+
+Shell state does not persist across separate tool-call invocations, so do not
+rely on `$PAPER_DIR` still being set by the time Stage 5 runs. Carry the
+resolved path through pipeline state (`state_tracker_agent`) and substitute it
+as a literal value when Stage 5 (`format-convert -> final output`) writes
+there, or re-run the resolve snippet in that same call.
 
 ### Step 2: MODE RECOMMENDATION
 

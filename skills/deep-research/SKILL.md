@@ -369,21 +369,38 @@ where it belongs instead of asking ad hoc every time (see
 # macOS / Linux / Git Bash:
 RESOLVE="$(find ~/.claude -path "*/resource-resolver/scripts/resolve.py" | head -1)"
 ROLE_JSON=$(python "$RESOLVE" --role bibliography --json)
-BIBLIOGRAPHY_DIR=$(echo "$ROLE_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('primary',''))")
+BIBLIOGRAPHY_DIR=$(echo "$ROLE_JSON" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+if d.get('status') == 'resolved':
+    print(d['primary'])
+")
 ```
 
 ```powershell
 # Windows (PowerShell):
 $RESOLVE = (Get-ChildItem $env:USERPROFILE\.claude -Recurse -Filter resolve.py |
     Where-Object FullName -like "*resource-resolver*" | Select-Object -First 1).FullName
-$BIBLIOGRAPHY_DIR = (python $RESOLVE --role bibliography --json | ConvertFrom-Json).primary
+$RoleJson = python $RESOLVE --role bibliography --json | ConvertFrom-Json
+$BIBLIOGRAPHY_DIR = if ($RoleJson.status -eq "resolved") { $RoleJson.primary } else { "" }
 ```
 
-If `$BIBLIOGRAPHY_DIR` comes back empty, follow "First-use role confirmation"
-in `skills/resource-resolver/SKILL.md`: present the returned `candidates` (or
-`default_relative_path`) to the user, get their confirmation, then
-`--set bibliography --path <path> [--create]`. This replaces asking the user
-where to save on every run with a one-time-then-cached confirmation.
+Only a `"resolved"` status yields a usable path — a `stale_mapping` response
+also carries a non-empty `primary`, so never read `primary` without checking
+`status`. If `$BIBLIOGRAPHY_DIR` comes back empty, inspect `$ROLE_JSON` and
+follow the branching rules in the "Calling convention for other skills"
+section of `skills/resource-resolver/SKILL.md`: an `error` key means surface
+`message` and stop; `status: "stale_mapping"` means the configured
+bibliography directory is gone and the user must re-confirm it (do not
+silently recreate it); only `"unresolved"` / `"no_candidates"` leads to the
+first-use confirmation flow (present `candidates` or `default_relative_path`,
+then `--set bibliography --path <path> [--create]`). This replaces asking the
+user where to save on every run with a one-time-then-cached confirmation.
+
+Shell state does not persist across separate tool-call invocations. If a later
+step needs `$BIBLIOGRAPHY_DIR` in a new bash/PowerShell call, either re-run the
+resolve snippet above in that same call, or substitute the already-resolved
+path as a literal value into the command.
 
 ---
 

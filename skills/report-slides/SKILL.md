@@ -21,28 +21,64 @@ with SVG embedding retained as the backward-compatible fallback.
 
 ## Setup (first use in a project)
 
-**Resolve the slides and research-log directories first** (see
-`skills/resource-resolver/SKILL.md`):
+### Step 1 — Resolve directories (always first)
+
+**Resolve the slides and research-log directories before anything else** — in
+particular before the auto-setup check in Step 2, which creates directories
+under `$SLIDES_DIR` (see `skills/resource-resolver/SKILL.md`):
 
 ```bash
 # macOS / Linux / Git Bash:
 RESOLVE="$(find ~/.claude -path "*/resource-resolver/scripts/resolve.py" | head -1)"
-SLIDES_DIR=$(python "$RESOLVE" --role slides --json | python3 -c "import json,sys;print(json.load(sys.stdin).get('primary',''))")
-RESEARCH_LOG_DIR=$(python "$RESOLVE" --role research_log --json | python3 -c "import json,sys;print(json.load(sys.stdin).get('primary',''))")
+SLIDES_JSON=$(python "$RESOLVE" --role slides --json)
+SLIDES_DIR=$(echo "$SLIDES_JSON" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+if d.get('status') == 'resolved':
+    print(d['primary'])
+")
+LOG_JSON=$(python "$RESOLVE" --role research_log --json)
+RESEARCH_LOG_DIR=$(echo "$LOG_JSON" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+if d.get('status') == 'resolved':
+    print(d['primary'])
+")
 ```
 
 ```powershell
 # Windows (PowerShell):
 $RESOLVE = (Get-ChildItem $env:USERPROFILE\.claude -Recurse -Filter resolve.py |
     Where-Object FullName -like "*resource-resolver*" | Select-Object -First 1).FullName
-$SLIDES_DIR = (python $RESOLVE --role slides --json | ConvertFrom-Json).primary
-$RESEARCH_LOG_DIR = (python $RESOLVE --role research_log --json | ConvertFrom-Json).primary
+$SlidesJson = python $RESOLVE --role slides --json | ConvertFrom-Json
+$SLIDES_DIR = if ($SlidesJson.status -eq "resolved") { $SlidesJson.primary } else { "" }
+$LogJson = python $RESOLVE --role research_log --json | ConvertFrom-Json
+$RESEARCH_LOG_DIR = if ($LogJson.status -eq "resolved") { $LogJson.primary } else { "" }
 ```
 
-If either comes back empty, that role is unconfigured — follow "First-use
-role confirmation" in `skills/resource-resolver/SKILL.md` before continuing.
+Only a `"resolved"` status yields a usable path — a `stale_mapping` response
+also carries a non-empty `primary`, so never read `primary` without checking
+`status`. If either variable comes back empty, inspect the corresponding JSON
+(`$SLIDES_JSON` / `$LOG_JSON`) and follow the branching rules in the "Calling
+convention for other skills" section of `skills/resource-resolver/SKILL.md`:
+an `error` key means surface `message` and stop; `status: "stale_mapping"`
+means the configured directory is gone and the user must re-confirm it (do not
+silently recreate it); only `"unresolved"` / `"no_candidates"` leads to the
+normal first-use confirmation flow.
+
+**Do not run Step 2 until `$SLIDES_DIR` is a confirmed, non-empty path.**
+Setup creates directories under it, and creating them from an unconfirmed or
+empty value would write outside the intended project layout.
+
 The rest of this file refers to the resolved slides directory as
 `$SLIDES_DIR` and the resolved research log directory as `$RESEARCH_LOG_DIR`.
+
+Shell state does not persist across separate tool-call invocations. When a
+later section needs these paths in a new bash/PowerShell call, either re-run
+the resolve snippet above in that same call, or substitute the already-resolved
+path as a literal value into the command.
+
+### Step 2 — Install project scripts
 
 **macOS / Linux / Git Bash:**
 ```bash
@@ -57,7 +93,7 @@ bash "$(find ~/.claude -path "*/report-slides/scripts/setup.sh" | head -1)" "$SL
 
 This copies `generate_slides.py`, `validate_diagram_manifest.py`, and `render_review_sheet.py` into `scripts/` and creates both `$SLIDES_DIR/reports/` and `$SLIDES_DIR/assets/diagrams/`. `to_pptx.py` stays in the skill bundle and is invoked directly from there.
 
-**Auto-setup:** if you invoke `/report-slides` and `scripts/generate_slides.py` is missing, run the appropriate setup command automatically before proceeding — no need to ask the user.
+**Auto-setup:** if you invoke `/report-slides` and `scripts/generate_slides.py` is missing, run the setup command above automatically before proceeding — no need to ask the user. This is only ever automatic *after* Step 1 has produced a confirmed `$SLIDES_DIR`; if the `slides` role is still unconfigured or stale, resolve and confirm it with the user first, because setup creates directories.
 
 Check for Mermaid (optional, for diagram slides):
 ```bash

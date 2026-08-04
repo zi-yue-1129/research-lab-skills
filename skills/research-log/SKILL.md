@@ -19,7 +19,12 @@ One file per experiment; INDEX.md is a derived view rebuilt on demand.
 # macOS / Linux / Git Bash:
 RESOLVE="$(find ~/.claude -path "*/resource-resolver/scripts/resolve.py" | head -1)"
 ROLE_JSON=$(python "$RESOLVE" --role research_log --json)
-RESEARCH_LOG_DIR=$(echo "$ROLE_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('primary',''))")
+RESEARCH_LOG_DIR=$(echo "$ROLE_JSON" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+if d.get('status') == 'resolved':
+    print(d['primary'])
+")
 ```
 
 ```powershell
@@ -27,14 +32,28 @@ RESEARCH_LOG_DIR=$(echo "$ROLE_JSON" | python3 -c "import json,sys;print(json.lo
 $RESOLVE = (Get-ChildItem $env:USERPROFILE\.claude -Recurse -Filter resolve.py |
     Where-Object FullName -like "*resource-resolver*" | Select-Object -First 1).FullName
 $RoleJson = python $RESOLVE --role research_log --json | ConvertFrom-Json
-$RESEARCH_LOG_DIR = $RoleJson.primary
+$RESEARCH_LOG_DIR = if ($RoleJson.status -eq "resolved") { $RoleJson.primary } else { "" }
 ```
 
-If `$RESEARCH_LOG_DIR` comes back empty, the role isn't configured yet: follow
-"First-use role confirmation" in `skills/resource-resolver/SKILL.md` (surface
-`candidates` or `default_relative_path` from `$ROLE_JSON`, get the user's
-confirmation, then `--set research_log --path <path> [--create]`) before
-continuing. The rest of this file refers to the resolved directory as `$RESEARCH_LOG_DIR`.
+Only a `"resolved"` status yields a usable path — a `stale_mapping` response
+also carries a non-empty `primary`, so never read `primary` without checking
+`status`. If `$RESEARCH_LOG_DIR` comes back empty, inspect `$ROLE_JSON` and
+follow the branching rules in the "Calling convention for other skills"
+section of `skills/resource-resolver/SKILL.md`: an `error` key means surface
+`message` and stop; `status: "stale_mapping"` means the previously configured
+log directory is gone and the user must re-confirm it (**do not** silently
+recreate it at the old path); only `"unresolved"` / `"no_candidates"` leads to
+the normal first-use confirmation flow (`--set research_log --path <path>
+[--create]`).
+
+The rest of this file refers to the resolved directory as `$RESEARCH_LOG_DIR`.
+
+**Shell state does not persist across separate tool-call invocations.** Nearly
+every section below (`add`, `amend`, `index`, `query`, milestones) runs its own
+bash/PowerShell call, and `$RESEARCH_LOG_DIR` will not still be set in those
+later calls. Either re-run the resolve snippet above in that same call, or
+substitute the already-resolved path as a literal value into the command —
+never run a command that would expand `$RESEARCH_LOG_DIR` to an empty string.
 
 Filename: `YYYY-MM-DD_<experiment-slug>.md`
 Index: `$RESEARCH_LOG_DIR/INDEX.md` (auto-generated, never hand-edited)
@@ -512,7 +531,7 @@ Historical records inform a decision but do not automatically prohibit work.
 
 ## Notes
 
-- If `$RESEARCH_LOG_DIR` does not exist, create it silently — the directory itself was already confirmed by the user during role resolution; this only covers the directory not yet existing on disk.
+- If `$RESEARCH_LOG_DIR` does not exist, create it silently — the directory itself was already confirmed by the user during role resolution; this only covers the directory not yet existing on disk. This applies **only** to a path that came back with `status: "resolved"`. Never create a directory for an empty `$RESEARCH_LOG_DIR`, and never recreate the `primary` of a `stale_mapping` response — that path is one the user moved or deleted, and it must be re-confirmed first.
 - If a `follows:` target file is not found, warn but continue.
 - `slide_decks` and `amended` are managed by skills only — never ask the user to set them.
 - `git_head` enables reconstructing the exact commit range for any experiment:

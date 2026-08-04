@@ -67,11 +67,19 @@ and force the user through the full setup flow — run the same `--role` /
 
 ## Calling convention for other skills
 
+This is the canonical pattern. Other skills reference this section rather than
+restating the branching logic.
+
 ```bash
 # macOS / Linux / Git Bash:
 RESOLVE="$(find ~/.claude -path "*/resource-resolver/scripts/resolve.py" | head -1)"
 ROLE_JSON=$(python "$RESOLVE" --role <role_name> --json)
-TARGET_DIR=$(echo "$ROLE_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('primary',''))")
+TARGET_DIR=$(echo "$ROLE_JSON" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+if d.get('status') == 'resolved':
+    print(d['primary'])
+")
 ```
 
 ```powershell
@@ -79,11 +87,39 @@ TARGET_DIR=$(echo "$ROLE_JSON" | python3 -c "import json,sys;print(json.load(sys
 $RESOLVE = (Get-ChildItem $env:USERPROFILE\.claude -Recurse -Filter resolve.py |
     Where-Object FullName -like "*resource-resolver*" | Select-Object -First 1).FullName
 $RoleJson = python $RESOLVE --role <role_name> --json | ConvertFrom-Json
-$TargetDir = $RoleJson.primary
+$TargetDir = if ($RoleJson.status -eq "resolved") { $RoleJson.primary } else { "" }
 ```
 
-If `$TARGET_DIR` (or `$TargetDir`) comes back empty, the role is unconfigured
-— follow "First-use role confirmation" above before proceeding.
+**Only a `"resolved"` status yields a usable path.** Never read `primary`
+without checking `status` first: a `stale_mapping` response *also* carries a
+non-empty `primary` — the previously confirmed path that no longer exists — so
+keying off `primary` alone silently proceeds with a dead path, and any skill
+that creates missing directories would silently recreate it at the old
+location the user just moved away from.
+
+**If `$TARGET_DIR` (or `$TargetDir`) is empty, inspect `$ROLE_JSON` itself
+before assuming the role is merely unconfigured.** Check in this order:
+
+1. **An `error` key is present** (`{"error": ..., "message": ...}`, exit
+   code 1) — the resolver itself failed: unparseable `workspace.yaml`, no git
+   root above the working directory, an unreadable role registry. Surface
+   `message` to the user and stop. Do **not** fall into the confirmation flow;
+   there is nothing to confirm, and the same error will just recur.
+2. **`status` is `"stale_mapping"`** — the role was confirmed previously, but
+   its `primary` no longer exists (moved, renamed, or deleted). Tell the user
+   the configured path is gone, show it, and ask them to re-confirm a
+   location. Never silently recreate the old path.
+3. **`status` is `"unresolved"` or `"no_candidates"`** — the role has genuinely
+   never been confirmed for this project. Follow "First-use role confirmation"
+   above.
+
+Because every failure path is reported as JSON on stdout (never as a raw
+traceback), `$ROLE_JSON` is always safe to parse.
+
+Shell state does not persist across separate tool-call invocations. If a later
+step needs the resolved path in a new bash/PowerShell call, either re-run the
+resolve snippet in that same call, or substitute the already-resolved path as
+a literal value into the command.
 
 ## Optional: SessionStart hook
 
