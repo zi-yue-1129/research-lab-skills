@@ -99,7 +99,7 @@
 
 ## 安裝
 
-### curl / PowerShell（推薦，不需 npm 帳號）
+### curl / PowerShell（推薦）
 
 **macOS / Linux / Git Bash / WSL：**
 
@@ -133,13 +133,11 @@ irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/insta
 & ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -Uninstall
 ```
 
-**Windows（cmd.exe）**——用 PowerShell 指令包起來：
+**Windows（cmd.exe）：**
 
 ```bat
 powershell -Command "irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1 | iex"
 ```
-
-`install.sh` 與 `install.ps1` 都只需要 `git` 在 `PATH` 中即可，不需要 npm 帳號或登入。
 
 ### npm
 
