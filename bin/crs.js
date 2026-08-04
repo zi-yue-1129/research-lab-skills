@@ -10,9 +10,11 @@ const os   = require('os');
 const VERSION    = require('../package.json').version;
 const PKG_SKILLS = path.join(__dirname, '..', 'skills');
 
+// Shared foundation both lab and ARS skills depend on — always installed
+const RESOLVER_SKILLS = ['resource-resolver'];
 const LAB_SKILLS = ['research-log', 'report-slides', 'research-mode'];
 const ARS_SKILLS = ['deep-research', 'academic-paper', 'academic-paper-reviewer', 'academic-pipeline'];
-const ALL_SKILLS = [...LAB_SKILLS, ...ARS_SKILLS];
+const ALL_SKILLS = [...RESOLVER_SKILLS, ...LAB_SKILLS, ...ARS_SKILLS];
 
 // AI target → skills root path
 const AI_PATHS = {
@@ -58,6 +60,15 @@ function parseArgs(args) {
 }
 
 function selectSkills(flags) {
+  if (flags.labOnly) return [...RESOLVER_SKILLS, ...LAB_SKILLS];
+  if (flags.arsOnly) return [...RESOLVER_SKILLS, ...ARS_SKILLS];
+  return ALL_SKILLS;
+}
+
+// resource-resolver is a shared dependency of both skill families. A subset
+// uninstall (--lab-only / --ars-only) must not pull it out from under the
+// skills that stay installed; only a full uninstall removes it.
+function selectSkillsForUninstall(flags) {
   if (flags.labOnly) return LAB_SKILLS;
   if (flags.arsOnly) return ARS_SKILLS;
   return ALL_SKILLS;
@@ -105,7 +116,7 @@ function cmdInit(args) {
 
 function cmdUninstall(args) {
   const flags  = parseArgs(args);
-  const skills = selectSkills(flags);
+  const skills = selectSkillsForUninstall(flags);
   const target = resolveTarget(flags);
 
   log(`Uninstalling from: ${target}`);
@@ -136,9 +147,10 @@ function cmdHelp() {
   log(`
 research-lab-skills (crs) v${VERSION}
 
-7 Claude Code skills for research teams:
+8 Claude Code skills for research teams:
   Lab:      /research-log  /report-slides  /mode
   Academic: /ars-full  /ars-plan  /ars-lit-review  /ars-review  and more
+  Shared:   resource-resolver (always installed; other skills depend on it)
 
 Quick install (no global npm needed):
   npx research-lab-skills init --global
@@ -148,10 +160,10 @@ Or install globally then use crs:
   crs init --global
 
 Usage:
-  crs init                        Install all 7 skills (project-local)
-  crs init --global               Install all 7 skills globally
-  crs init --lab-only             Install only lab skills (research-log, report-slides, research-mode)
-  crs init --ars-only             Install only ARS skills (deep-research, academic-paper, ...)
+  crs init                        Install all 8 skills (project-local)
+  crs init --global               Install all 8 skills globally
+  crs init --lab-only             Install lab skills + resource-resolver (research-log, report-slides, research-mode)
+  crs init --ars-only             Install ARS skills + resource-resolver (deep-research, academic-paper, ...)
   crs init --ai cursor            Install for Cursor (project-local)
   crs init --ai claude --global   Install globally for Claude Code
 

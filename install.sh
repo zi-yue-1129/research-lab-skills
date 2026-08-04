@@ -22,12 +22,15 @@ SKILLS=("${RESOLVER_SKILLS[@]}" "${LAB_SKILLS[@]}" "${ARS_SKILLS[@]}")
 # ── parse args ────────────────────────────────────────────────────────────────
 CMD="install"
 GLOBAL=true
+# True when --ars-only/--lab-only narrowed the selection; uninstall then keeps
+# the shared resource-resolver foundation for whichever skills remain.
+SUBSET=false
 for arg in "$@"; do
   case "$arg" in
     uninstall)   CMD="uninstall" ;;
     --local)     GLOBAL=false ;;
-    --ars-only)  SKILLS=("${RESOLVER_SKILLS[@]}" "${ARS_SKILLS[@]}") ;;
-    --lab-only)  SKILLS=("${RESOLVER_SKILLS[@]}" "${LAB_SKILLS[@]}") ;;
+    --ars-only)  SKILLS=("${RESOLVER_SKILLS[@]}" "${ARS_SKILLS[@]}"); SUBSET=true ;;
+    --lab-only)  SKILLS=("${RESOLVER_SKILLS[@]}" "${LAB_SKILLS[@]}"); SUBSET=true ;;
   esac
 done
 
@@ -63,6 +66,13 @@ install_skills() {
 # ── uninstall ─────────────────────────────────────────────────────────────────
 uninstall_skills() {
   for skill in "${SKILLS[@]}"; do
+    # resource-resolver is a shared dependency of both skill families. A subset
+    # uninstall (--lab-only / --ars-only) must not pull it out from under the
+    # skills that stay installed; only a full uninstall removes it.
+    if $SUBSET && [[ " ${RESOLVER_SKILLS[*]} " == *" $skill "* ]]; then
+      echo "  - Kept (shared dependency): $DEST/$skill"
+      continue
+    fi
     target="$DEST/$skill"
     if [ -d "$target" ]; then
       rm -rf "$target"

@@ -35,14 +35,16 @@ $ErrorActionPreference = "Stop"
 
 $Repo = "https://github.com/starpig1129/research-lab-skills.git"
 
+# Shared foundation both lab and ARS skills depend on -- always installed
+$ResolverSkills = @("resource-resolver")
 # Lab skills (experiment journal + presentations + mode routing)
 $LabSkills = @("research-log", "report-slides", "research-mode")
 # Academic Research Skills (deep research, paper writing, review, pipeline)
 $ArsSkills = @("deep-research", "academic-paper", "academic-paper-reviewer", "academic-pipeline")
 
-$Skills = $LabSkills + $ArsSkills
-if ($ArsOnly) { $Skills = $ArsSkills }
-if ($LabOnly) { $Skills = $LabSkills }
+$Skills = $ResolverSkills + $LabSkills + $ArsSkills
+if ($ArsOnly) { $Skills = $ResolverSkills + $ArsSkills }
+if ($LabOnly) { $Skills = $ResolverSkills + $LabSkills }
 
 if ($Local) {
     $Dest = Join-Path (Get-Location) ".claude\skills"
@@ -79,7 +81,15 @@ function Install-Skills {
 }
 
 function Uninstall-Skills {
+    # resource-resolver is a shared dependency of both skill families. A subset
+    # uninstall (-LabOnly / -ArsOnly) must not pull it out from under the skills
+    # that stay installed; only a full uninstall removes it.
+    $subset = $ArsOnly -or $LabOnly
     foreach ($skill in $Skills) {
+        if ($subset -and ($ResolverSkills -contains $skill)) {
+            Write-Host "  - Kept (shared dependency): $(Join-Path $Dest $skill)"
+            continue
+        }
         $target = Join-Path $Dest $skill
         if (Test-Path $target) {
             Remove-Item -Recurse -Force $target
