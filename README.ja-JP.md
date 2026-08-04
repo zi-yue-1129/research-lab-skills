@@ -97,7 +97,30 @@
 
 ## インストール
 
-### npm（推奨）
+### curl（推奨、npmアカウント不要）
+
+macOS、Linux、Windows（Git BashまたはWSL上）で動作します — `install.sh` は `bash` と `git` のみが必要で、どちらもGit for Windowsに同梱されています。
+
+```bash
+# 全スキル（グローバル）
+curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash
+
+# プロジェクトローカル
+curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- --local
+
+# ARSスキルのみ
+curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- --ars-only
+
+# Labスキルのみ
+curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- --lab-only
+
+# アンインストール
+curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- uninstall
+```
+
+**Windowsユーザーへ：** 上記コマンドは **Git Bash**（[Git for Windows](https://git-scm.com/download/win) に同梱）または **WSL** から実行してください。PowerShellやcmd.exeからは実行できません — `install.sh` はPOSIXシェルスクリプトです。
+
+### npm
 
 ```bash
 npm install -g research-lab-skills
@@ -123,25 +146,6 @@ npx research-lab-skills init --global
 ```bash
 crs update --global        # npmアップグレード後に再インストール
 crs uninstall --global     # スキルを削除
-```
-
-### curl（npmなし）
-
-```bash
-# 全スキル（グローバル）
-bash <(curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh)
-
-# プロジェクトローカル
-bash <(curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh) --local
-
-# ARSスキルのみ
-bash <(curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh) --ars-only
-
-# Labスキルのみ
-bash <(curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh) --lab-only
-
-# アンインストール
-bash <(curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh) uninstall
 ```
 
 インストール後に Claude Code を再起動してください。詳細は [docs/SETUP.md](docs/SETUP.md) を参照してください。

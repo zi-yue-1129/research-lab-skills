@@ -94,7 +94,30 @@ The journal's `follows:` field links experiments into a traceable timeline. `ame
 
 ## Installation
 
-### npm (recommended)
+### curl (recommended, no npm account needed)
+
+Works on macOS, Linux, and Windows (via Git Bash or WSL — install.sh only requires `bash` and `git`, both of which ship with Git for Windows).
+
+```bash
+# All skills (global)
+curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash
+
+# Project-local
+curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- --local
+
+# ARS skills only
+curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- --ars-only
+
+# Lab skills only
+curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- --lab-only
+
+# Uninstall
+curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- uninstall
+```
+
+**Windows:** run these commands from **Git Bash** (bundled with [Git for Windows](https://git-scm.com/download/win)) or **WSL**, not from PowerShell or cmd.exe — `install.sh` is a POSIX shell script.
+
+### npm
 
 ```bash
 npm install -g research-lab-skills
@@ -120,25 +143,6 @@ npx research-lab-skills init --global
 ```bash
 crs update --global        # reinstall after npm upgrade
 crs uninstall --global     # remove skills
-```
-
-### curl (no npm)
-
-```bash
-# All skills (global)
-bash <(curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh)
-
-# Project-local
-bash <(curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh) --local
-
-# ARS skills only
-bash <(curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh) --ars-only
-
-# Lab skills only
-bash <(curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh) --lab-only
-
-# Uninstall
-bash <(curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh) uninstall
 ```
 
 Restart Claude Code after install.

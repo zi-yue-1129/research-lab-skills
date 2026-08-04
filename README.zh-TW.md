@@ -99,7 +99,30 @@
 
 ## 安裝
 
-### npm（推薦）
+### curl（推薦，不需 npm 帳號）
+
+支援 macOS、Linux 與 Windows（在 Git Bash 或 WSL 中執行——`install.sh` 只需要 `bash` 與 `git`，兩者皆隨 Git for Windows 附帶）。
+
+```bash
+# 全部技能（全域）
+curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash
+
+# 專案本機
+curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- --local
+
+# 只安裝 ARS 技能
+curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- --ars-only
+
+# 只安裝 Lab 技能
+curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- --lab-only
+
+# 解除安裝
+curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- uninstall
+```
+
+**Windows 使用者：**請在 **Git Bash**（隨 [Git for Windows](https://git-scm.com/download/win) 安裝）或 **WSL** 中執行以上指令，不要用 PowerShell 或 cmd.exe——`install.sh` 是 POSIX shell 腳本。
+
+### npm
 
 ```bash
 npm install -g research-lab-skills
@@ -125,25 +148,6 @@ npx research-lab-skills init --global
 ```bash
 crs update --global        # npm 升級後重新安裝
 crs uninstall --global     # 移除技能
-```
-
-### curl（不需 npm）
-
-```bash
-# 全部技能（全域）
-bash <(curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh)
-
-# 專案本機
-bash <(curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh) --local
-
-# 只安裝 ARS 技能
-bash <(curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh) --ars-only
-
-# 只安裝 Lab 技能
-bash <(curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh) --lab-only
-
-# 解除安裝
-bash <(curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh) uninstall
 ```
 
 安裝後重啟 Claude Code。詳細說明見 [docs/SETUP.zh-TW.md](docs/SETUP.zh-TW.md)。
