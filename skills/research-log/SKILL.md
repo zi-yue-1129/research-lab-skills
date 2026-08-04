@@ -34,7 +34,7 @@ If `$RESEARCH_LOG_DIR` comes back empty, the role isn't configured yet: follow
 "First-use role confirmation" in `skills/resource-resolver/SKILL.md` (surface
 `candidates` or `default_relative_path` from `$ROLE_JSON`, get the user's
 confirmation, then `--set research_log --path <path> [--create]`) before
-continuing. Every `docs/research_log` path below means `$RESEARCH_LOG_DIR`.
+continuing. The rest of this file refers to the resolved directory as `$RESEARCH_LOG_DIR`.
 
 Filename: `YYYY-MM-DD_<experiment-slug>.md`
 Index: `$RESEARCH_LOG_DIR/INDEX.md` (auto-generated, never hand-edited)
