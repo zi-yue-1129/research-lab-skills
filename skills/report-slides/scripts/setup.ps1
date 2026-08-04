@@ -9,6 +9,15 @@ param(
     [string]$SlidesDir = "docs\slides"
 )
 
+# The param default only applies when the argument is omitted entirely. SKILL.md
+# always passes $SLIDES_DIR explicitly, and an unresolved slides role makes that
+# $null -- cast to an empty string, which would turn the New-Item paths below
+# into "\reports" and "\assets\diagrams", i.e. the current drive's ROOT.
+# Re-apply the default for empty/null/whitespace input as well.
+if ([string]::IsNullOrWhiteSpace($SlidesDir)) {
+    $SlidesDir = "docs\slides"
+}
+
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
