@@ -97,7 +97,7 @@
 
 ## インストール
 
-### curl / PowerShell（推奨、npmアカウント不要）
+### curl / PowerShell（推奨）
 
 **macOS / Linux / Git Bash / WSL：**
 
@@ -131,13 +131,11 @@ irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/insta
 & ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -Uninstall
 ```
 
-**Windows（cmd.exe）** — PowerShellコマンドでラップします：
+**Windows（cmd.exe）：**
 
 ```bat
 powershell -Command "irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1 | iex"
 ```
-
-`install.sh` と `install.ps1` はどちらも `PATH` 上に `git` があれば動作し、npmアカウントやログインは不要です。
 
 ### npm
 

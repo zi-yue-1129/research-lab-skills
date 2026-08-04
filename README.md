@@ -94,7 +94,7 @@ The journal's `follows:` field links experiments into a traceable timeline. `ame
 
 ## Installation
 
-### curl / PowerShell (recommended, no npm account needed)
+### curl / PowerShell (recommended)
 
 **macOS / Linux / Git Bash / WSL:**
 
@@ -128,13 +128,11 @@ irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/insta
 & ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -Uninstall
 ```
 
-**Windows (cmd.exe)** — wrap the PowerShell command:
+**Windows (cmd.exe):**
 
 ```bat
 powershell -Command "irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1 | iex"
 ```
-
-Both `install.sh` and `install.ps1` just need `git` on `PATH` (no npm account, no login).
 
 ### npm
 
