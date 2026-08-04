@@ -15,6 +15,7 @@ All notable changes to this project will be documented in this file.
 - **`research-log`: historical section queries** — discover historical section types and search sections by type/date, with safe batched fetching and budget diagnostics.
 - **Onboarding demo** (`examples/`) walking through a `research-log` + `report-slides` end-to-end workflow.
 - **npm package**: dual bin alias (`crs` and `research-lab-skills`) with improved install docs.
+- **Native PowerShell installer** (`install.ps1`) — mirrors `install.sh` (`-Local`, `-ArsOnly`, `-LabOnly`, `-Uninstall`) so Windows users can install directly from PowerShell or cmd.exe without Git Bash or WSL.
 
 ### Fixed
 
@@ -22,6 +23,7 @@ All notable changes to this project will be documented in this file.
 - **`report-slides`**: convert container rects to paths so regenerated decks render correctly.
 - **`research-log`**: historical section queries now require type discovery before searching, surface query errors instead of failing silently, and require exact custom section names.
 - **Repo layout**: path fixes across policy-anchor, skill-lint discovery, and CI spec/version consistency checks after the `skills/` subdirectory restructuring.
+- **Installation**: the documented `bash <(curl -fsSL ...)` command used process substitution, which fails in PowerShell/cmd.exe and is unreliable even in Git Bash; replaced with `curl -fsSL ... | bash` across all docs.
 
 ## [1.0.0] - 2026-06-12
 

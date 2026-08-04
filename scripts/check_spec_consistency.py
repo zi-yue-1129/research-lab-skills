@@ -207,8 +207,8 @@ def check_readme_sections() -> None:
     rel_path = "README.md"
     text = read(rel_path)
 
-    expect_contains(rel_path, "version-v1.0.0-blue")
-    expect_contains(rel_path, "releases/tag/v1.0.0")
+    expect_contains(rel_path, "version-v1.1.0-blue")
+    expect_contains(rel_path, "releases/tag/v1.1.0")
 
     if "## Academic Research Skills" not in text:
         fail(f"{rel_path}: missing heading '## Academic Research Skills'")
@@ -230,8 +230,8 @@ def check_readme_ja_sections() -> None:
     rel_path = "README.ja-JP.md"
     text = read(rel_path)
 
-    expect_contains(rel_path, "version-v1.0.0-blue")
-    expect_contains(rel_path, "releases/tag/v1.0.0")
+    expect_contains(rel_path, "version-v1.1.0-blue")
+    expect_contains(rel_path, "releases/tag/v1.1.0")
 
     if "## 学術研究スキル（ARS）" not in text:
         fail(f"{rel_path}: missing heading '## 学術研究スキル（ARS）'")
@@ -263,8 +263,8 @@ def check_readme_zh_sections() -> None:
         rel_path = config["rel_path"]
         text = read(rel_path)
 
-        expect_contains(rel_path, "version-v1.0.0-blue")
-        expect_contains(rel_path, "releases/tag/v1.0.0")
+        expect_contains(rel_path, "version-v1.1.0-blue")
+        expect_contains(rel_path, "releases/tag/v1.1.0")
 
         if config["ars_heading"] not in text:
             fail(f"{rel_path}: missing heading {config['ars_heading']!r}")

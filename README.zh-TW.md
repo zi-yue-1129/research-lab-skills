@@ -1,7 +1,7 @@
 # research-lab-skills
 
 [![npm](https://img.shields.io/npm/v/research-lab-skills)](https://www.npmjs.com/package/research-lab-skills)
-[![Version](https://img.shields.io/badge/version-v1.0.0-blue)](https://github.com/starpig1129/research-lab-skills/releases/tag/v1.0.0)
+[![Version](https://img.shields.io/badge/version-v1.1.0-blue)](https://github.com/starpig1129/research-lab-skills/releases/tag/v1.1.0)
 [![License: CC BY-NC 4.0](https://img.shields.io/badge/license-CC%20BY--NC%204.0-lightgrey)](https://creativecommons.org/licenses/by-nc/4.0/)
 [![GitHub](https://img.shields.io/badge/GitHub-starpig1129-black?logo=github)](https://github.com/starpig1129/research-lab-skills)
 
@@ -99,7 +99,49 @@
 
 ## 安裝
 
-### npm（推薦）
+### curl / PowerShell（推薦，不需 npm 帳號）
+
+**macOS / Linux / Git Bash / WSL：**
+
+```bash
+# 全部技能（全域）
+curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash
+
+# 專案本機
+curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- --local
+
+# 只安裝 ARS 技能
+curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- --ars-only
+
+# 只安裝 Lab 技能
+curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- --lab-only
+
+# 解除安裝
+curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- uninstall
+```
+
+**Windows（PowerShell）**——原生支援，不需要 Git Bash 或 WSL：
+
+```powershell
+# 全部技能（全域）
+irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1 | iex
+
+# 帶旗標時需要取得腳本內容再執行，不能直接用管線傳給 iex，改用 scriptblock 包裝：
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -Local
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -ArsOnly
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -LabOnly
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -Uninstall
+```
+
+**Windows（cmd.exe）**——用 PowerShell 指令包起來：
+
+```bat
+powershell -Command "irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1 | iex"
+```
+
+`install.sh` 與 `install.ps1` 都只需要 `git` 在 `PATH` 中即可，不需要 npm 帳號或登入。
+
+### npm
 
 ```bash
 npm install -g research-lab-skills
@@ -125,25 +167,6 @@ npx research-lab-skills init --global
 ```bash
 crs update --global        # npm 升級後重新安裝
 crs uninstall --global     # 移除技能
-```
-
-### curl（不需 npm）
-
-```bash
-# 全部技能（全域）
-bash <(curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh)
-
-# 專案本機
-bash <(curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh) --local
-
-# 只安裝 ARS 技能
-bash <(curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh) --ars-only
-
-# 只安裝 Lab 技能
-bash <(curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh) --lab-only
-
-# 解除安裝
-bash <(curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh) uninstall
 ```
 
 安裝後重啟 Claude Code。詳細說明見 [docs/SETUP.zh-TW.md](docs/SETUP.zh-TW.md)。

@@ -1,7 +1,7 @@
 # research-lab-skills
 
 [![npm](https://img.shields.io/npm/v/research-lab-skills)](https://www.npmjs.com/package/research-lab-skills)
-[![Version](https://img.shields.io/badge/version-v1.0.0-blue)](https://github.com/starpig1129/research-lab-skills/releases/tag/v1.0.0)
+[![Version](https://img.shields.io/badge/version-v1.1.0-blue)](https://github.com/starpig1129/research-lab-skills/releases/tag/v1.1.0)
 [![License: CC BY-NC 4.0](https://img.shields.io/badge/license-CC%20BY--NC%204.0-lightgrey)](https://creativecommons.org/licenses/by-nc/4.0/)
 
 [简体中文版](README.zh-CN.md) | [繁體中文版](README.zh-TW.md) | [日本語版](README.ja-JP.md)
@@ -94,7 +94,49 @@ The journal's `follows:` field links experiments into a traceable timeline. `ame
 
 ## Installation
 
-### npm (recommended)
+### curl / PowerShell (recommended, no npm account needed)
+
+**macOS / Linux / Git Bash / WSL:**
+
+```bash
+# All skills (global)
+curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash
+
+# Project-local
+curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- --local
+
+# ARS skills only
+curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- --ars-only
+
+# Lab skills only
+curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- --lab-only
+
+# Uninstall
+curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- uninstall
+```
+
+**Windows (PowerShell)** — native, no Git Bash or WSL required:
+
+```powershell
+# All skills (global)
+irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1 | iex
+
+# Flags require the script body, not a piped invocation — wrap it in a scriptblock:
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -Local
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -ArsOnly
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -LabOnly
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -Uninstall
+```
+
+**Windows (cmd.exe)** — wrap the PowerShell command:
+
+```bat
+powershell -Command "irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1 | iex"
+```
+
+Both `install.sh` and `install.ps1` just need `git` on `PATH` (no npm account, no login).
+
+### npm
 
 ```bash
 npm install -g research-lab-skills
@@ -120,25 +162,6 @@ npx research-lab-skills init --global
 ```bash
 crs update --global        # reinstall after npm upgrade
 crs uninstall --global     # remove skills
-```
-
-### curl (no npm)
-
-```bash
-# All skills (global)
-bash <(curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh)
-
-# Project-local
-bash <(curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh) --local
-
-# ARS skills only
-bash <(curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh) --ars-only
-
-# Lab skills only
-bash <(curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh) --lab-only
-
-# Uninstall
-bash <(curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh) uninstall
 ```
 
 Restart Claude Code after install.

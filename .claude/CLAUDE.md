@@ -96,7 +96,7 @@ deep-research (socratic/full)
                 → Process Summary + AI Self-Reflection Report
 ```
 
-- **Suite version**: 1.0.0
+- **Suite version**: 1.1.0
 
 ## Skills Overview
 

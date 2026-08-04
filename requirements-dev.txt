@@ -2,3 +2,5 @@ pyyaml
 ruamel.yaml>=0.17
 jsonschema[format]>=4.17
 Pillow>=10.0
+python-pptx>=0.6.21
+lxml>=4.9

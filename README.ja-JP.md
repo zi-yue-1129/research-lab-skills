@@ -1,7 +1,7 @@
 # research-lab-skills
 
 [![npm](https://img.shields.io/npm/v/research-lab-skills)](https://www.npmjs.com/package/research-lab-skills)
-[![Version](https://img.shields.io/badge/version-v1.0.0-blue)](https://github.com/starpig1129/research-lab-skills/releases/tag/v1.0.0)
+[![Version](https://img.shields.io/badge/version-v1.1.0-blue)](https://github.com/starpig1129/research-lab-skills/releases/tag/v1.1.0)
 [![License: CC BY-NC 4.0](https://img.shields.io/badge/license-CC%20BY--NC%204.0-lightgrey)](https://creativecommons.org/licenses/by-nc/4.0/)
 [![GitHub](https://img.shields.io/badge/GitHub-starpig1129-black?logo=github)](https://github.com/starpig1129/research-lab-skills)
 
@@ -97,7 +97,49 @@
 
 ## インストール
 
-### npm（推奨）
+### curl / PowerShell（推奨、npmアカウント不要）
+
+**macOS / Linux / Git Bash / WSL：**
+
+```bash
+# 全スキル（グローバル）
+curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash
+
+# プロジェクトローカル
+curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- --local
+
+# ARSスキルのみ
+curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- --ars-only
+
+# Labスキルのみ
+curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- --lab-only
+
+# アンインストール
+curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- uninstall
+```
+
+**Windows（PowerShell）** — Git BashやWSLは不要、ネイティブに動作します：
+
+```powershell
+# 全スキル（グローバル）
+irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1 | iex
+
+# フラグを渡す場合はパイプではなくスクリプト本体を取得してから実行する必要があるため、scriptblockで包みます：
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -Local
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -ArsOnly
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -LabOnly
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -Uninstall
+```
+
+**Windows（cmd.exe）** — PowerShellコマンドでラップします：
+
+```bat
+powershell -Command "irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1 | iex"
+```
+
+`install.sh` と `install.ps1` はどちらも `PATH` 上に `git` があれば動作し、npmアカウントやログインは不要です。
+
+### npm
 
 ```bash
 npm install -g research-lab-skills
@@ -123,25 +165,6 @@ npx research-lab-skills init --global
 ```bash
 crs update --global        # npmアップグレード後に再インストール
 crs uninstall --global     # スキルを削除
-```
-
-### curl（npmなし）
-
-```bash
-# 全スキル（グローバル）
-bash <(curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh)
-
-# プロジェクトローカル
-bash <(curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh) --local
-
-# ARSスキルのみ
-bash <(curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh) --ars-only
-
-# Labスキルのみ
-bash <(curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh) --lab-only
-
-# アンインストール
-bash <(curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh) uninstall
 ```
 
 インストール後に Claude Code を再起動してください。詳細は [docs/SETUP.md](docs/SETUP.md) を参照してください。
