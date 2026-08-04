@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-08-04
+
+### Added
+
+- **`report-slides`: authoritative converted-PPTX visual review gate** — the rendered PPTX, not the source SVG, is now the ground truth for visual review, catching text-reflow, image-crop, and asset-drift regressions that only surface after PowerPoint conversion.
+- **`report-slides`: diagram asset manifest validation** and a **visual review sheet tool** for tracking which reusable visuals have been reviewed.
+- **`report-slides`: interactive, bilingual mode selection** for the `svg_to_pptx` conversion flow.
+- **`research-log`: Milestone Mode** with token-budget gating (`log_stats.py`) for large research logs.
+- **`research-log`: historical section queries** — discover historical section types and search sections by type/date, with safe batched fetching and budget diagnostics.
+- **Onboarding demo** (`examples/`) walking through a `research-log` + `report-slides` end-to-end workflow.
+- **npm package**: dual bin alias (`crs` and `research-lab-skills`) with improved install docs.
+
+### Fixed
+
+- **`report-slides`**: preserve native text layout and restore accurate baseline correction, dynamic width, and z-order during SVG→PPTX conversion.
+- **`report-slides`**: convert container rects to paths so regenerated decks render correctly.
+- **`research-log`**: historical section queries now require type discovery before searching, surface query errors instead of failing silently, and require exact custom section names.
+- **Repo layout**: path fixes across policy-anchor, skill-lint discovery, and CI spec/version consistency checks after the `skills/` subdirectory restructuring.
+
 ## [1.0.0] - 2026-06-12
 
 ### Added
