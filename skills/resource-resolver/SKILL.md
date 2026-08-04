@@ -28,9 +28,12 @@ an explicit user-confirmed `--create`.
 Full definitions (aliases used for discovery, descriptions) live in
 `references/resolver_roles.yaml`.
 
-## `/resolve-workspace` (one-time setup)
+## One-time workspace setup
 
-Run this once per project to confirm all six roles up front:
+There is no `/resolve-workspace` slash command — this is a flow the agent runs,
+triggered by the user asking for it in plain language ("set up my workspace",
+"where should my slides go"). Run it once per project to confirm all six roles
+up front:
 
 ```bash
 # macOS / Linux / Git Bash:
