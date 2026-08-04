@@ -1,0 +1,37 @@
+version: 1
+roles:
+  - name: research_log
+    description: Structured research log entries (one file per experiment/session)
+    aliases: [research_log, research-log, lab_notes, labnotes, logs]
+    default_relative_path: docs/research_log
+    consumed_by: [research-log, research-mode]
+
+  - name: experiment_config
+    description: Experiment parameter/config files (yaml/json/toml run configs)
+    aliases: [experiment_config, configs, experiments, runs, params]
+    default_relative_path: configs
+    consumed_by: [research-mode]
+
+  - name: results
+    description: Experiment outputs, metrics, artifacts
+    aliases: [results, outputs, artifacts, evals]
+    default_relative_path: results
+    consumed_by: [research-log, report-slides]
+
+  - name: slides
+    description: Generated presentation decks and slide assets
+    aliases: [slides, presentations, decks, reports]
+    default_relative_path: docs/slides
+    consumed_by: [report-slides]
+
+  - name: paper
+    description: Manuscript drafts and paper-related documents
+    aliases: [paper, papers, manuscript, manuscripts, draft]
+    default_relative_path: docs/papers
+    consumed_by: [academic-pipeline]
+
+  - name: bibliography
+    description: Reference/citation libraries (BibTeX, Zotero exports, etc.)
+    aliases: [bibliography, references, citations, bib]
+    default_relative_path: docs/bibliography
+    consumed_by: [deep-research, academic-pipeline]
