@@ -5,6 +5,8 @@ import sys
 import textwrap
 from pathlib import Path
 
+import pytest
+
 SCRIPT = Path(__file__).resolve().parent.parent / "resolve.py"
 
 MINIMAL_REGISTRY = textwrap.dedent("""\
@@ -113,6 +115,20 @@ def test_check_reports_skipped_role(tmp_path: Path) -> None:
 def test_check_errors_when_no_git_root(tmp_path: Path) -> None:
     no_git_dir = tmp_path / "not_a_project"
     no_git_dir.mkdir()
+
+    # This test's premise -- "no .git anywhere in the ancestry" -- only holds if
+    # nothing above tmp_path happens to contain a .git entry. /tmp is shared with
+    # other concurrent processes/jobs on this host, so that is not guaranteed.
+    # Detect (read-only) rather than assume, and skip with a clear diagnostic
+    # instead of ever touching anything outside tmp_path.
+    for ancestor in (no_git_dir, *no_git_dir.parents):
+        if (ancestor / ".git").exists():
+            pytest.skip(
+                f"Ambient .git found at {ancestor / '.git'} -- environment not "
+                "isolated enough for this test. Do not delete it; it may belong "
+                "to another process."
+            )
+
     registry = _make_registry(tmp_path)
 
     result = _run(no_git_dir, "--check", "--json", "--registry", str(registry))
