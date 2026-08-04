@@ -137,6 +137,13 @@ irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/insta
 powershell -Command "irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1 | iex"
 ```
 
+**上記コマンドがウイルス対策ソフト / EDR にブロックされる場合：** 一部のセキュリティソフトは、内容に関わらず `irm | iex`（ダウンロードして即実行）というコマンドパターン自体を検知してブロックします。その場合はリポジトリを clone してから、ローカルファイルとしてスクリプトを実行してください：
+
+```powershell
+git clone --depth 1 https://github.com/starpig1129/research-lab-skills.git $env:TEMP\research-lab-skills
+powershell -ExecutionPolicy Bypass -File "$env:TEMP\research-lab-skills\install.ps1"
+```
+
 ### npm
 
 ```bash
