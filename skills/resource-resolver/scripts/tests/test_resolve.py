@@ -273,3 +273,115 @@ def test_role_errors_on_unknown_role(tmp_path: Path) -> None:
     assert result.returncode == 1
     data = json.loads(result.stdout)
     assert data["error"] == "UnknownRoleError"
+
+
+def test_set_writes_primary_and_creates_directory(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    registry = _make_registry(tmp_path)
+    target = project / "docs" / "research_log"
+    assert not target.exists()
+
+    result = _run(
+        project, "--set", "research_log", "--path", "docs/research_log",
+        "--create", "--json", "--registry", str(registry),
+    )
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data == {
+        "status": "ok",
+        "role": "research_log",
+        "primary": "docs/research_log",
+        "readonly_sources": [],
+        "created": True,
+    }
+    assert target.is_dir()
+
+    workspace_text = (project / ".research" / "workspace.yaml").read_text(encoding="utf-8")
+    assert "docs/research_log" in workspace_text
+    for subdir in ("state", "events", "indexes", "cache"):
+        assert (project / ".research" / subdir).is_dir()
+
+
+def test_set_without_create_does_not_touch_filesystem(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    registry = _make_registry(tmp_path)
+    target = project / "docs" / "research_log"
+
+    result = _run(
+        project, "--set", "research_log", "--path", "docs/research_log",
+        "--json", "--registry", str(registry),
+    )
+    data = json.loads(result.stdout)
+    assert data["created"] is False
+    assert not target.exists()
+
+
+def test_set_with_readonly_sources(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    registry = _make_registry(tmp_path)
+
+    result = _run(
+        project, "--set", "research_log", "--path", "docs/research_log",
+        "--readonly", "notion://shared-lab-library",
+        "--readonly", "docs/old_project_log",
+        "--json", "--registry", str(registry),
+    )
+    data = json.loads(result.stdout)
+    assert data["readonly_sources"] == [
+        "notion://shared-lab-library",
+        "docs/old_project_log",
+    ]
+
+
+def test_set_skip_marks_role_without_primary(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    registry = _make_registry(tmp_path)
+
+    result = _run(
+        project, "--set", "slides", "--skip", "--json", "--registry", str(registry),
+    )
+    data = json.loads(result.stdout)
+    assert data == {"status": "skipped", "role": "slides"}
+
+    check = _run(project, "--check", "--json", "--registry", str(registry))
+    check_data = json.loads(check.stdout)
+    assert check_data["skipped"] == ["slides"]
+
+
+def test_set_errors_on_unknown_role(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    registry = _make_registry(tmp_path)
+
+    result = _run(
+        project, "--set", "nonexistent", "--path", "x",
+        "--json", "--registry", str(registry),
+    )
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "UnknownRoleError"
+
+
+def test_set_errors_when_path_missing_and_not_skip(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    registry = _make_registry(tmp_path)
+
+    result = _run(
+        project, "--set", "research_log", "--json", "--registry", str(registry),
+    )
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "ValueError"
+
+
+def test_set_overwrites_existing_mapping(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    registry = _make_registry(tmp_path)
+
+    _run(project, "--set", "research_log", "--path", "old/path",
+         "--json", "--registry", str(registry))
+    _run(project, "--set", "research_log", "--path", "docs/research_log",
+         "--json", "--registry", str(registry))
+
+    workspace_text = (project / ".research" / "workspace.yaml").read_text(encoding="utf-8")
+    assert "docs/research_log" in workspace_text
+    assert "old/path" not in workspace_text

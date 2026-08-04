@@ -17,7 +17,7 @@ import json
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 try:
     import yaml
@@ -304,6 +304,72 @@ def resolve_role(
     }
 
 
+def set_role(
+    role_name: str,
+    registry: Dict[str, Dict[str, Any]],
+    project_root: Path,
+    path: Optional[str] = None,
+    readonly_sources: Optional[List[str]] = None,
+    create: bool = False,
+    skip: bool = False,
+) -> Dict[str, Any]:
+    """Write a user-confirmed role mapping into workspace.yaml.
+
+    Args:
+        role_name: The role being confirmed (must exist in registry).
+        registry: Role name -> role definition, from load_role_registry.
+        project_root: The project's root directory.
+        path: The confirmed primary path, relative to project_root, or an
+            external URI. Required unless skip is True.
+        readonly_sources: Optional additional read-only source paths/URIs.
+        create: If True, and path is a local path that doesn't exist yet,
+            create it as a directory before recording the mapping.
+        skip: If True, records the role as explicitly skipped (no primary).
+            path and readonly_sources are ignored.
+
+    Returns:
+        {"status": "skipped", "role"} if skip is True, otherwise
+        {"status": "ok", "role", "primary", "readonly_sources", "created"}.
+
+    Raises:
+        UnknownRoleError: If role_name is not in the registry.
+        ValueError: If skip is False and path is None.
+    """
+    if role_name not in registry:
+        raise UnknownRoleError(f"Unknown role: {role_name}")
+
+    workspace = load_workspace(project_root)
+    workspace.setdefault("roles", {})
+    now = datetime.now().astimezone().isoformat(timespec="seconds")
+
+    if skip:
+        workspace["roles"][role_name] = {"confirmed_at": now}
+        save_workspace(project_root, workspace)
+        return {"status": "skipped", "role": role_name}
+
+    if path is None:
+        raise ValueError("path is required unless skip=True")
+
+    created = False
+    if create and "://" not in path:
+        (project_root / path).mkdir(parents=True, exist_ok=True)
+        created = True
+
+    workspace["roles"][role_name] = {
+        "primary": path,
+        "readonly_sources": readonly_sources or [],
+        "confirmed_at": now,
+    }
+    save_workspace(project_root, workspace)
+    return {
+        "status": "ok",
+        "role": role_name,
+        "primary": path,
+        "readonly_sources": readonly_sources or [],
+        "created": created,
+    }
+
+
 def _format_human(result: Dict[str, Any]) -> str:
     """Render a result dict as a human-readable summary.
 
@@ -334,6 +400,11 @@ def _format_human(result: Dict[str, Any]) -> str:
         return f"{role}: candidates found -- {candidates}"
     if status == "no_candidates":
         return f"{role}: no candidates found, suggest {result['default_relative_path']}"
+    if status == "skipped":
+        return f"{role}: skipped"
+    if status == "ok":
+        created_note = " (created)" if result.get("created") else ""
+        return f"{role}: set to {result['primary']}{created_note}"
     raise ValueError(f"Unrecognized result shape: {result}")
 
 
@@ -361,6 +432,23 @@ def main() -> None:
         "--role", metavar="NAME",
         help="Resolve a single role to a path, or report discovery candidates",
     )
+    action.add_argument(
+        "--set", metavar="ROLE",
+        help="Record a confirmed path (or --skip) for a role",
+    )
+    parser.add_argument("--path", metavar="PATH", help="Path to record (with --set)")
+    parser.add_argument(
+        "--readonly", metavar="PATH", action="append", default=[],
+        help="Additional read-only source, repeatable (with --set)",
+    )
+    parser.add_argument(
+        "--create", action="store_true",
+        help="Create the directory if it doesn't exist yet (with --set)",
+    )
+    parser.add_argument(
+        "--skip", action="store_true",
+        help="Record the role as explicitly skipped, no path (with --set)",
+    )
     parser.add_argument(
         "--json", action="store_true",
         help="Emit machine-readable JSON instead of human-readable text",
@@ -381,11 +469,17 @@ def main() -> None:
         if args.check:
             workspace = load_workspace(project_root)
             result = check_roles(registry, workspace)
-        else:
+        elif args.role:
             workspace = load_workspace(project_root)
             result = resolve_role(args.role, registry, workspace, project_root)
+        else:
+            result = set_role(
+                args.set, registry, project_root,
+                path=args.path, readonly_sources=args.readonly,
+                create=args.create, skip=args.skip,
+            )
     except (ProjectRootNotFoundError, WorkspaceParseError, RoleRegistryError,
-            UnknownRoleError) as exc:
+            UnknownRoleError, ValueError) as exc:
         error = {"error": type(exc).__name__, "message": str(exc)}
         print(json.dumps(error) if args.json else f"Error: {exc}")
         sys.exit(1)
