@@ -41,8 +41,8 @@ $RESEARCH_LOG_DIR = (python $RESOLVE --role research_log --json | ConvertFrom-Js
 
 If either comes back empty, that role is unconfigured — follow "First-use
 role confirmation" in `skills/resource-resolver/SKILL.md` before continuing.
-Every `docs/slides` reference below means `$SLIDES_DIR`; every
-`docs/research_log` reference means `$RESEARCH_LOG_DIR`.
+The rest of this file refers to the resolved slides directory as
+`$SLIDES_DIR` and the resolved research log directory as `$RESEARCH_LOG_DIR`.
 
 **macOS / Linux / Git Bash:**
 ```bash
