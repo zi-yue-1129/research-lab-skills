@@ -21,18 +21,41 @@ with SVG embedding retained as the backward-compatible fallback.
 
 ## Setup (first use in a project)
 
+**Resolve the slides and research-log directories first** (see
+`skills/resource-resolver/SKILL.md`):
+
+```bash
+# macOS / Linux / Git Bash:
+RESOLVE="$(find ~/.claude -path "*/resource-resolver/scripts/resolve.py" | head -1)"
+SLIDES_DIR=$(python "$RESOLVE" --role slides --json | python3 -c "import json,sys;print(json.load(sys.stdin).get('primary',''))")
+RESEARCH_LOG_DIR=$(python "$RESOLVE" --role research_log --json | python3 -c "import json,sys;print(json.load(sys.stdin).get('primary',''))")
+```
+
+```powershell
+# Windows (PowerShell):
+$RESOLVE = (Get-ChildItem $env:USERPROFILE\.claude -Recurse -Filter resolve.py |
+    Where-Object FullName -like "*resource-resolver*" | Select-Object -First 1).FullName
+$SLIDES_DIR = (python $RESOLVE --role slides --json | ConvertFrom-Json).primary
+$RESEARCH_LOG_DIR = (python $RESOLVE --role research_log --json | ConvertFrom-Json).primary
+```
+
+If either comes back empty, that role is unconfigured — follow "First-use
+role confirmation" in `skills/resource-resolver/SKILL.md` before continuing.
+Every `docs/slides` reference below means `$SLIDES_DIR`; every
+`docs/research_log` reference means `$RESEARCH_LOG_DIR`.
+
 **macOS / Linux / Git Bash:**
 ```bash
-bash "$(find ~/.claude -path "*/report-slides/scripts/setup.sh" | head -1)"
+bash "$(find ~/.claude -path "*/report-slides/scripts/setup.sh" | head -1)" "$SLIDES_DIR"
 ```
 
 **Windows (PowerShell):**
 ```powershell
 & (Get-ChildItem $env:USERPROFILE\.claude -Recurse -Filter setup.ps1 |
-    Where-Object FullName -like "*report-slides*" | Select-Object -First 1).FullName
+    Where-Object FullName -like "*report-slides*" | Select-Object -First 1).FullName $SLIDES_DIR
 ```
 
-This copies `generate_slides.py`, `validate_diagram_manifest.py`, and `render_review_sheet.py` into `scripts/` and creates both `docs/slides/reports/` and `docs/slides/assets/diagrams/`. `to_pptx.py` stays in the skill bundle and is invoked directly from there.
+This copies `generate_slides.py`, `validate_diagram_manifest.py`, and `render_review_sheet.py` into `scripts/` and creates both `$SLIDES_DIR/reports/` and `$SLIDES_DIR/assets/diagrams/`. `to_pptx.py` stays in the skill bundle and is invoked directly from there.
 
 **Auto-setup:** if you invoke `/report-slides` and `scripts/generate_slides.py` is missing, run the appropriate setup command automatically before proceeding — no need to ask the user.
 
@@ -52,7 +75,7 @@ Slides inherit colors and fonts from a **style file** — a `.md` file with YAML
 Three built-in styles ship with this skill: `default`, `minimal`, `dark`, `paper`.
 Full schema and color role descriptions are in `references/styles/STYLES.md` (read it when resolving styles).
 
-**Project default:** if `docs/slides/_style.md` exists it is applied automatically to every deck.
+**Project default:** if `$SLIDES_DIR/_style.md` exists it is applied automatically to every deck.
 
 ### set-style \<name\>
 
@@ -67,8 +90,8 @@ bash "$(find ~/.claude -path "*/report-slides/scripts/set-style.sh" | head -1)" 
 # built-in names: default  minimal  dark  paper
 ```
 
-To **create a custom style**: make `docs/slides/styles/<name>.md` using the schema in
-`references/styles/STYLES.md`, then copy it to `docs/slides/_style.md` to activate it as the project default.
+To **create a custom style**: make `$SLIDES_DIR/styles/<name>.md` using the schema in
+`references/styles/STYLES.md`, then copy it to `$SLIDES_DIR/_style.md` to activate it as the project default.
 
 ---
 
@@ -77,8 +100,8 @@ To **create a custom style**: make `docs/slides/styles/<name>.md` using the sche
 ### 1. Show available logs
 
 ```bash
-cat docs/research_log/INDEX.md 2>/dev/null \
-  || find docs/research_log -maxdepth 1 -name "*.md" ! -name "INDEX.md" | sort -r | head -20
+cat "$RESEARCH_LOG_DIR/INDEX.md" 2>/dev/null \
+  || find "$RESEARCH_LOG_DIR" -maxdepth 1 -name "*.md" ! -name "INDEX.md" | sort -r | head -20
 ```
 
 Show the user which entries exist and which have already been made into slide decks.
@@ -111,7 +134,7 @@ If no passport file exists, fall back to research-log source and notify the user
 3. Charts? (`list` = output paths to `chart_list.md` / `embed` = base64 into SVG)
 4. Language? (follow log language / force English / force another language)
 5. Emphasis? (progression / final results / failure analysis / let Claude decide)
-6. Style? (skip = use `docs/slides/_style.md` if present / name a built-in / `custom` to create one)
+6. Style? (skip = use `$SLIDES_DIR/_style.md` if present / name a built-in / `custom` to create one)
 
 ---
 
@@ -350,21 +373,21 @@ Before generating, determine which style file to use and export `STYLE_FILE`:
 
 ```bash
 STYLE_FILE=""
-[ -f docs/slides/_style.md ] && STYLE_FILE="docs/slides/_style.md"
+[ -f "$SLIDES_DIR/_style.md" ] && STYLE_FILE="$SLIDES_DIR/_style.md"
 ```
 
 If the user named a style in Q6, search in order:
-1. `docs/slides/styles/<name>.md` (project-local)
+1. `$SLIDES_DIR/styles/<name>.md` (project-local)
 2. Skill bundle `styles/<name>.md` (built-in)
 
 Set `STYLE_FILE` to whichever path exists. If the user chose `custom`, read `references/styles/STYLES.md`
-and ask for the required frontmatter values, then write `docs/slides/styles/<name>.md`.
+and ask for the required frontmatter values, then write `$SLIDES_DIR/styles/<name>.md`.
 
 ---
 
 ### 4. Generate slides
 
-Output directory: `docs/slides/reports/YYYY-MM-DD_<name>/`
+Output directory: `$SLIDES_DIR/reports/YYYY-MM-DD_<name>/`
 
 ---
 
@@ -522,8 +545,8 @@ After slides are generated:
 # macOS / Linux / Git Bash:
 cd "$(find ~/.claude -path "*/report-slides/scripts" -type d | head -1)"
 python3 -m svg_to_pptx \
-    --slides docs/slides/reports/YYYY-MM-DD_<name>/ \
-    --out    docs/slides/reports/YYYY-MM-DD_<name>/deck.pptx
+    --slides "$SLIDES_DIR/reports/YYYY-MM-DD_<name>/" \
+    --out    "$SLIDES_DIR/reports/YYYY-MM-DD_<name>/deck.pptx"
 ```
 
 Native mode converts every SVG element to editable shapes: rectangles, ovals, text boxes, connectors, and paths (including Bézier curves). Text labels inside shapes are embedded directly — double-click a shape in PowerPoint to edit its text. Connectors re-route when shapes are moved.
@@ -533,8 +556,8 @@ Native mode converts every SVG element to editable shapes: rectangles, ovals, te
 python3 -m svg_to_pptx --slides output/ --out deck.pptx --mode embed
 # or equivalently:
 python3 to_pptx.py \
-    --slides docs/slides/reports/YYYY-MM-DD_<name>/ \
-    --out    docs/slides/reports/YYYY-MM-DD_<name>/deck.pptx
+    --slides "$SLIDES_DIR/reports/YYYY-MM-DD_<name>/" \
+    --out    "$SLIDES_DIR/reports/YYYY-MM-DD_<name>/deck.pptx"
 ```
 
 Only `python-pptx` and `lxml` required — no cairosvg, Pillow, or image converter needed.

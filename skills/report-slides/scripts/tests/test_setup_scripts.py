@@ -48,6 +48,23 @@ def test_setup_ps1_mentions_all_scripts_and_diagram_directory() -> None:
     assert "generate_slides.py" in setup_text
     assert "validate_diagram_manifest.py" in setup_text
     assert "render_review_sheet.py" in setup_text
-    assert "docs\\slides\\assets\\diagrams" in setup_text
+    assert 'docs\\slides"' in setup_text  # default $SlidesDir value preserved
     assert "Pillow" in setup_text
     assert "review-sheet composition" in setup_text
+
+
+def test_setup_sh_accepts_custom_slides_dir(tmp_path: Path) -> None:
+    """A caller-supplied SLIDES_DIR argument overrides the docs/slides default."""
+    result = subprocess.run(
+        ["bash", str(SETUP_SH), "custom/slides/root"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "custom/slides/root/reports/" in result.stdout
+    assert (tmp_path / "custom/slides/root/reports").is_dir()
+    assert (tmp_path / "custom/slides/root/assets/diagrams").is_dir()
+    assert not (tmp_path / "docs").exists()
