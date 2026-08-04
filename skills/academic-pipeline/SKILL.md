@@ -239,6 +239,29 @@ pipeline_orchestrator_agent analyzes the user's input:
 3. Determine entry point, confirm with user
 ```
 
+**Resolve the paper output location once, here at intake** (see
+`skills/resource-resolver/SKILL.md`), so it's ready by the time Stage 5 needs
+it — don't re-ask at every stage:
+
+```bash
+# macOS / Linux / Git Bash:
+RESOLVE="$(find ~/.claude -path "*/resource-resolver/scripts/resolve.py" | head -1)"
+ROLE_JSON=$(python "$RESOLVE" --role paper --json)
+PAPER_DIR=$(echo "$ROLE_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('primary',''))")
+```
+
+```powershell
+# Windows (PowerShell):
+$RESOLVE = (Get-ChildItem $env:USERPROFILE\.claude -Recurse -Filter resolve.py |
+    Where-Object FullName -like "*resource-resolver*" | Select-Object -First 1).FullName
+$PAPER_DIR = (python $RESOLVE --role paper --json | ConvertFrom-Json).primary
+```
+
+If `$PAPER_DIR` comes back empty, follow "First-use role confirmation" in
+`skills/resource-resolver/SKILL.md` before continuing intake. Carry
+`$PAPER_DIR` through pipeline state (`state_tracker_agent`) so Stage 5
+(`format-convert -> final output`) writes there without re-resolving.
+
 ### Step 2: MODE RECOMMENDATION
 
 ```
@@ -282,7 +305,7 @@ After user confirmation:
    - Stage 4  --> 3': Pass revised draft and Response to Reviewers to reviewer
    - Stage 3' --> 4': Pass new Revision Roadmap + R&R Traceability Matrix (Schema 11) to academic-paper revision mode
    - Stage 4/4' --> 4.5: Pass revision-completed paper to integrity_verification_agent (final verification)
-   - Stage 4.5 --> 5: Pass verified final draft to format-convert mode
+   - Stage 4.5 --> 5: Pass verified final draft, plus the `$PAPER_DIR` resolved at intake, to format-convert mode
 3. Begin next stage
 ```
 
