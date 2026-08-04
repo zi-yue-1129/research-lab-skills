@@ -6,12 +6,12 @@
   },
   "metadata": {
     "description": "Unified suite of Claude Code skills for academic research — experiment logging, slides, deep research, paper writing, peer review, and full pipeline orchestration.",
-    "version": "1.0.0"
+    "version": "1.1.0"
   },
   "plugins": [
     {
       "name": "lab-tools",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "description": "Experiment journal (/research-log), progress presentations (/report-slides), and session mode routing (/mode)",
       "source": "./",
       "strict": false,
@@ -23,7 +23,7 @@
     },
     {
       "name": "academic-research-skills",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "description": "13-agent deep research, 12-agent paper writing, multi-perspective peer review, and full 10-stage pipeline orchestrator",
       "source": "./",
       "strict": false,
