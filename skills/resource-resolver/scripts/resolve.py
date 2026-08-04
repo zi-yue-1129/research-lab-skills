@@ -483,6 +483,18 @@ def main() -> None:
         error = {"error": type(exc).__name__, "message": str(exc)}
         print(json.dumps(error) if args.json else f"Error: {exc}")
         sys.exit(1)
+    except Exception as exc:  # noqa: BLE001 -- stdout must always stay parseable
+        # Every consumer pipes this script's stdout straight into a JSON parser,
+        # so an uncaught traceback breaks them all. Paths that can raise outside
+        # the tuple above include mkdir under --create hitting an existing
+        # non-directory file (FileExistsError/NotADirectoryError/PermissionError),
+        # save_workspace's write_text (PermissionError), a hand-edited
+        # workspace.yaml with a non-mapping role value (AttributeError), and a
+        # registry entry missing "name" (KeyError/TypeError). Nothing is masked
+        # as a default value -- the real exception type name is still reported.
+        error = {"error": type(exc).__name__, "message": str(exc)}
+        print(json.dumps(error) if args.json else f"Error: {exc}")
+        sys.exit(1)
 
     print(json.dumps(result) if args.json else _format_human(result))
 

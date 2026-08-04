@@ -373,6 +373,56 @@ def test_set_errors_when_path_missing_and_not_skip(tmp_path: Path) -> None:
     assert data["error"] == "ValueError"
 
 
+def test_set_create_over_existing_file_emits_json_error(tmp_path: Path) -> None:
+    """An unanticipated exception still leaves stdout parseable as JSON.
+
+    Consumers pipe this script's stdout straight into json.load, so a raw
+    traceback would break every one of them. Creating a directory where a
+    regular file already exists raises FileExistsError, which is outside
+    main()'s specific exception tuple.
+    """
+    project = _make_project(tmp_path)
+    registry = _make_registry(tmp_path)
+    occupied = project / "docs"
+    occupied.parent.mkdir(parents=True, exist_ok=True)
+    occupied.write_text("I am a file, not a directory.\n", encoding="utf-8")
+
+    result = _run(
+        project, "--set", "research_log", "--path", "docs/research_log",
+        "--create", "--json", "--registry", str(registry),
+    )
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)  # must not raise
+    assert "error" in data
+    assert data["error"] in {"FileExistsError", "NotADirectoryError"}
+    assert data["message"]
+    assert "Traceback" not in result.stdout
+
+
+def test_role_on_non_mapping_workspace_entry_emits_json_error(tmp_path: Path) -> None:
+    """A hand-edited workspace.yaml with a scalar role value stays JSON-safe."""
+    project = _make_project(tmp_path)
+    registry = _make_registry(tmp_path)
+    research_dir = project / ".research"
+    research_dir.mkdir()
+    (research_dir / "workspace.yaml").write_text(
+        textwrap.dedent("""\
+            version: 1
+            roles:
+              research_log: docs/research_log
+        """),
+        encoding="utf-8",
+    )
+
+    result = _run(project, "--role", "research_log", "--json", "--registry", str(registry))
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)  # must not raise
+    assert data["error"] == "AttributeError"
+    assert "Traceback" not in result.stdout
+
+
 def test_set_overwrites_existing_mapping(tmp_path: Path) -> None:
     project = _make_project(tmp_path)
     registry = _make_registry(tmp_path)
