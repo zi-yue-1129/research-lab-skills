@@ -169,7 +169,7 @@ powershell -ExecutionPolicy Bypass -File install.ps1 -Uninstall      # uninstall
 
 ```bash
 npm install -g research-lab-skills
-crs init --global          # install all 7 skills globally
+crs init --global          # install all 8 skills globally
 ```
 
 Or one-shot with npx (no permanent npm install):
@@ -182,10 +182,10 @@ npx research-lab-skills init --global
 
 | Flag | What installs |
 |------|---------------|
-| _(none)_ | All 7 skills (project-local `.claude/skills/`) |
-| `--global` | All 7 skills globally (`~/.claude/skills/`) |
-| `--lab-only` | `research-log`, `report-slides`, `research-mode` |
-| `--ars-only` | `deep-research`, `academic-paper`, `academic-paper-reviewer`, `academic-pipeline` |
+| _(none)_ | All 8 skills (project-local `.claude/skills/`) |
+| `--global` | All 8 skills globally (`~/.claude/skills/`) |
+| `--lab-only` | `research-log`, `report-slides`, `research-mode` (+ `resource-resolver`) |
+| `--ars-only` | `deep-research`, `academic-paper`, `academic-paper-reviewer`, `academic-pipeline` (+ `resource-resolver`) |
 | `--ai cursor` | Install for Cursor instead of Claude Code |
 
 ```bash
