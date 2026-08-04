@@ -13,11 +13,32 @@ One file per experiment; INDEX.md is a derived view rebuilt on demand.
 
 ## Storage
 
-All files in `docs/research_log/` (relative to project root). Create it if absent.
+**Resolve the log directory first** (see `skills/resource-resolver/SKILL.md`):
+
+```bash
+# macOS / Linux / Git Bash:
+RESOLVE="$(find ~/.claude -path "*/resource-resolver/scripts/resolve.py" | head -1)"
+ROLE_JSON=$(python "$RESOLVE" --role research_log --json)
+RESEARCH_LOG_DIR=$(echo "$ROLE_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('primary',''))")
+```
+
+```powershell
+# Windows (PowerShell):
+$RESOLVE = (Get-ChildItem $env:USERPROFILE\.claude -Recurse -Filter resolve.py |
+    Where-Object FullName -like "*resource-resolver*" | Select-Object -First 1).FullName
+$RoleJson = python $RESOLVE --role research_log --json | ConvertFrom-Json
+$RESEARCH_LOG_DIR = $RoleJson.primary
+```
+
+If `$RESEARCH_LOG_DIR` comes back empty, the role isn't configured yet: follow
+"First-use role confirmation" in `skills/resource-resolver/SKILL.md` (surface
+`candidates` or `default_relative_path` from `$ROLE_JSON`, get the user's
+confirmation, then `--set research_log --path <path> [--create]`) before
+continuing. Every `docs/research_log` path below means `$RESEARCH_LOG_DIR`.
 
 Filename: `YYYY-MM-DD_<experiment-slug>.md`
-Index: `docs/research_log/INDEX.md` (auto-generated, never hand-edited)
-Milestones: `docs/research_log/MILESTONES.md` (auto-generated once milestone mode is active — see Milestone Mode below; never hand-edited)
+Index: `$RESEARCH_LOG_DIR/INDEX.md` (auto-generated, never hand-edited)
+Milestones: `$RESEARCH_LOG_DIR/MILESTONES.md` (auto-generated once milestone mode is active — see Milestone Mode below; never hand-edited)
 
 ---
 
@@ -30,7 +51,7 @@ description, then opens only the log file(s) that matter.
 
 **Auto-enable, one-directional.** Milestone mode turns on by itself once total
 log content crosses a token threshold — there is no command to turn it on
-manually. Once `docs/research_log/MILESTONES.md` exists, always keep
+manually. Once `$RESEARCH_LOG_DIR/MILESTONES.md` exists, always keep
 maintaining it; never delete it or stop updating it, even if log volume later
 drops (e.g. old entries removed). There is no "disable" flow.
 
@@ -40,14 +61,14 @@ finalizing any `add`):
 ```bash
 # macOS / Linux / Git Bash:
 LOG_STATS="$(find ~/.claude -path "*/research-log/scripts/log_stats.py" | head -1)"
-python "$LOG_STATS" --dir docs/research_log --json
+python "$LOG_STATS" --dir "$RESEARCH_LOG_DIR" --json
 ```
 
 ```powershell
 # Windows (PowerShell):
 $LOG_STATS = (Get-ChildItem $env:USERPROFILE\.claude -Recurse -Filter log_stats.py |
     Where-Object FullName -like "*research-log*" | Select-Object -First 1).FullName
-python $LOG_STATS --dir docs\research_log --json
+python $LOG_STATS --dir $RESEARCH_LOG_DIR --json
 ```
 
 The script prints a JSON object: `file_count`, `total_chars`,
@@ -66,7 +87,7 @@ automatically; no permission prompt is needed to start this flow):
    cluster.
 3. Present the proposed grouping to the user. Let them confirm, rename, merge,
    or split clusters — never finalize a grouping silently.
-4. Write `docs/research_log/MILESTONES.md` (format below) and add a
+4. Write `$RESEARCH_LOG_DIR/MILESTONES.md` (format below) and add a
    `milestone:` field (e.g. `M2`) to each affected log's frontmatter.
 
 **`MILESTONES.md` format** (newest milestone first):
@@ -119,7 +140,7 @@ Use the output to pre-fill the **Changes** section and to capture the `git_head`
 ```bash
 # macOS / Linux / Git Bash:
 GIT_CTX="$(find ~/.claude -path "*/research-log/scripts/git_context.py" | head -1)"
-PRIOR=$(ls -t docs/research_log/*.md 2>/dev/null | grep -v INDEX | grep -v MILESTONES | head -1)
+PRIOR=$(ls -t "$RESEARCH_LOG_DIR"/*.md 2>/dev/null | grep -v INDEX | grep -v MILESTONES | head -1)
 if [ -n "$PRIOR" ]; then
     python "$GIT_CTX" --since-log "$PRIOR"
 else
@@ -133,7 +154,7 @@ GIT_HEAD=$(python "$GIT_CTX" --head)
 # Windows (PowerShell):
 $GIT_CTX = (Get-ChildItem $env:USERPROFILE\.claude -Recurse -Filter git_context.py |
     Where-Object FullName -like "*research-log*" | Select-Object -First 1).FullName
-$PRIOR = Get-ChildItem docs\research_log -Filter "*.md" |
+$PRIOR = Get-ChildItem $RESEARCH_LOG_DIR -Filter "*.md" |
     Where-Object { $_.Name -ne "INDEX.md" -and $_.Name -ne "MILESTONES.md" } |
     Sort-Object LastWriteTime -Desc |
     Select-Object -First 1 -Exp FullName
@@ -176,7 +197,7 @@ Quick (3 questions, good for in-progress runs) or Full (all sections)?
 Draft a one-sentence `summary:` from the Goal (and Conclusion, if present).
 Show it to the user to accept or edit.
 
-**Step 3 — Milestone check (only if `docs/research_log/MILESTONES.md` already exists):**
+**Step 3 — Milestone check (only if `$RESEARCH_LOG_DIR/MILESTONES.md` already exists):**
 Follow "Ongoing use" under Milestone Mode above: compare this entry's tags/date
 against the most recent milestone, suggest continuing it or starting a new
 one, and set the `milestone:` field to the user's choice.
@@ -230,7 +251,7 @@ Omit any section that was skipped. Quick mode writes: Goal, Analysis, Next Steps
 
 Rebuild INDEX.md after saving.
 
-If `docs/research_log/MILESTONES.md` already exists, also update it: append
+If `$RESEARCH_LOG_DIR/MILESTONES.md` already exists, also update it: append
 this entry's row to its milestone's table and refresh `_Last updated_`. If it
 does not exist yet, run the Milestone Mode threshold check — if
 `recommend_enable` is `true`, run the enable flow (see Milestone Mode above)
@@ -244,7 +265,7 @@ When `/research-log add` is invoked by `research-mode` with pre-filled data:
 - The `mode:` field is always set by research-mode; do not ask the user for it
 - After writing the file, update `slide_decks:` in the calling log entry if applicable
 
-Confirm: `✓ Created docs/research_log/YYYY-MM-DD_<slug>.md`
+Confirm: `✓ Created $RESEARCH_LOG_DIR/YYYY-MM-DD_<slug>.md`
 
 ---
 
@@ -254,7 +275,7 @@ Update an existing entry.
 
 If no argument, list the 5 most recent files and ask which to edit:
 ```bash
-ls -t docs/research_log/*.md | grep -v INDEX | grep -v MILESTONES | head -5
+ls -t "$RESEARCH_LOG_DIR"/*.md | grep -v INDEX | grep -v MILESTONES | head -5
 ```
 
 **Optional — show git changes since this entry was created:**
@@ -275,7 +296,7 @@ If the amendment substantially changes the entry's content, ask (non-blocking
 — skip if the user declines) whether `summary` or `milestone` membership
 should be revisited.
 
-Rebuild INDEX.md. If `docs/research_log/MILESTONES.md` exists, rebuild it too.
+Rebuild INDEX.md. If `$RESEARCH_LOG_DIR/MILESTONES.md` exists, rebuild it too.
 
 ---
 
@@ -284,7 +305,7 @@ Rebuild INDEX.md. If `docs/research_log/MILESTONES.md` exists, rebuild it too.
 Rebuild INDEX.md by scanning all `.md` files (excluding INDEX.md and MILESTONES.md):
 
 ```bash
-find docs/research_log -maxdepth 1 -name "*.md" ! -name "INDEX.md" ! -name "MILESTONES.md" | sort -r
+find "$RESEARCH_LOG_DIR" -maxdepth 1 -name "*.md" ! -name "INDEX.md" ! -name "MILESTONES.md" | sort -r
 ```
 
 Read frontmatter from each file. Write:
@@ -304,7 +325,7 @@ Rules: newest first; `Mode` = `mode` frontmatter value, or `—` if absent; `HEA
 
 **After rebuilding INDEX.md**, run the Milestone Mode threshold check (see
 above):
-- If `docs/research_log/MILESTONES.md` already exists, rebuild it too, from
+- If `$RESEARCH_LOG_DIR/MILESTONES.md` already exists, rebuild it too, from
   all logs' `milestone:` and `summary:` frontmatter fields.
 - If it does not exist and `recommend_enable` is `true`, run the enable flow
   from Milestone Mode above.
@@ -325,14 +346,14 @@ CLI; do not assume an installed skill path.
 ```bash
 # macOS / Linux / Git Bash:
 SECTION_QUERY="$(find ~/.claude -path "*/research-log/scripts/section_query.py" | head -1)"
-python "$SECTION_QUERY" types --dir docs/research_log --budget 4000
+python "$SECTION_QUERY" types --dir "$RESEARCH_LOG_DIR" --budget 4000
 ```
 
 ```powershell
 # Windows (PowerShell):
 $SECTION_QUERY = (Get-ChildItem $env:USERPROFILE\.claude -Recurse -Filter section_query.py |
     Where-Object FullName -like "*research-log*" | Select-Object -First 1).FullName
-python $SECTION_QUERY types --dir docs\research_log --budget 4000
+python $SECTION_QUERY types --dir $RESEARCH_LOG_DIR --budget 4000
 ```
 
 Use the strict `types → search → fetch` sequence. `types` discovers the stable
@@ -343,14 +364,14 @@ perform full type-cursor traversal with the same directory and budget before
 claiming that a custom type does not exist:
 
 ```bash
-python "$SECTION_QUERY" types --dir docs/research_log --budget 4000 --cursor "<opaque-cursor>"
+python "$SECTION_QUERY" types --dir "$RESEARCH_LOG_DIR" --budget 4000 --cursor "<opaque-cursor>"
 ```
 
 Then search the selected types to receive a manifest, never full bodies:
 
 ```bash
 python "$SECTION_QUERY" search \
-  --dir docs/research_log \
+  --dir "$RESEARCH_LOG_DIR" \
   --sections Failures Analysis "Open Problems" \
   --range 90d \
   --budget 4000
@@ -362,7 +383,7 @@ boundary, not as a substitute for history-wide repetition checks:
 
 ```bash
 python "$SECTION_QUERY" search \
-  --dir docs/research_log \
+  --dir "$RESEARCH_LOG_DIR" \
   --sections Changes Setup Results Analysis \
   --from 2026-01-01 --to 2026-06-30 \
   --budget 4000
@@ -376,7 +397,7 @@ the searched scope.
 
 ```bash
 python "$SECTION_QUERY" search \
-  --dir docs/research_log \
+  --dir "$RESEARCH_LOG_DIR" \
   --sections Failures Analysis "Open Problems" \
   --range 90d \
   --budget 4000 \
@@ -393,7 +414,7 @@ atomically when the selection fits:
 
 ```bash
 python "$SECTION_QUERY" fetch \
-  --dir docs/research_log \
+  --dir "$RESEARCH_LOG_DIR" \
   --ids "2026-05-18_bert_finetuned_full::failures" \
   --budget 4000
 ```
@@ -408,7 +429,7 @@ summarize, or omit a requested section.
 
 ```bash
 python "$SECTION_QUERY" fetch \
-  --dir docs/research_log \
+  --dir "$RESEARCH_LOG_DIR" \
   --chunk-cursor "<opaque-chunk-cursor>" \
   --budget 4000
 ```
@@ -417,7 +438,7 @@ python "$SECTION_QUERY" fetch \
 
 Run this protocol when both conditions are true:
 
-1. The current project contains a non-empty `docs/research_log/` journal.
+1. The current project contains a non-empty research log journal (see the resolved `$RESEARCH_LOG_DIR` from Storage above).
 2. The agent is about to plan, recommend, execute, repeat, or diagnose research work.
 
 Mode activation is not required. A direct research request such as "try this
@@ -491,7 +512,7 @@ Historical records inform a decision but do not automatically prohibit work.
 
 ## Notes
 
-- If `docs/research_log/` does not exist, create it silently.
+- If `$RESEARCH_LOG_DIR` does not exist, create it silently — the directory itself was already confirmed by the user during role resolution; this only covers the directory not yet existing on disk.
 - If a `follows:` target file is not found, warn but continue.
 - `slide_decks` and `amended` are managed by skills only — never ask the user to set them.
 - `git_head` enables reconstructing the exact commit range for any experiment:
