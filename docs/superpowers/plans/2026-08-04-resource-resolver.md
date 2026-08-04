@@ -1515,7 +1515,7 @@ Apply each of these exact replacements in `skills/research-log/SKILL.md` (frontm
 | `python "$SECTION_QUERY" types --dir docs/research_log --budget 4000` (first occurrence) | `python "$SECTION_QUERY" types --dir "$RESEARCH_LOG_DIR" --budget 4000` |
 | `python $SECTION_QUERY types --dir docs\research_log --budget 4000` | `python $SECTION_QUERY types --dir $RESEARCH_LOG_DIR --budget 4000` |
 | `python "$SECTION_QUERY" types --dir docs/research_log --budget 4000 --cursor "<opaque-cursor>"` | `python "$SECTION_QUERY" types --dir "$RESEARCH_LOG_DIR" --budget 4000 --cursor "<opaque-cursor>"` |
-| `  --dir docs/research_log \` (4 occurrences, in the `search`/`fetch` examples) | `  --dir "$RESEARCH_LOG_DIR" \` |
+| `  --dir docs/research_log \` (5 occurrences, in the `search`/`fetch` examples) | `  --dir "$RESEARCH_LOG_DIR" \` |
 | `1. The current project contains a non-empty \`docs/research_log/\` journal.` | `1. The current project contains a non-empty research log journal (see the resolved \`$RESEARCH_LOG_DIR\` from Storage above).` |
 | `- If \`docs/research_log/\` does not exist, create it silently.` | `- If \`$RESEARCH_LOG_DIR\` does not exist, create it silently — the directory itself was already confirmed by the user during role resolution; this only covers the directory not yet existing on disk.` |
 
