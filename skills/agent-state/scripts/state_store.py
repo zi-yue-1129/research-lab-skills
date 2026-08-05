@@ -9,6 +9,7 @@ JSONL shards under .research/events/ -- the JSONL line itself is the record,
 there is no separate canonical copy.
 """
 import errno
+import json
 import os
 import time
 import uuid
@@ -365,3 +366,112 @@ def complete_run(project_root: Path, run_id: str, status: str) -> Dict[str, Any]
         runs[run_id]["ended_at"] = _utc_now_iso()
         _save_yaml_map(path, "runs", runs)
         return runs[run_id]
+
+
+def _events_shard_path(project_root: Path, when: datetime) -> Path:
+    """Return the JSONL shard path for the UTC day containing `when`.
+
+    Args:
+        project_root: The project's root directory.
+        when: A timezone-aware datetime; only its UTC date is used.
+
+    Returns:
+        `.research/events/<YYYY-MM-DD>.jsonl` under project_root.
+    """
+    utc_date = when.astimezone(timezone.utc).date()
+    return project_root / EVENTS_RELATIVE_DIR / f"{utc_date:%Y-%m-%d}.jsonl"
+
+
+def _append_event(project_root: Path, event: Dict[str, Any]) -> None:
+    """Append one JSON line to today's event shard under an exclusive lock.
+
+    Args:
+        project_root: The project's root directory.
+        event: The fully populated event dict to serialize (including "ts").
+    """
+    shard_path = _events_shard_path(project_root, datetime.now(timezone.utc))
+    with _locked_file(shard_path):
+        with shard_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(event, sort_keys=True))
+            f.write("\n")
+
+
+def record_result(
+    project_root: Path,
+    run_id: str,
+    summary: str,
+    artifact_role: Optional[str] = None,
+    artifact_path: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Append a Result event for an existing Run.
+
+    Args:
+        project_root: The project's root directory.
+        run_id: The Run this Result belongs to; must already exist.
+        summary: Short description of what was produced.
+        artifact_role: Optional resource-resolver role name the artifact
+            lives under. Must be given together with artifact_path or not
+            at all.
+        artifact_path: Optional path relative to that role's resolved
+            directory.
+
+    Returns:
+        The full Result event, including its generated "id" and "ts".
+
+    Raises:
+        RunNotFoundError: If run_id doesn't exist in state/runs.yaml.
+        ValueError: If exactly one of artifact_role/artifact_path is given.
+    """
+    if bool(artifact_role) != bool(artifact_path):
+        raise ValueError("artifact_role and artifact_path must be given together")
+    if run_id not in load_runs(project_root):
+        raise RunNotFoundError(f"Unknown run_id: {run_id}")
+    event: Dict[str, Any] = {
+        "event": "result",
+        "id": generate_id("res"),
+        "run_id": run_id,
+        "summary": summary,
+        "artifact_ref": (
+            {"role": artifact_role, "path": artifact_path} if artifact_role else None
+        ),
+        "ts": _utc_now_iso(),
+    }
+    _append_event(project_root, event)
+    return event
+
+
+def record_claim(
+    project_root: Path,
+    run_id: str,
+    statement: str,
+    confidence: Optional[str] = None,
+    evidence_ref: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Append a Claim event for an existing Run.
+
+    Args:
+        project_root: The project's root directory.
+        run_id: The Run this Claim belongs to; must already exist.
+        statement: The assertion or decision text.
+        confidence: Optional "low", "medium", or "high".
+        evidence_ref: Optional supporting reference (path, quote, URL).
+
+    Returns:
+        The full Claim event, including its generated "id" and "ts".
+
+    Raises:
+        RunNotFoundError: If run_id doesn't exist in state/runs.yaml.
+    """
+    if run_id not in load_runs(project_root):
+        raise RunNotFoundError(f"Unknown run_id: {run_id}")
+    event: Dict[str, Any] = {
+        "event": "claim",
+        "id": generate_id("clm"),
+        "run_id": run_id,
+        "statement": statement,
+        "confidence": confidence,
+        "evidence_ref": evidence_ref,
+        "ts": _utc_now_iso(),
+    }
+    _append_event(project_root, event)
+    return event

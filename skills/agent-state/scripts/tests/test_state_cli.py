@@ -1,4 +1,5 @@
 """Subprocess tests for state.py -- Agent State CLI."""
+import datetime as _datetime
 import json
 import subprocess
 import sys
@@ -199,3 +200,82 @@ def test_answer_unknown_question_errors(tmp_path: Path) -> None:
     assert result.returncode == 1
     data = json.loads(result.stdout)
     assert data["error"] == "QuestionNotFoundError"
+
+
+def _start_run(project: Path, skill: str = "deep-research") -> str:
+    result = _run(project, "--start-run", "--skill", skill, "--json")
+    return json.loads(result.stdout)["id"]
+
+
+def test_record_result_appends_to_todays_shard(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    run_id = _start_run(project)
+
+    result = _run(
+        project, "--record-result", "--run-id", run_id, "--summary", "Found 3 sources",
+        "--artifact-role", "bibliography", "--artifact-path", "sources.bib", "--json",
+    )
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["event"] == "result"
+    assert data["run_id"] == run_id
+    assert data["artifact_ref"] == {"role": "bibliography", "path": "sources.bib"}
+
+    today = _datetime.datetime.now(_datetime.timezone.utc).strftime("%Y-%m-%d")
+    shard = project / ".research" / "events" / f"{today}.jsonl"
+    assert shard.is_file()
+    assert json.loads(shard.read_text().splitlines()[-1])["id"] == data["id"]
+
+
+def test_record_result_requires_both_artifact_fields_together(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    run_id = _start_run(project)
+
+    result = _run(
+        project, "--record-result", "--run-id", run_id, "--summary", "x",
+        "--artifact-role", "bibliography", "--json",
+    )
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "ValueError"
+
+
+def test_record_result_unknown_run_id_errors(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+
+    result = _run(project, "--record-result", "--run-id", "run_missing", "--summary", "x", "--json")
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "RunNotFoundError"
+
+
+def test_record_claim_appends_event(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    run_id = _start_run(project)
+
+    result = _run(
+        project, "--record-claim", "--run-id", run_id,
+        "--statement", "Region X diverges from the plan",
+        "--confidence", "high", "--evidence", "review.json:findings[2]", "--json",
+    )
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["event"] == "claim"
+    assert data["confidence"] == "high"
+    assert data["evidence_ref"] == "review.json:findings[2]"
+
+
+def test_record_claim_invalid_confidence_errors(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    run_id = _start_run(project)
+
+    result = _run(
+        project, "--record-claim", "--run-id", run_id, "--statement", "x",
+        "--confidence", "extreme", "--json",
+    )
+
+    assert result.returncode == 2  # argparse rejects choices before we ever see it
