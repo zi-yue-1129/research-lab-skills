@@ -162,8 +162,8 @@ Or install globally then use crs:
 Usage:
   crs init                        Install all 9 skills (project-local)
   crs init --global               Install all 9 skills globally
-  crs init --lab-only             Install lab skills + resource-resolver (research-log, report-slides, research-mode)
-  crs init --ars-only             Install ARS skills + resource-resolver (deep-research, academic-paper, ...)
+  crs init --lab-only             Install lab skills + resource-resolver, agent-state (research-log, report-slides, research-mode)
+  crs init --ars-only             Install ARS skills + resource-resolver, agent-state (deep-research, academic-paper, ...)
   crs init --ai cursor            Install for Cursor (project-local)
   crs init --ai claude --global   Install globally for Claude Code
 
