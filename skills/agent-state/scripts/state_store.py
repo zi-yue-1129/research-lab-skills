@@ -653,14 +653,43 @@ def set_experiment_status(project_root: Path, experiment_id: str, status: str) -
         return experiments[experiment_id]
 
 
+def _question_id_for_experiment(project_root: Path, experiment_id: str) -> str:
+    """Walk experiment_id -> hypothesis_id -> question_id to find the owning Question.
+
+    Args:
+        project_root: The project's root directory.
+        experiment_id: An Experiment id already known to exist.
+
+    Returns:
+        The question_id of the Hypothesis the Experiment belongs to.
+    """
+    experiments = load_experiments(project_root)
+    hypothesis_id = experiments[experiment_id]["hypothesis_id"]
+    hypotheses = load_hypotheses(project_root)
+    return hypotheses[hypothesis_id]["question_id"]
+
+
 def start_run(
     project_root: Path,
     skill: str,
     mode: Optional[str] = None,
     question_id: Optional[str] = None,
     question_text: Optional[str] = None,
+    hypothesis_id: Optional[str] = None,
+    experiment_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Start a new Run, optionally creating or linking a Question.
+    """Start a new Run, auto-completing its research chain as needed.
+
+    Resolution, most specific first:
+      1. experiment_id given -- validated to exist, used directly.
+      2. hypothesis_id given (no experiment_id) -- validated to exist, a
+         synthetic Experiment is created under it.
+      3. question_id or question_text given (no hypothesis_id/experiment_id)
+         -- resolved exactly as before, then a synthetic Hypothesis and a
+         synthetic Experiment are created under it.
+      4. Nothing given at all -- unchanged standalone behavior: question_id,
+         hypothesis_id, and experiment_id are all left None. No Question,
+         Hypothesis, or Experiment is created.
 
     Args:
         project_root: The project's root directory.
@@ -670,12 +699,20 @@ def start_run(
             question_text.
         question_text: Create a new Question (status "open") and link this
             Run to it. Mutually exclusive with question_id.
+        hypothesis_id: Link to an existing Hypothesis; a synthetic
+            Experiment is created under it.
+        experiment_id: Link directly to an existing Experiment.
 
     Returns:
-        The full new Run record, including its generated "id".
+        The full new Run record, including its generated "id". Its
+        "question_id" is always derived by walking "experiment_id"'s chain
+        when an experiment is involved, rather than taken from the
+        question_id/question_text arguments directly.
 
     Raises:
         QuestionNotFoundError: If question_id is given but doesn't exist.
+        HypothesisNotFoundError: If hypothesis_id is given but doesn't exist.
+        ExperimentNotFoundError: If experiment_id is given but doesn't exist.
         ValueError: If skill is empty/missing, or if both question_id and
             question_text are given.
     """
@@ -683,11 +720,40 @@ def start_run(
         raise ValueError("skill is required")
     if question_id and question_text:
         raise ValueError("question_id and question_text are mutually exclusive")
-    if question_text:
-        question = create_question(project_root, question_text, origin_skill=skill)
-        question_id = question["id"]
-    elif question_id and question_id not in load_questions(project_root):
-        raise QuestionNotFoundError(f"Unknown question_id: {question_id}")
+
+    if experiment_id:
+        if experiment_id not in load_experiments(project_root):
+            raise ExperimentNotFoundError(f"Unknown experiment_id: {experiment_id}")
+    elif hypothesis_id:
+        if hypothesis_id not in load_hypotheses(project_root):
+            raise HypothesisNotFoundError(f"Unknown hypothesis_id: {hypothesis_id}")
+        experiment = create_experiment(
+            project_root, hypothesis_id,
+            description=f"Auto-created for run started by {skill}",
+            created_by=skill, synthetic=True,
+        )
+        experiment_id = experiment["id"]
+    elif question_id or question_text:
+        if question_text:
+            question = create_question(project_root, question_text, origin_skill=skill)
+            question_id = question["id"]
+        elif question_id not in load_questions(project_root):
+            raise QuestionNotFoundError(f"Unknown question_id: {question_id}")
+        hypothesis = create_hypothesis(
+            project_root, question_id,
+            statement=f"Auto-created for run started by {skill}",
+            created_by=skill, synthetic=True,
+        )
+        experiment = create_experiment(
+            project_root, hypothesis["id"],
+            description=f"Auto-created for run started by {skill}",
+            created_by=skill, synthetic=True,
+        )
+        experiment_id = experiment["id"]
+
+    resolved_question_id = (
+        _question_id_for_experiment(project_root, experiment_id) if experiment_id else None
+    )
 
     path = project_root / RUNS_RELATIVE_PATH
     with _locked_file(project_root, path):
@@ -697,7 +763,8 @@ def start_run(
             "id": run_id,
             "skill": skill,
             "mode": mode,
-            "question_id": question_id,
+            "question_id": resolved_question_id,
+            "experiment_id": experiment_id,
             "status": "running",
             "started_at": _utc_now_iso(),
             "ended_at": None,

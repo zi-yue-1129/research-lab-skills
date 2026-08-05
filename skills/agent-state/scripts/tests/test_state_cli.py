@@ -972,3 +972,132 @@ def test_set_experiment_status_unknown_id_errors(tmp_path: Path) -> None:
     assert result.returncode == 1
     data = json.loads(result.stdout)
     assert data["error"] == "ExperimentNotFoundError"
+
+
+def test_start_run_without_any_level_stays_fully_standalone(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+
+    result = _run(project, "--start-run", "--skill", "deep-research", "--json")
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["question_id"] is None
+    assert data["experiment_id"] is None
+    assert not (project / ".research" / "state" / "hypotheses.yaml").exists()
+    assert not (project / ".research" / "state" / "experiments.yaml").exists()
+
+
+def test_start_run_with_question_creates_synthetic_hypothesis_and_experiment(
+    tmp_path: Path,
+) -> None:
+    project = _make_project(tmp_path)
+
+    result = _run(
+        project, "--start-run", "--skill", "deep-research",
+        "--question", "Does this need offline support?", "--json",
+    )
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["question_id"].startswith("q_")
+    assert data["experiment_id"].startswith("exp_")
+
+    hyp_doc = yaml.safe_load(
+        (project / ".research" / "state" / "hypotheses.yaml").read_text()
+    )
+    assert len(hyp_doc["hypotheses"]) == 1
+    hypothesis = next(iter(hyp_doc["hypotheses"].values()))
+    assert hypothesis["question_id"] == data["question_id"]
+    assert hypothesis["synthetic"] is True
+
+    exp_doc = yaml.safe_load(
+        (project / ".research" / "state" / "experiments.yaml").read_text()
+    )
+    experiment = exp_doc["experiments"][data["experiment_id"]]
+    assert experiment["hypothesis_id"] == hypothesis["id"]
+    assert experiment["synthetic"] is True
+
+
+def test_start_run_with_hypothesis_id_creates_synthetic_experiment(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    question_id = _create_question_id(project)
+    hypothesis_id = _create_hypothesis_id(project, question_id)
+
+    result = _run(
+        project, "--start-run", "--skill", "deep-research",
+        "--hypothesis-id", hypothesis_id, "--json",
+    )
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["experiment_id"].startswith("exp_")
+    assert data["question_id"] == question_id
+
+    exp_doc = yaml.safe_load(
+        (project / ".research" / "state" / "experiments.yaml").read_text()
+    )
+    experiment = exp_doc["experiments"][data["experiment_id"]]
+    assert experiment["hypothesis_id"] == hypothesis_id
+    assert experiment["synthetic"] is True
+
+
+def test_start_run_with_unknown_hypothesis_id_errors(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+
+    result = _run(
+        project, "--start-run", "--skill", "deep-research",
+        "--hypothesis-id", "hyp_missing", "--json",
+    )
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "HypothesisNotFoundError"
+
+
+def test_start_run_with_experiment_id_links_directly(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    # _create_question_id itself goes through --start-run --question, which
+    # (per Branch 3) auto-creates its own synthetic Hypothesis+Experiment --
+    # so the experiment count baseline below is taken after setup, not at 0.
+    question_id = _create_question_id(project)
+    hypothesis_id = _create_hypothesis_id(project, question_id)
+    experiment_id = json.loads(
+        _run(
+            project, "--create-experiment", "--hypothesis-id", hypothesis_id,
+            "--description", "E1", "--json",
+        ).stdout
+    )["id"]
+    experiment_count_before = len(
+        yaml.safe_load(
+            (project / ".research" / "state" / "experiments.yaml").read_text()
+        )["experiments"]
+    )
+
+    result = _run(
+        project, "--start-run", "--skill", "deep-research",
+        "--experiment-id", experiment_id, "--json",
+    )
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["experiment_id"] == experiment_id
+    assert data["question_id"] == question_id
+
+    exp_doc = yaml.safe_load(
+        (project / ".research" / "state" / "experiments.yaml").read_text()
+    )
+    # no extra synthetic experiment created by the --start-run call itself
+    assert len(exp_doc["experiments"]) == experiment_count_before
+
+
+def test_start_run_with_unknown_experiment_id_errors(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+
+    result = _run(
+        project, "--start-run", "--skill", "deep-research",
+        "--experiment-id", "exp_missing", "--json",
+    )
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "ExperimentNotFoundError"

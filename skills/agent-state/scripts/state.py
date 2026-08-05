@@ -90,6 +90,7 @@ def _dispatch(args: argparse.Namespace, project_root: Path) -> Dict[str, Any]:
         return state_store.start_run(
             project_root, args.skill, mode=args.mode,
             question_id=args.question_id, question_text=args.question,
+            hypothesis_id=args.hypothesis_id, experiment_id=args.experiment_id,
         )
     if args.complete_run:
         return state_store.complete_run(project_root, args.run_id, args.status)
