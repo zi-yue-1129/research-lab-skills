@@ -57,6 +57,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--description", metavar="TEXT")
     parser.add_argument("--question", metavar="TEXT")
     parser.add_argument("--question-id", metavar="ID")
+    parser.add_argument("--project-id", metavar="ID")
     parser.add_argument("--hypothesis-id", metavar="ID")
     parser.add_argument("--experiment-id", metavar="ID")
     parser.add_argument("--run-id", metavar="ID")
@@ -111,7 +112,8 @@ def _dispatch(args: argparse.Namespace, project_root: Path) -> Dict[str, Any]:
     if args.query:
         return state_index.query(
             project_root, run_id=args.run_id, question_id=args.question_id,
-            skill=args.skill, since=args.since,
+            project_id=args.project_id, hypothesis_id=args.hypothesis_id,
+            experiment_id=args.experiment_id, skill=args.skill, since=args.since,
         )
     if args.rebuild_index:
         return state_index.rebuild_index(project_root, full=args.full)

@@ -515,7 +515,7 @@ def test_full_rebuild_recovers_from_manually_corrupted_index(tmp_path: Path) -> 
     try:
         # The rebuilt database went through the same _fresh_connection path
         # as a schema-version mismatch, so it must also come out re-stamped.
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
     finally:
         conn.close()
 
@@ -712,7 +712,7 @@ def test_connect_stamps_fresh_database_with_user_version(tmp_path: Path) -> None
 
     conn = sqlite3.connect(str(project / ".research" / "indexes" / "index.db"))
     try:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
     finally:
         conn.close()
 
@@ -736,7 +736,7 @@ def test_connect_recovers_from_mismatched_user_version(tmp_path: Path) -> None:
 
     conn = sqlite3.connect(str(index_db))
     try:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
     finally:
         conn.close()
 
@@ -1101,3 +1101,103 @@ def test_start_run_with_unknown_experiment_id_errors(tmp_path: Path) -> None:
     assert result.returncode == 1
     data = json.loads(result.stdout)
     assert data["error"] == "ExperimentNotFoundError"
+
+
+def test_query_by_project_id_returns_project_and_questions(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    started = json.loads(
+        _run(project, "--start-run", "--skill", "research-mode", "--question", "Q?", "--json").stdout
+    )
+
+    result = _run(project, "--query", "--project-id", "proj_default", "--json")
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["projects"][0]["id"] == "proj_default"
+    assert data["questions"][0]["id"] == started["question_id"]
+
+
+def test_query_by_hypothesis_id_returns_hypothesis_and_experiments(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    question_id = _create_question_id(project)
+    hypothesis_id = _create_hypothesis_id(project, question_id)
+    experiment_id = json.loads(
+        _run(
+            project, "--create-experiment", "--hypothesis-id", hypothesis_id,
+            "--description", "E1", "--json",
+        ).stdout
+    )["id"]
+
+    result = _run(project, "--query", "--hypothesis-id", hypothesis_id, "--json")
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["hypotheses"][0]["id"] == hypothesis_id
+    assert data["experiments"][0]["id"] == experiment_id
+
+
+def test_query_by_experiment_id_returns_experiment_and_runs(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    question_id = _create_question_id(project)
+    hypothesis_id = _create_hypothesis_id(project, question_id)
+    started = json.loads(
+        _run(
+            project, "--start-run", "--skill", "deep-research",
+            "--hypothesis-id", hypothesis_id, "--json",
+        ).stdout
+    )
+
+    result = _run(project, "--query", "--experiment-id", started["experiment_id"], "--json")
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["experiments"][0]["id"] == started["experiment_id"]
+    assert data["runs"][0]["id"] == started["id"]
+
+
+def test_query_requires_exactly_one_filter_still_rejects_zero_and_many(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+
+    zero = _run(project, "--query", "--json")
+    many = _run(
+        project, "--query", "--project-id", "proj_default",
+        "--hypothesis-id", "hyp_x", "--json",
+    )
+
+    assert zero.returncode == 1
+    assert json.loads(zero.stdout)["error"] == "ValueError"
+    assert many.returncode == 1
+    assert json.loads(many.stdout)["error"] == "ValueError"
+
+
+def test_index_rebuild_recovers_from_pre_experiment_id_schema(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    _run(project, "--start-run", "--skill", "deep-research", "--json")
+    index_path = project / ".research" / "indexes" / "index.db"
+    # --start-run alone never touches indexes/index.db -- only --query,
+    # --report, and --rebuild-index do. Build it once on the current
+    # (post-Task-6) schema first, so the hand-edit below has a real file to
+    # downgrade rather than failing to open a nonexistent one.
+    _run(project, "--rebuild-index", "--json")
+
+    # Simulate an index.db built before this task's runs.experiment_id
+    # column existed: drop it back to schema version 1 with the old runs
+    # table shape.
+    conn = sqlite3.connect(str(index_path))
+    conn.execute("PRAGMA user_version = 1")
+    conn.execute("DROP TABLE runs")
+    conn.execute(
+        "CREATE TABLE runs (id TEXT PRIMARY KEY, skill TEXT, mode TEXT, "
+        "question_id TEXT, status TEXT, started_at TEXT, ended_at TEXT)"
+    )
+    conn.commit()
+    conn.close()
+
+    result = _run(project, "--rebuild-index", "--json")
+
+    assert result.returncode == 0, result.stderr
+    conn = sqlite3.connect(str(index_path))
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(runs)")}
+    assert "experiment_id" in columns
+    conn.close()

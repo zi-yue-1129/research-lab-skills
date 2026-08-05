@@ -19,16 +19,28 @@ from state_store import (
 )
 
 INDEX_RELATIVE_PATH = Path(".research/indexes/index.db")
-INDEX_SCHEMA_VERSION = 1
+INDEX_SCHEMA_VERSION = 2
 
 _SCHEMA = """
+CREATE TABLE IF NOT EXISTS projects (
+    id TEXT PRIMARY KEY, name TEXT, description TEXT, status TEXT,
+    created_at TEXT, created_by TEXT
+);
 CREATE TABLE IF NOT EXISTS questions (
-    id TEXT PRIMARY KEY, text TEXT, origin_skill TEXT, status TEXT,
-    created_at TEXT, updated_at TEXT
+    id TEXT PRIMARY KEY, text TEXT, origin_skill TEXT, project_id TEXT,
+    status TEXT, created_at TEXT, updated_at TEXT
+);
+CREATE TABLE IF NOT EXISTS hypotheses (
+    id TEXT PRIMARY KEY, question_id TEXT, statement TEXT, status TEXT,
+    synthetic INTEGER, created_at TEXT, created_by TEXT
+);
+CREATE TABLE IF NOT EXISTS experiments (
+    id TEXT PRIMARY KEY, hypothesis_id TEXT, description TEXT, status TEXT,
+    synthetic INTEGER, created_at TEXT, created_by TEXT
 );
 CREATE TABLE IF NOT EXISTS runs (
     id TEXT PRIMARY KEY, skill TEXT, mode TEXT, question_id TEXT,
-    status TEXT, started_at TEXT, ended_at TEXT
+    experiment_id TEXT, status TEXT, started_at TEXT, ended_at TEXT
 );
 CREATE TABLE IF NOT EXISTS results (
     id TEXT PRIMARY KEY, run_id TEXT, summary TEXT,
@@ -41,8 +53,12 @@ CREATE TABLE IF NOT EXISTS claims (
 CREATE TABLE IF NOT EXISTS shard_checkpoints (
     shard_name TEXT PRIMARY KEY, lines_ingested INTEGER NOT NULL
 );
+CREATE INDEX IF NOT EXISTS idx_questions_project_id ON questions(project_id);
+CREATE INDEX IF NOT EXISTS idx_hypotheses_question_id ON hypotheses(question_id);
+CREATE INDEX IF NOT EXISTS idx_experiments_hypothesis_id ON experiments(hypothesis_id);
 CREATE INDEX IF NOT EXISTS idx_runs_skill ON runs(skill);
 CREATE INDEX IF NOT EXISTS idx_runs_question_id ON runs(question_id);
+CREATE INDEX IF NOT EXISTS idx_runs_experiment_id ON runs(experiment_id);
 CREATE INDEX IF NOT EXISTS idx_results_run_id ON results(run_id);
 CREATE INDEX IF NOT EXISTS idx_claims_run_id ON claims(run_id);
 """
@@ -116,6 +132,27 @@ def _connect(project_root: Path) -> sqlite3.Connection:
     state/*.yaml + events/*.jsonl -- there is never a need for an in-place
     migration here, only a full reconstruction.
 
+    The version check runs BEFORE `_SCHEMA` is applied, not after. Once
+    `_SCHEMA` itself started widening already-existing tables (e.g. adding
+    `runs.experiment_id` and an index on it), applying it in place against
+    an old-shape table can itself raise -- `CREATE INDEX ... ON
+    runs(experiment_id)` fails with `sqlite3.OperationalError: no such
+    column: experiment_id` when `runs` still has its pre-migration shape,
+    since `CREATE TABLE IF NOT EXISTS` silently no-ops on an
+    already-existing table rather than adding the missing column. If that
+    were left to surface after `conn.executescript(_SCHEMA)`, as before this
+    reordering, it would hit the OperationalError handler below -- meant for
+    lock contention -- and get re-raised as-is instead of ever reaching the
+    version check that should have caught it. Reading `PRAGMA user_version`
+    first sidesteps this: a stale version is detected and recovered from
+    without ever attempting to apply `_SCHEMA` to the mismatched tables.
+    (Reading `PRAGMA user_version` also faithfully reproduces the two
+    outcomes it replaces reordering for: on genuine lock contention it likewise
+    raises `sqlite3.OperationalError` while another connection holds an
+    exclusive transaction, and on corruption ("file is not a database") it
+    likewise raises a plain `sqlite3.DatabaseError` -- both verified
+    empirically, not assumed.)
+
     Args:
         project_root: The project's root directory.
 
@@ -143,7 +180,7 @@ def _connect(project_root: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(str(index_path))
     conn.row_factory = sqlite3.Row
     try:
-        conn.executescript(_SCHEMA)
+        current_version = conn.execute("PRAGMA user_version").fetchone()[0]
     except sqlite3.OperationalError:
         # Lock contention, not corruption -- must be caught before the
         # broader DatabaseError handler below, since OperationalError IS-A
@@ -154,17 +191,29 @@ def _connect(project_root: Path) -> sqlite3.Connection:
         conn.close()
         return _fresh_connection(index_path)
 
-    current_version = conn.execute("PRAGMA user_version").fetchone()[0]
-    if current_version == 0:
-        conn.execute(f"PRAGMA user_version = {INDEX_SCHEMA_VERSION}")
-    elif current_version != INDEX_SCHEMA_VERSION:
+    if current_version not in (0, INDEX_SCHEMA_VERSION):
+        # Stale version: don't attempt to apply _SCHEMA to tables whose
+        # on-disk shape may not match it (see docstring above).
         conn.close()
         return _fresh_connection(index_path)
+
+    try:
+        conn.executescript(_SCHEMA)
+    except sqlite3.OperationalError:
+        conn.close()
+        raise
+    except sqlite3.DatabaseError:
+        conn.close()
+        return _fresh_connection(index_path)
+
+    if current_version == 0:
+        conn.execute(f"PRAGMA user_version = {INDEX_SCHEMA_VERSION}")
     return conn
 
 
 def _sync_state_tables(conn: sqlite3.Connection, project_root: Path) -> None:
-    """Replace the questions and runs tables with the current YAML contents.
+    """Replace the projects/questions/hypotheses/experiments/runs tables
+    with the current YAML contents.
 
     Args:
         conn: Open connection (schema already applied).
@@ -172,24 +221,69 @@ def _sync_state_tables(conn: sqlite3.Connection, project_root: Path) -> None:
     """
     # Imported here, not at module scope, so this module never needs
     # state_store's YAML-loading functions except at rebuild time.
-    from state_store import QUESTIONS_RELATIVE_PATH, RUNS_RELATIVE_PATH, _load_yaml_map
+    from state_store import (
+        DEFAULT_PROJECT_ID,
+        EXPERIMENTS_RELATIVE_PATH,
+        HYPOTHESES_RELATIVE_PATH,
+        PROJECTS_RELATIVE_PATH,
+        QUESTIONS_RELATIVE_PATH,
+        RUNS_RELATIVE_PATH,
+        _load_yaml_map,
+    )
 
+    projects = _load_yaml_map(project_root / PROJECTS_RELATIVE_PATH, "projects")
     questions = _load_yaml_map(project_root / QUESTIONS_RELATIVE_PATH, "questions")
+    hypotheses = _load_yaml_map(project_root / HYPOTHESES_RELATIVE_PATH, "hypotheses")
+    experiments = _load_yaml_map(project_root / EXPERIMENTS_RELATIVE_PATH, "experiments")
     runs = _load_yaml_map(project_root / RUNS_RELATIVE_PATH, "runs")
 
+    conn.execute("DELETE FROM projects")
+    if projects:
+        conn.executemany(
+            "INSERT INTO projects (id, name, description, status, created_at, created_by) "
+            "VALUES (:id, :name, :description, :status, :created_at, :created_by)",
+            list(projects.values()),
+        )
     conn.execute("DELETE FROM questions")
     if questions:
+        # Questions written before Task 2 have no "project_id" key at all --
+        # default them to DEFAULT_PROJECT_ID, matching create_question's own
+        # default, rather than letting the missing key raise a
+        # sqlite3.ProgrammingError from executemany's named-parameter binding.
         conn.executemany(
-            "INSERT INTO questions (id, text, origin_skill, status, created_at, updated_at) "
-            "VALUES (:id, :text, :origin_skill, :status, :created_at, :updated_at)",
-            list(questions.values()),
+            "INSERT INTO questions "
+            "(id, text, origin_skill, project_id, status, created_at, updated_at) "
+            "VALUES (:id, :text, :origin_skill, :project_id, :status, :created_at, :updated_at)",
+            [{**q, "project_id": q.get("project_id", DEFAULT_PROJECT_ID)} for q in questions.values()],
+        )
+    conn.execute("DELETE FROM hypotheses")
+    if hypotheses:
+        conn.executemany(
+            "INSERT INTO hypotheses "
+            "(id, question_id, statement, status, synthetic, created_at, created_by) "
+            "VALUES (:id, :question_id, :statement, :status, :synthetic, :created_at, :created_by)",
+            list(hypotheses.values()),
+        )
+    conn.execute("DELETE FROM experiments")
+    if experiments:
+        conn.executemany(
+            "INSERT INTO experiments "
+            "(id, hypothesis_id, description, status, synthetic, created_at, created_by) "
+            "VALUES (:id, :hypothesis_id, :description, :status, :synthetic, :created_at, :created_by)",
+            list(experiments.values()),
         )
     conn.execute("DELETE FROM runs")
     if runs:
+        # Runs written before Task 5 have no "experiment_id" key -- default
+        # to None (no ancestry), same reasoning as the questions.project_id
+        # default above but with a different fallback value, since a
+        # pre-existing standalone Run genuinely has no Experiment to point
+        # to (see the design spec's Error Handling section).
         conn.executemany(
-            "INSERT INTO runs (id, skill, mode, question_id, status, started_at, ended_at) "
-            "VALUES (:id, :skill, :mode, :question_id, :status, :started_at, :ended_at)",
-            list(runs.values()),
+            "INSERT INTO runs "
+            "(id, skill, mode, question_id, experiment_id, status, started_at, ended_at) "
+            "VALUES (:id, :skill, :mode, :question_id, :experiment_id, :status, :started_at, :ended_at)",
+            [{**r, "experiment_id": r.get("experiment_id")} for r in runs.values()],
         )
 
 
@@ -317,6 +411,9 @@ def query(
     *,
     run_id: Optional[str] = None,
     question_id: Optional[str] = None,
+    project_id: Optional[str] = None,
+    hypothesis_id: Optional[str] = None,
+    experiment_id: Optional[str] = None,
     skill: Optional[str] = None,
     since: Optional[str] = None,
 ) -> Dict[str, List[Dict[str, Any]]]:
@@ -326,21 +423,29 @@ def query(
         project_root: The project's root directory.
         run_id: Return this Run plus its Results and Claims.
         question_id: Return this Question plus Runs linked to it.
+        project_id: Return this Project plus Questions linked to it.
+        hypothesis_id: Return this Hypothesis plus Experiments linked to it.
+        experiment_id: Return this Experiment plus Runs linked to it.
         skill: Return Runs executed by this skill.
         since: ISO-8601 date/datetime string; return Runs started at or
             after it.
 
     Returns:
-        A dict with whichever of "questions", "runs", "results", "claims"
-        keys are relevant to the filter used, each a list of row dicts.
+        A dict with whichever result keys are relevant to the filter used,
+        each a list of row dicts.
 
     Raises:
         ValueError: If zero or more than one filter is given.
     """
-    filters = [f for f in (run_id, question_id, skill, since) if f is not None]
+    filters = [
+        f for f in
+        (run_id, question_id, project_id, hypothesis_id, experiment_id, skill, since)
+        if f is not None
+    ]
     if len(filters) != 1:
         raise ValueError(
-            "query requires exactly one of run_id/question_id/skill/since"
+            "query requires exactly one of "
+            "run_id/question_id/project_id/hypothesis_id/experiment_id/skill/since"
         )
 
     rebuild_index(project_root, full=False)
@@ -365,6 +470,39 @@ def query(
                     conn,
                     "SELECT * FROM runs WHERE question_id = ? ORDER BY started_at",
                     (question_id,),
+                ),
+            }
+        if project_id is not None:
+            return {
+                "projects": _rows(
+                    conn, "SELECT * FROM projects WHERE id = ?", (project_id,)
+                ),
+                "questions": _rows(
+                    conn,
+                    "SELECT * FROM questions WHERE project_id = ? ORDER BY created_at",
+                    (project_id,),
+                ),
+            }
+        if hypothesis_id is not None:
+            return {
+                "hypotheses": _rows(
+                    conn, "SELECT * FROM hypotheses WHERE id = ?", (hypothesis_id,)
+                ),
+                "experiments": _rows(
+                    conn,
+                    "SELECT * FROM experiments WHERE hypothesis_id = ? ORDER BY created_at",
+                    (hypothesis_id,),
+                ),
+            }
+        if experiment_id is not None:
+            return {
+                "experiments": _rows(
+                    conn, "SELECT * FROM experiments WHERE id = ?", (experiment_id,)
+                ),
+                "runs": _rows(
+                    conn,
+                    "SELECT * FROM runs WHERE experiment_id = ? ORDER BY started_at",
+                    (experiment_id,),
                 ),
             }
         if skill is not None:
