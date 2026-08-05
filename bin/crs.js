@@ -11,7 +11,7 @@ const VERSION    = require('../package.json').version;
 const PKG_SKILLS = path.join(__dirname, '..', 'skills');
 
 // Shared foundation both lab and ARS skills depend on — always installed
-const RESOLVER_SKILLS = ['resource-resolver'];
+const RESOLVER_SKILLS = ['resource-resolver', 'agent-state'];
 const LAB_SKILLS = ['research-log', 'report-slides', 'research-mode'];
 const ARS_SKILLS = ['deep-research', 'academic-paper', 'academic-paper-reviewer', 'academic-pipeline'];
 const ALL_SKILLS = [...RESOLVER_SKILLS, ...LAB_SKILLS, ...ARS_SKILLS];
@@ -147,10 +147,10 @@ function cmdHelp() {
   log(`
 research-lab-skills (crs) v${VERSION}
 
-8 Claude Code skills for research teams:
+9 Claude Code skills for research teams:
   Lab:      /research-log  /report-slides  /mode
   Academic: /ars-full  /ars-plan  /ars-lit-review  /ars-review  and more
-  Shared:   resource-resolver (always installed; other skills depend on it)
+  Shared:   resource-resolver, agent-state (always installed foundation)
 
 Quick install (no global npm needed):
   npx research-lab-skills init --global
@@ -160,8 +160,8 @@ Or install globally then use crs:
   crs init --global
 
 Usage:
-  crs init                        Install all 8 skills (project-local)
-  crs init --global               Install all 8 skills globally
+  crs init                        Install all 9 skills (project-local)
+  crs init --global               Install all 9 skills globally
   crs init --lab-only             Install lab skills + resource-resolver (research-log, report-slides, research-mode)
   crs init --ars-only             Install ARS skills + resource-resolver (deep-research, academic-paper, ...)
   crs init --ai cursor            Install for Cursor (project-local)

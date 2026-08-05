@@ -36,7 +36,7 @@ $ErrorActionPreference = "Stop"
 $Repo = "https://github.com/starpig1129/research-lab-skills.git"
 
 # Shared foundation both lab and ARS skills depend on -- always installed
-$ResolverSkills = @("resource-resolver")
+$ResolverSkills = @("resource-resolver", "agent-state")
 # Lab skills (experiment journal + presentations + mode routing)
 $LabSkills = @("research-log", "report-slides", "research-mode")
 # Academic Research Skills (deep research, paper writing, review, pipeline)

@@ -17,6 +17,7 @@
       "strict": false,
       "skills": [
         "./skills/resource-resolver",
+        "./skills/agent-state",
         "./skills/research-log",
         "./skills/report-slides",
         "./skills/research-mode"
@@ -30,6 +31,7 @@
       "strict": false,
       "skills": [
         "./skills/resource-resolver",
+        "./skills/agent-state",
         "./skills/deep-research",
         "./skills/academic-paper",
         "./skills/academic-paper-reviewer",
