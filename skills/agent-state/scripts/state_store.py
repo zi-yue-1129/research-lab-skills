@@ -29,6 +29,7 @@ except ImportError:
 PROJECTS_RELATIVE_PATH = Path(".research/state/projects.yaml")
 QUESTIONS_RELATIVE_PATH = Path(".research/state/questions.yaml")
 HYPOTHESES_RELATIVE_PATH = Path(".research/state/hypotheses.yaml")
+EXPERIMENTS_RELATIVE_PATH = Path(".research/state/experiments.yaml")
 RUNS_RELATIVE_PATH = Path(".research/state/runs.yaml")
 EVENTS_RELATIVE_DIR = Path(".research/events")
 STATE_SCHEMA_VERSION = 1
@@ -38,6 +39,7 @@ LOCK_POLL_INTERVAL_SECONDS = 0.1
 _CLOSING_RUN_STATUSES = frozenset({"completed", "failed"})
 _QUESTION_STATUSES = frozenset({"answered", "abandoned"})
 _HYPOTHESIS_STATUSES = frozenset({"supported", "refuted", "inconclusive"})
+_EXPERIMENT_STATUSES = frozenset({"running", "completed", "failed"})
 
 
 class ProjectRootNotFoundError(RuntimeError):
@@ -58,6 +60,10 @@ class ProjectNotFoundError(ValueError):
 
 class HypothesisNotFoundError(ValueError):
     """Raised when a hypothesis_id does not exist in state/hypotheses.yaml."""
+
+
+class ExperimentNotFoundError(ValueError):
+    """Raised when an experiment_id does not exist in state/experiments.yaml."""
 
 
 class RunNotFoundError(ValueError):
@@ -556,6 +562,95 @@ def set_hypothesis_status(project_root: Path, hypothesis_id: str, status: str) -
         hypotheses[hypothesis_id]["status"] = status
         _save_yaml_map(path, "hypotheses", hypotheses)
         return hypotheses[hypothesis_id]
+
+
+def load_experiments(project_root: Path) -> Dict[str, Any]:
+    """Load all Experiment records.
+
+    Args:
+        project_root: The project's root directory.
+
+    Returns:
+        id -> Experiment record map (empty if none exist yet).
+    """
+    return _load_yaml_map(project_root / EXPERIMENTS_RELATIVE_PATH, "experiments")
+
+
+def create_experiment(
+    project_root: Path,
+    hypothesis_id: str,
+    description: str,
+    created_by: str = "user",
+    synthetic: bool = False,
+) -> Dict[str, Any]:
+    """Create a new Experiment record with status "planned".
+
+    Args:
+        project_root: The project's root directory.
+        hypothesis_id: The Hypothesis this Experiment tests; must already
+            exist.
+        description: What the experiment does.
+        created_by: Name of the skill creating this Experiment, or "user"
+            for a direct CLI call.
+        synthetic: True if this record was auto-created by start_run's
+            chain-completion logic rather than deliberately declared.
+
+    Returns:
+        The full new Experiment record, including its generated "id".
+
+    Raises:
+        HypothesisNotFoundError: If hypothesis_id doesn't exist.
+        ValueError: If description is empty/missing.
+    """
+    if not description:
+        raise ValueError("description is required")
+    if hypothesis_id not in load_hypotheses(project_root):
+        raise HypothesisNotFoundError(f"Unknown hypothesis_id: {hypothesis_id}")
+    path = project_root / EXPERIMENTS_RELATIVE_PATH
+    with _locked_file(project_root, path):
+        experiments = _load_yaml_map(path, "experiments")
+        experiment_id = generate_id("exp")
+        record = {
+            "id": experiment_id,
+            "hypothesis_id": hypothesis_id,
+            "description": description,
+            "status": "planned",
+            "synthetic": synthetic,
+            "created_at": _utc_now_iso(),
+            "created_by": created_by,
+        }
+        experiments[experiment_id] = record
+        _save_yaml_map(path, "experiments", experiments)
+    return record
+
+
+def set_experiment_status(project_root: Path, experiment_id: str, status: str) -> Dict[str, Any]:
+    """Transition an Experiment's status.
+
+    Args:
+        project_root: The project's root directory.
+        experiment_id: The Experiment to update.
+        status: New status, must be "running", "completed", or "failed".
+
+    Returns:
+        The updated Experiment record.
+
+    Raises:
+        ExperimentNotFoundError: If experiment_id doesn't exist.
+        ValueError: If status isn't one of the allowed values.
+    """
+    if status not in _EXPERIMENT_STATUSES:
+        raise ValueError(
+            f"status must be 'running', 'completed', or 'failed', got {status!r}"
+        )
+    path = project_root / EXPERIMENTS_RELATIVE_PATH
+    with _locked_file(project_root, path):
+        experiments = _load_yaml_map(path, "experiments")
+        if experiment_id not in experiments:
+            raise ExperimentNotFoundError(f"Unknown experiment_id: {experiment_id}")
+        experiments[experiment_id]["status"] = status
+        _save_yaml_map(path, "experiments", experiments)
+        return experiments[experiment_id]
 
 
 def start_run(

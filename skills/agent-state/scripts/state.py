@@ -48,6 +48,8 @@ def _build_parser() -> argparse.ArgumentParser:
     action.add_argument("--create-project", action="store_true")
     action.add_argument("--create-hypothesis", action="store_true")
     action.add_argument("--set-hypothesis-status", action="store_true")
+    action.add_argument("--create-experiment", action="store_true")
+    action.add_argument("--set-experiment-status", action="store_true")
 
     parser.add_argument("--skill", metavar="NAME")
     parser.add_argument("--mode", metavar="MODE")
@@ -56,6 +58,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--question", metavar="TEXT")
     parser.add_argument("--question-id", metavar="ID")
     parser.add_argument("--hypothesis-id", metavar="ID")
+    parser.add_argument("--experiment-id", metavar="ID")
     parser.add_argument("--run-id", metavar="ID")
     parser.add_argument(
         "--status",
@@ -125,6 +128,15 @@ def _dispatch(args: argparse.Namespace, project_root: Path) -> Dict[str, Any]:
         return state_store.set_hypothesis_status(
             project_root, args.hypothesis_id, args.status
         )
+    if args.create_experiment:
+        return state_store.create_experiment(
+            project_root, args.hypothesis_id, args.description,
+            created_by=args.skill or "user",
+        )
+    if args.set_experiment_status:
+        return state_store.set_experiment_status(
+            project_root, args.experiment_id, args.status
+        )
     raise AssertionError("no action selected despite argparse required group")
 
 
@@ -188,6 +200,7 @@ def main() -> None:
         state_store.StateParseError,
         state_store.QuestionNotFoundError,
         state_store.HypothesisNotFoundError,
+        state_store.ExperimentNotFoundError,
         state_store.RunNotFoundError,
         state_store.LockTimeoutError,
         ValueError,

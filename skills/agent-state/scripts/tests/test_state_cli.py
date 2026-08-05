@@ -884,3 +884,91 @@ def test_set_hypothesis_status_unknown_id_errors(tmp_path: Path) -> None:
     assert result.returncode == 1
     data = json.loads(result.stdout)
     assert data["error"] == "HypothesisNotFoundError"
+
+
+def _create_hypothesis_id(project: Path, question_id: str, statement: str = "H1") -> str:
+    result = _run(
+        project, "--create-hypothesis", "--question-id", question_id,
+        "--statement", statement, "--json",
+    )
+    return json.loads(result.stdout)["id"]
+
+
+def test_create_experiment_returns_planned_experiment(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    question_id = _create_question_id(project)
+    hypothesis_id = _create_hypothesis_id(project, question_id)
+
+    result = _run(
+        project, "--create-experiment", "--hypothesis-id", hypothesis_id,
+        "--description", "Survey production traffic logs.",
+        "--skill", "deep-research", "--json",
+    )
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["hypothesis_id"] == hypothesis_id
+    assert data["description"] == "Survey production traffic logs."
+    assert data["status"] == "planned"
+    assert data["synthetic"] is False
+    assert data["created_by"] == "deep-research"
+    assert data["id"].startswith("exp_")
+
+
+def test_create_experiment_without_description_errors(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    question_id = _create_question_id(project)
+    hypothesis_id = _create_hypothesis_id(project, question_id)
+
+    result = _run(project, "--create-experiment", "--hypothesis-id", hypothesis_id, "--json")
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "ValueError"
+
+
+def test_create_experiment_unknown_hypothesis_id_errors(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+
+    result = _run(
+        project, "--create-experiment", "--hypothesis-id", "hyp_missing",
+        "--description", "x", "--json",
+    )
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "HypothesisNotFoundError"
+
+
+def test_set_experiment_status_updates_status(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    question_id = _create_question_id(project)
+    hypothesis_id = _create_hypothesis_id(project, question_id)
+    experiment_id = json.loads(
+        _run(
+            project, "--create-experiment", "--hypothesis-id", hypothesis_id,
+            "--description", "x", "--json",
+        ).stdout
+    )["id"]
+
+    result = _run(
+        project, "--set-experiment-status", "--experiment-id", experiment_id,
+        "--status", "running", "--json",
+    )
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["status"] == "running"
+
+
+def test_set_experiment_status_unknown_id_errors(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+
+    result = _run(
+        project, "--set-experiment-status", "--experiment-id", "exp_missing",
+        "--status", "completed", "--json",
+    )
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "ExperimentNotFoundError"
