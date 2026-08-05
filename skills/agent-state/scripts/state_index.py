@@ -42,20 +42,36 @@ CREATE INDEX IF NOT EXISTS idx_claims_run_id ON claims(run_id);
 """
 
 
-def _connect(project_root: Path) -> sqlite3.Connection:
+def _connect(project_root: Path, recover_from_corruption: bool = False) -> sqlite3.Connection:
     """Open (creating if needed) the index database with its schema applied.
 
     Args:
         project_root: The project's root directory.
+        recover_from_corruption: If True and the database is corrupted, delete it
+            and create a fresh one. If False, propagate the corruption error.
 
     Returns:
         An open connection with row_factory set to sqlite3.Row.
+
+    Raises:
+        sqlite3.DatabaseError: If the database is corrupted and recovery is disabled.
     """
     index_path = project_root / INDEX_RELATIVE_PATH
     index_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(index_path))
     conn.row_factory = sqlite3.Row
-    conn.executescript(_SCHEMA)
+    try:
+        conn.executescript(_SCHEMA)
+    except sqlite3.DatabaseError:
+        conn.close()
+        if recover_from_corruption:
+            # Delete the corrupted file and retry with a fresh database.
+            index_path.unlink()
+            conn = sqlite3.connect(str(index_path))
+            conn.row_factory = sqlite3.Row
+            conn.executescript(_SCHEMA)
+        else:
+            raise
     return conn
 
 
@@ -159,12 +175,9 @@ def rebuild_index(project_root: Path, full: bool = False) -> Dict[str, Any]:
     # Detect if this is the first rebuild: database doesn't exist yet.
     is_first_rebuild = not index_path.exists()
 
-    # If full rebuild and index exists, delete it first to ensure fresh start
-    # (handles corrupted databases).
-    if full and index_path.exists():
-        index_path.unlink()
-
-    conn = _connect(project_root)
+    # If full rebuild, enable corruption recovery so a damaged index is
+    # detected and deleted before re-syncing from source files.
+    conn = _connect(project_root, recover_from_corruption=full)
     try:
         if full:
             conn.execute("DELETE FROM results")

@@ -1,6 +1,7 @@
 """Subprocess tests for state.py -- Agent State CLI."""
 import datetime as _datetime
 import json
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -348,12 +349,32 @@ def test_incremental_rebuild_does_not_reingest_same_lines_twice(tmp_path: Path) 
     run_id = _start_run(project)
     _run(project, "--record-result", "--run-id", run_id, "--summary", "s1", "--json")
     _run(project, "--rebuild-index", "--json")  # incremental, picks up s1
+
+    # Verify checkpoint was recorded: inspect shard_checkpoints table directly.
+    index_db = project / ".research" / "indexes" / "index.db"
+    conn = sqlite3.connect(str(index_db))
+    checkpoint = conn.execute(
+        "SELECT lines_ingested FROM shard_checkpoints ORDER BY shard_name LIMIT 1"
+    ).fetchone()
+    conn.close()
+    assert checkpoint is not None, "No checkpoint was recorded after first rebuild"
+    lines_after_first_rebuild = checkpoint[0]
+
     _run(project, "--rebuild-index", "--json")  # incremental again, no new lines
 
-    result = _run(project, "--query", "--run-id", run_id, "--json")
+    # Verify checkpoint was not advanced: lines_ingested stays the same.
+    conn = sqlite3.connect(str(index_db))
+    checkpoint = conn.execute(
+        "SELECT lines_ingested FROM shard_checkpoints ORDER BY shard_name LIMIT 1"
+    ).fetchone()
+    conn.close()
+    lines_after_second_rebuild = checkpoint[0]
+    assert lines_after_first_rebuild == lines_after_second_rebuild, \
+        "Checkpoint advanced even though no new lines were added"
 
+    result = _run(project, "--query", "--run-id", run_id, "--json")
     data = json.loads(result.stdout)
-    assert len(data["results"]) == 1  # not duplicated
+    assert len(data["results"]) == 1, "Result was duplicated or lost"
 
 
 def test_full_rebuild_recovers_from_manually_corrupted_index(tmp_path: Path) -> None:
