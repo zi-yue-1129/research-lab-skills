@@ -11,7 +11,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from state_store import EVENTS_RELATIVE_DIR, StateParseError
+from state_store import EVENTS_RELATIVE_DIR, StateParseError, _ensure_research_gitignore
 
 INDEX_RELATIVE_PATH = Path(".research/indexes/index.db")
 
@@ -86,6 +86,15 @@ def _connect(project_root: Path) -> sqlite3.Connection:
             due to lock contention (e.g. a concurrent writer holds it).
             Never treated as corruption.
     """
+    # This is the single common entry point for every read path (--query,
+    # --report, --rebuild-index), so it's also where .research/.gitignore
+    # gets bootstrapped for those paths -- mirroring how state_store's
+    # _locked_file bootstraps it for every write path. Without this, a
+    # project whose very first interaction with this skill is --query/
+    # --report/--rebuild-index (no prior --start-run etc.) would get
+    # .research/indexes/index.db created before .research/.gitignore
+    # exists, contradicting SKILL.md's "bootstraps it on first write" claim.
+    _ensure_research_gitignore(project_root)
     index_path = project_root / INDEX_RELATIVE_PATH
     index_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(index_path))

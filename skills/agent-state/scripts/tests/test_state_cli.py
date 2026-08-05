@@ -120,14 +120,7 @@ def test_start_run_creates_research_gitignore(tmp_path: Path) -> None:
 
     _run(project, "--start-run", "--skill", "deep-research", "--json")
 
-    gitignore_path = project / ".research" / ".gitignore"
-    assert gitignore_path.is_file()
-    contents = gitignore_path.read_text()
-    assert "state/*.lock" in contents
-    assert "events/" in contents
-    assert "indexes/" in contents
-    assert "cache/" in contents
-    assert "*.tmp" in contents
+    _assert_valid_research_gitignore(project)
 
 
 def test_start_run_does_not_overwrite_existing_gitignore(tmp_path: Path) -> None:
@@ -140,6 +133,52 @@ def test_start_run_does_not_overwrite_existing_gitignore(tmp_path: Path) -> None
     _run(project, "--start-run", "--skill", "deep-research", "--json")
 
     assert gitignore_path.read_text() == "# custom, do not touch\n"
+
+
+def _assert_valid_research_gitignore(project: Path) -> None:
+    """Assert .research/.gitignore exists with the expected ignore patterns.
+
+    Args:
+        project: The fake project's root directory.
+    """
+    gitignore_path = project / ".research" / ".gitignore"
+    assert gitignore_path.is_file()
+    contents = gitignore_path.read_text()
+    assert "state/*.lock" in contents
+    assert "events/" in contents
+    assert "indexes/" in contents
+    assert "cache/" in contents
+    assert "*.tmp" in contents
+
+
+def test_rebuild_index_as_first_ever_action_creates_research_gitignore(tmp_path: Path) -> None:
+    # No prior --start-run or any other write -- --rebuild-index is the
+    # very first thing this project ever does with the skill. index.db
+    # (created by state_index._connect) must not land ungitignored.
+    project = _make_project(tmp_path)
+
+    result = _run(project, "--rebuild-index", "--json")
+
+    assert result.returncode == 0, result.stderr
+    _assert_valid_research_gitignore(project)
+
+
+def test_report_as_first_ever_action_creates_research_gitignore(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+
+    result = _run(project, "--report")
+
+    assert result.returncode == 0, result.stderr
+    _assert_valid_research_gitignore(project)
+
+
+def test_query_as_first_ever_action_creates_research_gitignore(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+
+    result = _run(project, "--query", "--skill", "deep-research", "--json")
+
+    assert result.returncode == 0, result.stderr
+    _assert_valid_research_gitignore(project)
 
 
 def test_start_run_without_skill_errors(tmp_path: Path) -> None:
