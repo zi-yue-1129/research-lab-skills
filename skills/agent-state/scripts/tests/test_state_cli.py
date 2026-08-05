@@ -279,3 +279,65 @@ def test_record_claim_invalid_confidence_errors(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 2  # argparse rejects choices before we ever see it
+
+
+def test_query_by_run_id_returns_run_results_and_claims(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    run_id = _start_run(project, skill="deep-research")
+    _run(project, "--record-result", "--run-id", run_id, "--summary", "s1", "--json")
+    _run(project, "--record-claim", "--run-id", run_id, "--statement", "c1", "--json")
+
+    result = _run(project, "--query", "--run-id", run_id, "--json")
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert len(data["runs"]) == 1 and data["runs"][0]["id"] == run_id
+    assert len(data["results"]) == 1 and data["results"][0]["summary"] == "s1"
+    assert len(data["claims"]) == 1 and data["claims"][0]["statement"] == "c1"
+
+
+def test_query_by_question_id_returns_question_and_runs(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    started = json.loads(
+        _run(project, "--start-run", "--skill", "research-mode", "--question", "Q?", "--json").stdout
+    )
+
+    result = _run(project, "--query", "--question-id", started["question_id"], "--json")
+
+    data = json.loads(result.stdout)
+    assert data["questions"][0]["id"] == started["question_id"]
+    assert data["runs"][0]["id"] == started["id"]
+
+
+def test_query_by_skill_filters_runs(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    _start_run(project, skill="deep-research")
+    _start_run(project, skill="report-slides")
+
+    result = _run(project, "--query", "--skill", "report-slides", "--json")
+
+    data = json.loads(result.stdout)
+    assert len(data["runs"]) == 1
+    assert data["runs"][0]["skill"] == "report-slides"
+
+
+def test_query_incremental_sees_events_recorded_after_last_rebuild(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    run_id = _start_run(project)
+    _run(project, "--rebuild-index", "--json")  # index built before the result exists
+    _run(project, "--record-result", "--run-id", run_id, "--summary", "late", "--json")
+
+    result = _run(project, "--query", "--run-id", run_id, "--json")
+
+    data = json.loads(result.stdout)
+    assert data["results"][0]["summary"] == "late"
+
+
+def test_query_requires_exactly_one_filter(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+
+    result = _run(project, "--query", "--json")
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "ValueError"
