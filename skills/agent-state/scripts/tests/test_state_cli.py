@@ -511,6 +511,14 @@ def test_full_rebuild_recovers_from_manually_corrupted_index(tmp_path: Path) -> 
     query_result = _run(project, "--query", "--run-id", run_id, "--json")
     assert json.loads(query_result.stdout)["results"][0]["summary"] == "s1"
 
+    conn = sqlite3.connect(str(index_db))
+    try:
+        # The rebuilt database went through the same _fresh_connection path
+        # as a schema-version mismatch, so it must also come out re-stamped.
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+    finally:
+        conn.close()
+
 
 def test_query_recovers_from_corrupted_index(tmp_path: Path) -> None:
     project = _make_project(tmp_path)
