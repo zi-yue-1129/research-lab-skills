@@ -739,3 +739,42 @@ def test_connect_recovers_from_mismatched_user_version(tmp_path: Path) -> None:
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
     finally:
         conn.close()
+
+
+def test_create_project_returns_active_project(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+
+    result = _run(project, "--create-project", "--name", "Offline Support Initiative", "--json")
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["name"] == "Offline Support Initiative"
+    assert data["description"] is None
+    assert data["status"] == "active"
+    assert data["created_by"] == "user"
+    assert data["id"].startswith("proj_")
+
+
+def test_create_project_with_description_and_skill(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+
+    result = _run(
+        project, "--create-project", "--name", "Offline Support Initiative",
+        "--description", "Investigate offline usage patterns.",
+        "--skill", "deep-research", "--json",
+    )
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["description"] == "Investigate offline usage patterns."
+    assert data["created_by"] == "deep-research"
+
+
+def test_create_project_without_name_errors(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+
+    result = _run(project, "--create-project", "--json")
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "ValueError"

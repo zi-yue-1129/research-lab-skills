@@ -26,10 +26,12 @@ except ImportError:
     raise SystemExit(1)
 
 
+PROJECTS_RELATIVE_PATH = Path(".research/state/projects.yaml")
 QUESTIONS_RELATIVE_PATH = Path(".research/state/questions.yaml")
 RUNS_RELATIVE_PATH = Path(".research/state/runs.yaml")
 EVENTS_RELATIVE_DIR = Path(".research/events")
 STATE_SCHEMA_VERSION = 1
+DEFAULT_PROJECT_ID = "proj_default"
 LOCK_TIMEOUT_SECONDS = int(os.environ.get("AGENT_STATE_LOCK_TIMEOUT_SECONDS", "30"))
 LOCK_POLL_INTERVAL_SECONDS = 0.1
 _CLOSING_RUN_STATUSES = frozenset({"completed", "failed"})
@@ -281,6 +283,84 @@ def _save_yaml_map(path: Path, top_key: str, records: Dict[str, Any]) -> None:
         encoding="utf-8",
     )
     tmp_path.replace(path)
+
+
+def load_projects(project_root: Path) -> Dict[str, Any]:
+    """Load all Project records.
+
+    Args:
+        project_root: The project's root directory.
+
+    Returns:
+        id -> Project record map (empty if none exist yet).
+    """
+    return _load_yaml_map(project_root / PROJECTS_RELATIVE_PATH, "projects")
+
+
+def create_project(
+    project_root: Path,
+    name: str,
+    description: Optional[str] = None,
+    created_by: str = "user",
+) -> Dict[str, Any]:
+    """Create a new Project record with status "active".
+
+    Args:
+        project_root: The project's root directory.
+        name: Human-readable Project name.
+        description: Optional longer description.
+        created_by: Name of the skill creating this Project, or "user" for
+            a direct CLI call.
+
+    Returns:
+        The full new Project record, including its generated "id".
+
+    Raises:
+        ValueError: If name is empty/missing.
+    """
+    if not name:
+        raise ValueError("name is required")
+    path = project_root / PROJECTS_RELATIVE_PATH
+    with _locked_file(project_root, path):
+        projects = _load_yaml_map(path, "projects")
+        project_id = generate_id("proj")
+        record = {
+            "id": project_id,
+            "name": name,
+            "description": description,
+            "status": "active",
+            "created_at": _utc_now_iso(),
+            "created_by": created_by,
+        }
+        projects[project_id] = record
+        _save_yaml_map(path, "projects", projects)
+    return record
+
+
+def _ensure_default_project(project_root: Path) -> str:
+    """Return "proj_default", creating it if it doesn't exist yet.
+
+    Args:
+        project_root: The project's root directory.
+
+    Returns:
+        The literal string "proj_default".
+    """
+    path = project_root / PROJECTS_RELATIVE_PATH
+    with _locked_file(project_root, path):
+        projects = _load_yaml_map(path, "projects")
+        if DEFAULT_PROJECT_ID not in projects:
+            now = _utc_now_iso()
+            projects[DEFAULT_PROJECT_ID] = {
+                "id": DEFAULT_PROJECT_ID,
+                "name": "Default Project",
+                "description": None,
+                "status": "active",
+                "created_at": now,
+                "created_by": "user",
+            }
+            _save_yaml_map(path, "projects", projects)
+    return DEFAULT_PROJECT_ID
 
 
 def load_questions(project_root: Path) -> Dict[str, Any]:

@@ -45,9 +45,12 @@ def _build_parser() -> argparse.ArgumentParser:
     action.add_argument("--query", action="store_true")
     action.add_argument("--rebuild-index", action="store_true")
     action.add_argument("--report", action="store_true")
+    action.add_argument("--create-project", action="store_true")
 
     parser.add_argument("--skill", metavar="NAME")
     parser.add_argument("--mode", metavar="MODE")
+    parser.add_argument("--name", metavar="TEXT")
+    parser.add_argument("--description", metavar="TEXT")
     parser.add_argument("--question", metavar="TEXT")
     parser.add_argument("--question-id", metavar="ID")
     parser.add_argument("--run-id", metavar="ID")
@@ -102,6 +105,11 @@ def _dispatch(args: argparse.Namespace, project_root: Path) -> Dict[str, Any]:
         )
     if args.rebuild_index:
         return state_index.rebuild_index(project_root, full=args.full)
+    if args.create_project:
+        return state_store.create_project(
+            project_root, args.name,
+            description=args.description, created_by=args.skill or "user",
+        )
     raise AssertionError("no action selected despite argparse required group")
 
 
