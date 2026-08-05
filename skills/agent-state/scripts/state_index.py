@@ -159,6 +159,11 @@ def rebuild_index(project_root: Path, full: bool = False) -> Dict[str, Any]:
     # Detect if this is the first rebuild: database doesn't exist yet.
     is_first_rebuild = not index_path.exists()
 
+    # If full rebuild and index exists, delete it first to ensure fresh start
+    # (handles corrupted databases).
+    if full and index_path.exists():
+        index_path.unlink()
+
     conn = _connect(project_root)
     try:
         if full:

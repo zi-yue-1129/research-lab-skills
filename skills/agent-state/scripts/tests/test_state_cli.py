@@ -341,3 +341,34 @@ def test_query_requires_exactly_one_filter(tmp_path: Path) -> None:
     assert result.returncode == 1
     data = json.loads(result.stdout)
     assert data["error"] == "ValueError"
+
+
+def test_incremental_rebuild_does_not_reingest_same_lines_twice(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    run_id = _start_run(project)
+    _run(project, "--record-result", "--run-id", run_id, "--summary", "s1", "--json")
+    _run(project, "--rebuild-index", "--json")  # incremental, picks up s1
+    _run(project, "--rebuild-index", "--json")  # incremental again, no new lines
+
+    result = _run(project, "--query", "--run-id", run_id, "--json")
+
+    data = json.loads(result.stdout)
+    assert len(data["results"]) == 1  # not duplicated
+
+
+def test_full_rebuild_recovers_from_manually_corrupted_index(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    run_id = _start_run(project)
+    _run(project, "--record-result", "--run-id", run_id, "--summary", "s1", "--json")
+    _run(project, "--rebuild-index", "--json")
+
+    index_db = project / ".research" / "indexes" / "index.db"
+    index_db.write_bytes(b"not a real sqlite file")
+
+    result = _run(project, "--rebuild-index", "--full", "--json")
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data == {"rebuilt": "full", "shards_scanned": 1}
+    query_result = _run(project, "--query", "--run-id", run_id, "--json")
+    assert json.loads(query_result.stdout)["results"][0]["summary"] == "s1"
