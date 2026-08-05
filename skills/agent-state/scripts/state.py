@@ -169,11 +169,11 @@ def main() -> None:
         ValueError,
     ) as exc:
         error = {"error": type(exc).__name__, "message": str(exc)}
-        print(json.dumps(error) if args.json else f"Error: {exc}")
+        print(json.dumps(error) if (args.json and not args.report) else f"Error: {exc}")
         sys.exit(1)
     except Exception as exc:  # noqa: BLE001 -- stdout must always stay parseable
         error = {"error": type(exc).__name__, "message": str(exc)}
-        print(json.dumps(error) if args.json else f"Error: {exc}")
+        print(json.dumps(error) if (args.json and not args.report) else f"Error: {exc}")
         sys.exit(1)
 
     print(json.dumps(result) if args.json else json.dumps(result, indent=2))

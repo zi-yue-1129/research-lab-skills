@@ -440,3 +440,23 @@ def test_report_on_empty_project_says_zero_runs(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stderr
     assert "0 run(s)" in result.stdout
+
+
+def test_report_with_json_flag_outside_git_prints_plain_text_error(tmp_path: Path) -> None:
+    no_git_dir = tmp_path / "not_a_project"
+    no_git_dir.mkdir()
+
+    # This test's premise -- "no .git anywhere in the ancestry" -- only holds
+    # if nothing above tmp_path happens to contain a .git entry. /tmp is
+    # shared with other processes on this machine, so skip rather than
+    # assert a false positive if that premise doesn't hold here.
+    for candidate in (no_git_dir, *no_git_dir.parents):
+        if (candidate / ".git").exists():
+            pytest.skip("A .git directory exists above tmp_path on this machine")
+
+    result = _run(no_git_dir, "--report", "--json")
+
+    assert result.returncode == 1
+    # --report always prints plain text, even with --json flag
+    assert not result.stdout.startswith("{")
+    assert "Error:" in result.stdout
