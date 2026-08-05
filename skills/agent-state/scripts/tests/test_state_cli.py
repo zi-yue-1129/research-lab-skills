@@ -1,7 +1,6 @@
 """Subprocess tests for state.py -- Agent State CLI."""
 import datetime as _datetime
 import json
-import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -347,34 +346,56 @@ def test_query_requires_exactly_one_filter(tmp_path: Path) -> None:
 def test_incremental_rebuild_does_not_reingest_same_lines_twice(tmp_path: Path) -> None:
     project = _make_project(tmp_path)
     run_id = _start_run(project)
-    _run(project, "--record-result", "--run-id", run_id, "--summary", "s1", "--json")
-    _run(project, "--rebuild-index", "--json")  # incremental, picks up s1
 
-    # Verify checkpoint was recorded: inspect shard_checkpoints table directly.
-    index_db = project / ".research" / "indexes" / "index.db"
-    conn = sqlite3.connect(str(index_db))
-    checkpoint = conn.execute(
-        "SELECT lines_ingested FROM shard_checkpoints ORDER BY shard_name LIMIT 1"
-    ).fetchone()
-    conn.close()
-    assert checkpoint is not None, "No checkpoint was recorded after first rebuild"
-    lines_after_first_rebuild = checkpoint[0]
+    # Manually write a valid result event to today's shard.
+    today = _datetime.datetime.now(_datetime.timezone.utc).strftime("%Y-%m-%d")
+    events_dir = project / ".research" / "events"
+    events_dir.mkdir(parents=True)
+    shard_file = events_dir / f"{today}.jsonl"
 
-    _run(project, "--rebuild-index", "--json")  # incremental again, no new lines
+    result_event = {
+        "event": "result",
+        "id": "result_123",
+        "run_id": run_id,
+        "summary": "First result",
+        "ts": "2026-08-05T10:00:00Z",
+    }
+    shard_file.write_text(json.dumps(result_event) + "\n")
 
-    # Verify checkpoint was not advanced: lines_ingested stays the same.
-    conn = sqlite3.connect(str(index_db))
-    checkpoint = conn.execute(
-        "SELECT lines_ingested FROM shard_checkpoints ORDER BY shard_name LIMIT 1"
-    ).fetchone()
-    conn.close()
-    lines_after_second_rebuild = checkpoint[0]
-    assert lines_after_first_rebuild == lines_after_second_rebuild, \
-        "Checkpoint advanced even though no new lines were added"
+    _run(project, "--rebuild-index", "--json")  # incremental, picks up result_event
 
-    result = _run(project, "--query", "--run-id", run_id, "--json")
+    # Corrupt the first line in place with invalid JSON.
+    # This is the key: if checkpoint dedup is broken (always re-ingests from start),
+    # the next rebuild will try to parse this corrupted line and fail loudly.
+    shard_file.write_text("not valid json at all\n" + json.dumps(result_event) + "\n")
+
+    # Append a second valid claim event.
+    claim_event = {
+        "event": "claim",
+        "id": "claim_456",
+        "run_id": run_id,
+        "statement": "Second event after corruption",
+        "ts": "2026-08-05T10:01:00Z",
+    }
+    shard_file.write_text(
+        "not valid json at all\n" + json.dumps(result_event) + "\n" + json.dumps(claim_event) + "\n"
+    )
+
+    # Run rebuild again (incremental). Should succeed because checkpoint skips line 1.
+    # If checkpoint logic is broken (always re-ingests from start), this would fail
+    # when it tries to parse the corrupted first line.
+    result = _run(project, "--rebuild-index", "--json")
+    assert result.returncode == 0, f"Rebuild failed (checkpoint dedup likely broken): {result.stderr}"
     data = json.loads(result.stdout)
-    assert len(data["results"]) == 1, "Result was duplicated or lost"
+    assert data["rebuilt"] == "incremental", "Should be incremental rebuild"
+
+    # Query results and claims: should have the one result + the one new claim.
+    query_result = _run(project, "--query", "--run-id", run_id, "--json")
+    query_data = json.loads(query_result.stdout)
+    assert len(query_data["results"]) == 1, "First result should still exist (not duplicated)"
+    assert query_data["results"][0]["summary"] == "First result"
+    assert len(query_data["claims"]) == 1, "New claim should have been ingested"
+    assert query_data["claims"][0]["statement"] == "Second event after corruption"
 
 
 def test_full_rebuild_recovers_from_manually_corrupted_index(tmp_path: Path) -> None:
