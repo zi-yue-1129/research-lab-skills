@@ -40,11 +40,20 @@ The chain is strictly linear and always fully populated:
 Project → Question → Hypothesis → Experiment → Run → Result
 ```
 
-A caller that only supplies the levels it actually has (e.g. just `--skill`
-and `--question`, with no explicit hypothesis or experiment) gets the
-missing levels auto-filled with `synthetic: true` placeholder records, so the
-chain is never broken and every Run always has a full ancestor path up to a
-Project.
+A caller that supplies at least a Question (new text, an existing
+`--question-id`, or a `--hypothesis-id`/`--experiment-id` that implies one)
+gets every missing level below it auto-filled with `synthetic: true`
+placeholder records, so a Run that has *any* research context is never
+missing an ancestor between it and its Project. A Run given **no** level at
+all — no `--question`/`--question-id`/`--hypothesis-id`/`--experiment-id` —
+stays exactly as standalone as it is today: `question_id`, `hypothesis_id`,
+and `experiment_id` are all `null`, nothing is auto-created, and existing
+callers that rely on this (and the test asserting it,
+`test_start_run_without_question`) are unaffected. This preserves
+`agent-state`'s original "Run — one execution of a skill/agent against a
+Question (or standalone)" design decision rather than silently retracting
+it; the chain-completeness guarantee applies to Runs that have research
+context, not to every Run unconditionally.
 
 Non-goals (explicitly out of scope for this design):
 
@@ -209,11 +218,15 @@ given:
 1. `--experiment-id` given → validate it exists → use directly.
 2. `--hypothesis-id` given (no `--experiment-id`) → validate it exists →
    create a `synthetic: true` Experiment under it.
-3. Neither given → resolve a Question exactly as today (`--question-id`
-   validated, or `--question` text creates a new one, or neither creates a
-   `synthetic: true` Question under `proj_default`) → create a
-   `synthetic: true` Hypothesis under it → create a `synthetic: true`
-   Experiment under that.
+3. Neither given, but `--question-id` or `--question` given → resolve the
+   Question exactly as today (`--question-id` validated to exist, or
+   `--question` text creates a new one) → create a `synthetic: true`
+   Hypothesis under it → create a `synthetic: true` Experiment under that.
+4. Nothing given at all → unchanged from current behavior: the Run is
+   created standalone, with `question_id`, `hypothesis_id`, and
+   `experiment_id` all `null`. No Question, Hypothesis, or Experiment is
+   created. This is the one branch that does *not* auto-fill — see "Goal"
+   above for why.
 
 `synthetic: true` records are functionally identical to hand-created ones —
 they can be queried, reported on, and have their status changed later — the
