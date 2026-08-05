@@ -58,12 +58,33 @@ def _connect(project_root: Path) -> sqlite3.Connection:
     perform on every call -- not just when --rebuild-index --full happened
     to already be requested.
 
+    Corruption recovery must NOT trigger on lock contention, though.
+    `sqlite3.OperationalError` (e.g. "database is locked", raised when a
+    concurrent writer holds a transaction on index.db) is a *subclass* of
+    `sqlite3.DatabaseError` in Python's sqlite3 module. If it were caught by
+    the same handler as genuine corruption, a reader colliding with a
+    concurrent writer would delete a perfectly healthy index.db out from
+    under that writer's in-flight transaction -- a false-positive
+    "corruption recovery" triggered by ordinary, transient lock contention,
+    in exactly the concurrent-usage scenario (background jobs, worktrees)
+    this design cares about most. So `OperationalError` is caught first and
+    re-raised as-is: it's a real, transient condition the caller/user should
+    see and can retry, not something to paper over by deleting the
+    disposable cache. Only a `DatabaseError` that is NOT also an
+    `OperationalError` (e.g. "file is not a database") is treated as actual
+    corruption and triggers delete-and-recreate.
+
     Args:
         project_root: The project's root directory.
 
     Returns:
         An open connection with row_factory set to sqlite3.Row, guaranteed
         to have the schema successfully applied.
+
+    Raises:
+        sqlite3.OperationalError: If the database can't be opened/written to
+            due to lock contention (e.g. a concurrent writer holds it).
+            Never treated as corruption.
     """
     index_path = project_root / INDEX_RELATIVE_PATH
     index_path.parent.mkdir(parents=True, exist_ok=True)
@@ -71,6 +92,12 @@ def _connect(project_root: Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     try:
         conn.executescript(_SCHEMA)
+    except sqlite3.OperationalError:
+        # Lock contention, not corruption -- must be caught before the
+        # broader DatabaseError handler below, since OperationalError IS-A
+        # DatabaseError and except clauses are matched in order.
+        conn.close()
+        raise
     except sqlite3.DatabaseError:
         conn.close()
         # Delete the corrupted file and retry once with a fresh database.
