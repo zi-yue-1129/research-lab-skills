@@ -65,3 +65,21 @@ def test_errors_when_no_git_root(tmp_path: Path) -> None:
     assert result.returncode == 1
     data = json.loads(result.stdout)
     assert data["error"] == "ProjectRootNotFoundError"
+
+
+def test_errors_on_unrecognized_event_type(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    events_dir = project / ".research" / "events"
+    events_dir.mkdir(parents=True)
+
+    # Create a shard with an unrecognized event type.
+    shard_file = events_dir / "2026-08-05.jsonl"
+    shard_file.write_text('{"event": "unknown_type", "id": "test_123"}\n')
+
+    result = _run(project, "--rebuild-index", "--json")
+
+    assert result.returncode == 1, result.stderr
+    data = json.loads(result.stdout)
+    assert data["error"] == "StateParseError"
+    assert "unknown_type" in data["message"]
+    assert "2026-08-05.jsonl" in data["message"]

@@ -11,7 +11,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from state_store import EVENTS_RELATIVE_DIR
+from state_store import EVENTS_RELATIVE_DIR, StateParseError
 
 INDEX_RELATIVE_PATH = Path(".research/indexes/index.db")
 
@@ -109,7 +109,7 @@ def _ingest_shard(conn: sqlite3.Connection, shard_path: Path) -> None:
     already_ingested = row["lines_ingested"] if row else 0
 
     lines = shard_path.read_text(encoding="utf-8").splitlines()
-    for line in lines[already_ingested:]:
+    for line_num, line in enumerate(lines[already_ingested:], start=already_ingested + 1):
         event = json.loads(line)
         if event["event"] == "result":
             artifact_ref = event.get("artifact_ref") or {}
@@ -131,6 +131,10 @@ def _ingest_shard(conn: sqlite3.Connection, shard_path: Path) -> None:
                     event["id"], event["run_id"], event["statement"],
                     event.get("confidence"), event.get("evidence_ref"), event["ts"],
                 ),
+            )
+        else:
+            raise StateParseError(
+                f"Unrecognized event type '{event.get('event')}' in {shard_name}:{line_num}: {line}"
             )
     conn.execute(
         "INSERT OR REPLACE INTO shard_checkpoints (shard_name, lines_ingested) VALUES (?, ?)",
