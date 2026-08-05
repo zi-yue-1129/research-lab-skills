@@ -778,3 +778,25 @@ def test_create_project_without_name_errors(tmp_path: Path) -> None:
     assert result.returncode == 1
     data = json.loads(result.stdout)
     assert data["error"] == "ValueError"
+
+
+def test_start_run_with_question_defaults_to_default_project(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+
+    _run(project, "--start-run", "--skill", "research-mode", "--question", "Q?", "--json")
+
+    questions_yaml = (project / ".research" / "state" / "questions.yaml").read_text()
+    assert "project_id: proj_default" in questions_yaml
+    projects_yaml = (project / ".research" / "state" / "projects.yaml").read_text()
+    assert "proj_default" in projects_yaml
+    assert "Default Project" in projects_yaml
+
+
+def test_default_project_is_created_lazily_only_once(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+
+    _run(project, "--start-run", "--skill", "research-mode", "--question", "Q1?", "--json")
+    _run(project, "--start-run", "--skill", "research-mode", "--question", "Q2?", "--json")
+
+    doc = yaml.safe_load((project / ".research" / "state" / "projects.yaml").read_text())
+    assert list(doc["projects"].keys()) == ["proj_default"]

@@ -50,6 +50,10 @@ class QuestionNotFoundError(ValueError):
     """Raised when a question_id does not exist in state/questions.yaml."""
 
 
+class ProjectNotFoundError(ValueError):
+    """Raised when a project_id does not exist in state/projects.yaml."""
+
+
 class RunNotFoundError(ValueError):
     """Raised when a run_id does not exist in state/runs.yaml."""
 
@@ -387,17 +391,31 @@ def load_runs(project_root: Path) -> Dict[str, Any]:
     return _load_yaml_map(project_root / RUNS_RELATIVE_PATH, "runs")
 
 
-def create_question(project_root: Path, text: str, origin_skill: str) -> Dict[str, Any]:
+def create_question(
+    project_root: Path,
+    text: str,
+    origin_skill: str,
+    project_id: Optional[str] = None,
+) -> Dict[str, Any]:
     """Create a new Question record with status "open".
 
     Args:
         project_root: The project's root directory.
         text: The request or sub-task text.
         origin_skill: Name of the skill that raised this Question.
+        project_id: Project this Question belongs to. Defaults to the
+            lazily-created "proj_default" if omitted.
 
     Returns:
         The full new Question record, including its generated "id".
+
+    Raises:
+        ProjectNotFoundError: If project_id is given but doesn't exist.
     """
+    if project_id is None:
+        project_id = _ensure_default_project(project_root)
+    elif project_id not in load_projects(project_root):
+        raise ProjectNotFoundError(f"Unknown project_id: {project_id}")
     path = project_root / QUESTIONS_RELATIVE_PATH
     with _locked_file(project_root, path):
         questions = _load_yaml_map(path, "questions")
@@ -407,6 +425,7 @@ def create_question(project_root: Path, text: str, origin_skill: str) -> Dict[st
             "id": question_id,
             "text": text,
             "origin_skill": origin_skill,
+            "project_id": project_id,
             "status": "open",
             "created_at": now,
             "updated_at": now,
