@@ -11,9 +11,15 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from state_store import EVENTS_RELATIVE_DIR, StateParseError, _ensure_research_gitignore
+from state_store import (
+    EVENTS_RELATIVE_DIR,
+    STATE_SCHEMA_VERSION,
+    StateParseError,
+    _ensure_research_gitignore,
+)
 
 INDEX_RELATIVE_PATH = Path(".research/indexes/index.db")
+INDEX_SCHEMA_VERSION = 1
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS questions (
@@ -40,6 +46,30 @@ CREATE INDEX IF NOT EXISTS idx_runs_question_id ON runs(question_id);
 CREATE INDEX IF NOT EXISTS idx_results_run_id ON results(run_id);
 CREATE INDEX IF NOT EXISTS idx_claims_run_id ON claims(run_id);
 """
+
+
+def _fresh_connection(index_path: Path) -> sqlite3.Connection:
+    """Delete `index_path` if present and open a freshly schema'd database.
+
+    Used both by genuine-corruption recovery and by schema-version-mismatch
+    recovery in `_connect` -- in both cases the right move is the same: this
+    file is fully disposable, so throw it away and rebuild rather than
+    attempting any in-place repair or migration.
+
+    Args:
+        index_path: Path to indexes/index.db.
+
+    Returns:
+        A fresh connection with row_factory set, the schema applied, and
+        `PRAGMA user_version` stamped to INDEX_SCHEMA_VERSION.
+    """
+    if index_path.exists():
+        index_path.unlink()
+    conn = sqlite3.connect(str(index_path))
+    conn.row_factory = sqlite3.Row
+    conn.executescript(_SCHEMA)
+    conn.execute(f"PRAGMA user_version = {INDEX_SCHEMA_VERSION}")
+    return conn
 
 
 def _connect(project_root: Path) -> sqlite3.Connection:
@@ -74,12 +104,25 @@ def _connect(project_root: Path) -> sqlite3.Connection:
     `OperationalError` (e.g. "file is not a database") is treated as actual
     corruption and triggers delete-and-recreate.
 
+    Separately, this also detects a schema-version mismatch via SQLite's
+    built-in `PRAGMA user_version` (an integer stamped into the database
+    file itself, exactly designed for this purpose). A fresh or
+    pre-versioning database reads back 0 and just gets stamped with
+    INDEX_SCHEMA_VERSION going forward -- no data loss, since nothing about
+    the actual table structure changed when versioning was introduced. A
+    database stamped with some *other*, non-zero version is treated the
+    same as corruption: deleted and rebuilt fresh via `_fresh_connection`,
+    since index.db is always fully disposable and rebuildable from
+    state/*.yaml + events/*.jsonl -- there is never a need for an in-place
+    migration here, only a full reconstruction.
+
     Args:
         project_root: The project's root directory.
 
     Returns:
         An open connection with row_factory set to sqlite3.Row, guaranteed
-        to have the schema successfully applied.
+        to have the schema successfully applied and `PRAGMA user_version`
+        equal to INDEX_SCHEMA_VERSION.
 
     Raises:
         sqlite3.OperationalError: If the database can't be opened/written to
@@ -109,11 +152,14 @@ def _connect(project_root: Path) -> sqlite3.Connection:
         raise
     except sqlite3.DatabaseError:
         conn.close()
-        # Delete the corrupted file and retry once with a fresh database.
-        index_path.unlink()
-        conn = sqlite3.connect(str(index_path))
-        conn.row_factory = sqlite3.Row
-        conn.executescript(_SCHEMA)
+        return _fresh_connection(index_path)
+
+    current_version = conn.execute("PRAGMA user_version").fetchone()[0]
+    if current_version == 0:
+        conn.execute(f"PRAGMA user_version = {INDEX_SCHEMA_VERSION}")
+    elif current_version != INDEX_SCHEMA_VERSION:
+        conn.close()
+        return _fresh_connection(index_path)
     return conn
 
 
@@ -169,6 +215,16 @@ def _ingest_shard(conn: sqlite3.Connection, shard_path: Path) -> None:
     lines = shard_path.read_text(encoding="utf-8").splitlines()
     for line_num, line in enumerate(lines[already_ingested:], start=already_ingested + 1):
         event = json.loads(line)
+        # A missing "schema_version" means this line was written before
+        # schema versioning existed -- treat that as version 1, the format
+        # it was actually written in, same grandfathering rule state_store's
+        # _load_yaml_map applies to state/*.yaml.
+        schema_version = event.get("schema_version", 1)
+        if schema_version != STATE_SCHEMA_VERSION:
+            raise StateParseError(
+                f"Unsupported schema_version {schema_version!r} in "
+                f"{shard_name}:{line_num} (expected {STATE_SCHEMA_VERSION}): {line}"
+            )
         if event["event"] == "result":
             artifact_ref = event.get("artifact_ref") or {}
             conn.execute(

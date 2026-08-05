@@ -1,11 +1,13 @@
 """Subprocess tests for state.py -- Agent State CLI."""
 import datetime as _datetime
 import json
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 SCRIPT = Path(__file__).resolve().parent.parent / "state.py"
 
@@ -591,3 +593,141 @@ def test_report_with_json_flag_outside_git_prints_plain_text_error(tmp_path: Pat
     # --report always prints plain text, even with --json flag
     assert not result.stdout.startswith("{")
     assert "Error:" in result.stdout
+
+
+def test_start_run_writes_schema_version_to_runs_yaml(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+
+    _start_run(project)
+
+    runs_yaml = yaml.safe_load(
+        (project / ".research" / "state" / "runs.yaml").read_text()
+    )
+    assert runs_yaml["version"] == 1
+
+
+def test_start_run_with_question_writes_schema_version_to_questions_yaml(
+    tmp_path: Path,
+) -> None:
+    project = _make_project(tmp_path)
+
+    _create_question(project)
+
+    questions_yaml = yaml.safe_load(
+        (project / ".research" / "state" / "questions.yaml").read_text()
+    )
+    assert questions_yaml["version"] == 1
+
+
+def test_record_result_includes_schema_version_in_returned_event(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    run_id = _start_run(project)
+
+    result = _run(
+        project, "--record-result", "--run-id", run_id, "--summary", "s", "--json"
+    )
+
+    data = json.loads(result.stdout)
+    assert data["schema_version"] == 1
+
+
+def test_load_yaml_map_rejects_mismatched_schema_version(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    runs_yaml_path = project / ".research" / "state" / "runs.yaml"
+    runs_yaml_path.parent.mkdir(parents=True)
+    runs_yaml_path.write_text(yaml.safe_dump({"version": 2, "runs": {}}))
+
+    result = _run(project, "--start-run", "--skill", "deep-research", "--json")
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "StateParseError"
+    assert "unsupported schema version" in data["message"]
+
+
+def test_load_yaml_map_accepts_missing_version_for_backward_compat(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    runs_yaml_path = project / ".research" / "state" / "runs.yaml"
+    runs_yaml_path.parent.mkdir(parents=True)
+    # No "version" key at all -- exactly what agent-state wrote before
+    # schema versioning existed.
+    runs_yaml_path.write_text(yaml.safe_dump({"runs": {}}))
+
+    result = _run(project, "--start-run", "--skill", "deep-research", "--json")
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_ingest_shard_rejects_mismatched_schema_version(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    today = _datetime.datetime.now(_datetime.timezone.utc).strftime("%Y-%m-%d")
+    events_dir = project / ".research" / "events"
+    events_dir.mkdir(parents=True)
+    bad_event = {
+        "event": "result", "id": "res_x", "run_id": "run_x", "summary": "s",
+        "artifact_ref": None, "ts": "2026-08-05T00:00:00Z", "schema_version": 2,
+    }
+    (events_dir / f"{today}.jsonl").write_text(json.dumps(bad_event) + "\n")
+
+    result = _run(project, "--rebuild-index", "--full", "--json")
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "StateParseError"
+    assert "schema_version" in data["message"]
+
+
+def test_ingest_shard_accepts_missing_schema_version_for_backward_compat(
+    tmp_path: Path,
+) -> None:
+    project = _make_project(tmp_path)
+    today = _datetime.datetime.now(_datetime.timezone.utc).strftime("%Y-%m-%d")
+    events_dir = project / ".research" / "events"
+    events_dir.mkdir(parents=True)
+    # No "schema_version" key -- exactly what agent-state wrote before
+    # schema versioning existed.
+    old_event = {
+        "event": "claim", "id": "clm_x", "run_id": "run_x", "statement": "s",
+        "confidence": None, "evidence_ref": None, "ts": "2026-08-05T00:00:00Z",
+    }
+    (events_dir / f"{today}.jsonl").write_text(json.dumps(old_event) + "\n")
+
+    result = _run(project, "--rebuild-index", "--full", "--json")
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_connect_stamps_fresh_database_with_user_version(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+
+    _run(project, "--rebuild-index", "--json")
+
+    conn = sqlite3.connect(str(project / ".research" / "indexes" / "index.db"))
+    try:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+    finally:
+        conn.close()
+
+
+def test_connect_recovers_from_mismatched_user_version(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    run_id = _start_run(project, skill="deep-research")
+    _run(project, "--rebuild-index", "--full", "--json")
+
+    index_db = project / ".research" / "indexes" / "index.db"
+    conn = sqlite3.connect(str(index_db))
+    conn.execute("PRAGMA user_version = 99")
+    conn.commit()
+    conn.close()
+
+    result = _run(project, "--query", "--run-id", run_id, "--json")
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["runs"][0]["id"] == run_id  # data survived the wipe+rebuild
+
+    conn = sqlite3.connect(str(index_db))
+    try:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+    finally:
+        conn.close()

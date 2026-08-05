@@ -29,6 +29,7 @@ except ImportError:
 QUESTIONS_RELATIVE_PATH = Path(".research/state/questions.yaml")
 RUNS_RELATIVE_PATH = Path(".research/state/runs.yaml")
 EVENTS_RELATIVE_DIR = Path(".research/events")
+STATE_SCHEMA_VERSION = 1
 LOCK_TIMEOUT_SECONDS = int(os.environ.get("AGENT_STATE_LOCK_TIMEOUT_SECONDS", "30"))
 LOCK_POLL_INTERVAL_SECONDS = 0.1
 _CLOSING_RUN_STATUSES = frozenset({"completed", "failed"})
@@ -232,8 +233,12 @@ def _load_yaml_map(path: Path, top_key: str) -> Dict[str, Any]:
         The parsed id -> record map ({} if the file doesn't exist yet).
 
     Raises:
-        StateParseError: If the file exists but isn't valid YAML, or its
-            top-level structure isn't a mapping with `top_key` holding a map.
+        StateParseError: If the file exists but isn't valid YAML, its
+            top-level structure isn't a mapping with `top_key` holding a
+            map, or its "version" doesn't match STATE_SCHEMA_VERSION. A
+            missing "version" key is treated as version 1 rather than an
+            error -- files written before schema versioning existed never
+            had one, and 1 is the format they were actually written in.
     """
     if not path.is_file():
         return {}
@@ -246,6 +251,14 @@ def _load_yaml_map(path: Path, top_key: str) -> Dict[str, Any]:
     if not isinstance(data, dict) or not isinstance(data.get(top_key), dict):
         raise StateParseError(
             f"{path} must be a mapping with a top-level '{top_key}' map."
+        )
+    version = data.get("version", 1)
+    if version != STATE_SCHEMA_VERSION:
+        raise StateParseError(
+            f"{path} has unsupported schema version {version!r} "
+            f"(expected {STATE_SCHEMA_VERSION}); this file was written by "
+            "an incompatible version of agent-state and needs a manual "
+            "migration before it can be read."
         )
     return data[top_key]
 
@@ -261,7 +274,10 @@ def _save_yaml_map(path: Path, top_key: str, records: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     tmp_path.write_text(
-        yaml.safe_dump({top_key: records}, sort_keys=True, allow_unicode=True),
+        yaml.safe_dump(
+            {"version": STATE_SCHEMA_VERSION, top_key: records},
+            sort_keys=True, allow_unicode=True,
+        ),
         encoding="utf-8",
     )
     tmp_path.replace(path)
@@ -447,10 +463,16 @@ def _events_shard_path(project_root: Path, when: datetime) -> Path:
 def _append_event(project_root: Path, event: Dict[str, Any]) -> None:
     """Append one JSON line to today's event shard under an exclusive lock.
 
+    Stamps `event["schema_version"] = STATE_SCHEMA_VERSION` in place before
+    writing, so the caller's dict (which record_result/record_claim return
+    to their own caller) reflects exactly what was persisted to disk.
+
     Args:
         project_root: The project's root directory.
         event: The fully populated event dict to serialize (including "ts").
+            Mutated in place to add "schema_version".
     """
+    event["schema_version"] = STATE_SCHEMA_VERSION
     shard_path = _events_shard_path(project_root, datetime.now(timezone.utc))
     with _locked_file(project_root, shard_path):
         with shard_path.open("a", encoding="utf-8") as f:

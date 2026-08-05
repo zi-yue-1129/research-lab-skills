@@ -104,6 +104,28 @@ to force that regeneration on demand, e.g. right after hand-editing
 `state/*.yaml`, from `.research/state/*.yaml` and `.research/events/*.jsonl`
 -- the only two locations that are ever authoritative.
 
+## Schema versioning
+
+`state/questions.yaml` and `state/runs.yaml` each carry a top-level
+`version:` field; every `events/*.jsonl` line carries a `schema_version`
+field; `indexes/index.db` carries its version in SQLite's own
+`PRAGMA user_version`. All three currently read `1`.
+
+A file with no version field at all (written before this mechanism existed)
+is treated as version 1 -- the format it was actually written in -- not an
+error. A file whose version field is present but doesn't match what this
+code understands raises a loud `StateParseError` naming the mismatch, rather
+than silently misreading it; `indexes/index.db` is the one exception, since
+it's fully disposable -- a version mismatch there is treated the same as
+corruption and triggers an automatic wipe-and-rebuild, no user action
+required.
+
+This is detection, not migration: if a future schema change needs old
+`state/*.yaml`/`events/*.jsonl` data actually converted to a new shape, that
+conversion logic doesn't exist yet and would need to be written when that
+change happens. What exists today is the guarantee that an incompatible file
+is never silently misread as if it were current.
+
 ## Non-goals
 
 - Does not migrate any existing skill (`deep-research`, `research-log`,
@@ -114,3 +136,7 @@ to force that regeneration on demand, e.g. right after hand-editing
 - Does not copy artifact content. `--artifact-role`/`--artifact-path` record
   where a Result's output lives; the content itself stays wherever the
   producing skill wrote it.
+- Does not implement actual cross-version data migration for `state/*.yaml`
+  or `events/*.jsonl` -- only version detection (see "Schema versioning"
+  above). Writing a real migration is future work, once there's a second
+  schema version to migrate to or from.
