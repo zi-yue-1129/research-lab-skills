@@ -104,7 +104,7 @@ def _utc_now_iso() -> str:
 
 @contextmanager
 def _locked_file(path: Path) -> Iterator[None]:
-    """Hold an exclusive advisory lock on `path` for the duration of the block.
+    """Hold an exclusive advisory lock guarding `path` for the block's duration.
 
     POSIX: fcntl.flock(LOCK_EX | LOCK_NB), retried on a short poll interval
     up to LOCK_TIMEOUT_SECONDS. Non-POSIX (no fcntl module, e.g. Windows)
@@ -112,10 +112,29 @@ def _locked_file(path: Path) -> Iterator[None]:
     unprotected -- mirrors the "Non-POSIX (Windows)" rule in
     skills/academic-pipeline/references/passport_as_reset_boundary.md.
 
+    Importantly, the lock is NOT taken on `path` itself -- it's taken on a
+    stable sidecar file at `path` + ".lock". `_save_yaml_map` and callers of
+    `_append_event`'s shard writer do their read-modify-write by atomically
+    replacing `path` (write to a temp file, then `os.replace`/`Path.replace`
+    onto `path`). flock() locks are bound to the underlying inode of the
+    open file description, not to the path string, so if we locked `path`
+    directly, an atomic replace performed *inside* the locked critical
+    section would silently swap in a fresh, never-locked inode at that same
+    path -- any process that opens `path` afterward gets that new inode and
+    sails past the lock with zero contention, racing whoever is still
+    mid-write. (Confirmed by reproduction: 8 concurrent `--start-run` calls
+    lost 2 of 8 records to exactly this race before this fix.) The sidecar
+    lock file sidesteps this because nothing ever renames or replaces it --
+    it is only ever touch()'d once, then opened/flocked/unflocked -- so its
+    identity (inode) never changes across the critical section. Do NOT let
+    any code atomically replace the lock file itself; that would reintroduce
+    the same race this function exists to prevent.
+
     Args:
-        path: The file to lock. Created (empty) if it doesn't exist yet, so
-            the lock has something to hold onto even before the real
-            content is first written.
+        path: The data file being protected. Its sidecar lock file
+            (`path` + ".lock") is created (empty) if it doesn't exist yet,
+            so the lock has something stable to hold onto even before
+            `path`'s real content is first written.
 
     Yields:
         None. The caller does its read-modify-write inside the `with` block.
@@ -134,9 +153,10 @@ def _locked_file(path: Path) -> Iterator[None]:
             "without an exclusive lock."
         ) from exc
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.touch(exist_ok=True)
-    fd = os.open(str(path), os.O_RDWR)
+    lock_path = path.with_name(path.name + ".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path.touch(exist_ok=True)
+    fd = os.open(str(lock_path), os.O_RDWR)
     deadline = time.monotonic() + LOCK_TIMEOUT_SECONDS
     try:
         while True:
