@@ -160,3 +160,42 @@ def test_complete_run_unknown_run_id_errors(tmp_path: Path) -> None:
     assert result.returncode == 1
     data = json.loads(result.stdout)
     assert data["error"] == "RunNotFoundError"
+
+
+def _create_question(project: Path, text: str = "Needs offline support?") -> str:
+    result = _run(
+        project, "--start-run", "--skill", "research-mode", "--question", text, "--json"
+    )
+    return json.loads(result.stdout)["question_id"]
+
+
+def test_answer_question_sets_status(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    question_id = _create_question(project)
+
+    result = _run(project, "--answer-question", "--question-id", question_id, "--json")
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["status"] == "answered"
+
+
+def test_abandon_question_sets_status(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    question_id = _create_question(project)
+
+    result = _run(project, "--abandon-question", "--question-id", question_id, "--json")
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["status"] == "abandoned"
+
+
+def test_answer_unknown_question_errors(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+
+    result = _run(project, "--answer-question", "--question-id", "q_missing", "--json")
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "QuestionNotFoundError"

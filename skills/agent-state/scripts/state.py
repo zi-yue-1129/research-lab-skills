@@ -81,6 +81,10 @@ def _dispatch(args: argparse.Namespace, project_root: Path) -> Dict[str, Any]:
         )
     if args.complete_run:
         return state_store.complete_run(project_root, args.run_id, args.status)
+    if args.answer_question:
+        return state_store.set_question_status(project_root, args.question_id, "answered")
+    if args.abandon_question:
+        return state_store.set_question_status(project_root, args.question_id, "abandoned")
     if args.rebuild_index:
         return state_index.rebuild_index(project_root, full=args.full)
     raise AssertionError("no action selected despite argparse required group")
