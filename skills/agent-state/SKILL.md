@@ -45,11 +45,20 @@ python "$STATE" --record-claim --run-id run_20260805_9f3a1c \
 
 # Close a Question once its Runs have answered it
 python "$STATE" --answer-question --question-id q_20260805_ab12cd --json
+
+# Or abandon it if it turned out not to need an answer
+python "$STATE" --abandon-question --question-id q_20260805_ab12cd --json
 ```
 
-**Every action prints JSON on stdout, including errors** (exit code 1, a
-`{"error": ..., "message": ...}` payload) -- never a raw traceback. Check
-`error` before trusting any other field, the same rule
+`--evidence` is the CLI flag for `--record-claim`'s supporting reference; it
+is stored on the Claim event as `evidence_ref` (path, quote, or URL) --
+the flag and field names differ deliberately, `--evidence` reads better on
+the command line while `evidence_ref` makes clear in the record itself that
+it's a reference, not the evidence content.
+
+**Every action except `--report` prints JSON on stdout, including errors**
+(exit code 1, a `{"error": ..., "message": ...}` payload) -- never a raw
+traceback. Check `error` before trusting any other field, the same rule
 `resource-resolver`'s `SKILL.md` states for its own JSON output.
 
 ## Querying
@@ -85,10 +94,15 @@ python "$STATE" --rebuild-index --json          # incremental (default via any -
 python "$STATE" --rebuild-index --full --json    # full rescan, e.g. after hand-editing state/*.yaml
 ```
 
-`.research/indexes/index.db` is gitignored and disposable. If it's ever
-missing, corrupted, or just looks wrong, `--rebuild-index --full` regenerates
-it from `.research/state/*.yaml` and `.research/events/*.jsonl` -- the only
-two locations that are ever authoritative.
+`.research/indexes/index.db` is disposable, and gitignored via a
+`.research/.gitignore` this skill bootstraps itself on first write (along
+with `state/*.lock`, `events/`, and `cache/`) -- there's nothing to set up
+by hand. If the index is ever missing or corrupted, `--query` and `--report`
+already self-heal it transparently (a full rebuild happens automatically, no
+user action required); run `--rebuild-index --full` yourself when you want
+to force that regeneration on demand, e.g. right after hand-editing
+`state/*.yaml`, from `.research/state/*.yaml` and `.research/events/*.jsonl`
+-- the only two locations that are ever authoritative.
 
 ## Non-goals
 
