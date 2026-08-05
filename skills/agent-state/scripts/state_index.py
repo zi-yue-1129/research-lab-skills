@@ -42,19 +42,28 @@ CREATE INDEX IF NOT EXISTS idx_claims_run_id ON claims(run_id);
 """
 
 
-def _connect(project_root: Path, recover_from_corruption: bool = False) -> sqlite3.Connection:
+def _connect(project_root: Path) -> sqlite3.Connection:
     """Open (creating if needed) the index database with its schema applied.
+
+    Corruption recovery is unconditional here: if the existing index.db file
+    is not a valid SQLite database (or fails to accept the schema), it is
+    deleted and recreated fresh, regardless of whether the caller wanted a
+    "full" or "incremental" rebuild. Those two concepts are independent --
+    `full` (see rebuild_index) is about whether to re-ingest
+    already-checkpointed JSONL lines from source, a purely logical concept.
+    Corruption is a physical fact about the on-disk file, and per the design
+    spec ("indexes/index.db missing or corrupted ... is expected, not an
+    error condition"), it must self-heal on ANY read/write path that opens
+    the index -- including the incremental syncs that --query and --report
+    perform on every call -- not just when --rebuild-index --full happened
+    to already be requested.
 
     Args:
         project_root: The project's root directory.
-        recover_from_corruption: If True and the database is corrupted, delete it
-            and create a fresh one. If False, propagate the corruption error.
 
     Returns:
-        An open connection with row_factory set to sqlite3.Row.
-
-    Raises:
-        sqlite3.DatabaseError: If the database is corrupted and recovery is disabled.
+        An open connection with row_factory set to sqlite3.Row, guaranteed
+        to have the schema successfully applied.
     """
     index_path = project_root / INDEX_RELATIVE_PATH
     index_path.parent.mkdir(parents=True, exist_ok=True)
@@ -64,14 +73,11 @@ def _connect(project_root: Path, recover_from_corruption: bool = False) -> sqlit
         conn.executescript(_SCHEMA)
     except sqlite3.DatabaseError:
         conn.close()
-        if recover_from_corruption:
-            # Delete the corrupted file and retry with a fresh database.
-            index_path.unlink()
-            conn = sqlite3.connect(str(index_path))
-            conn.row_factory = sqlite3.Row
-            conn.executescript(_SCHEMA)
-        else:
-            raise
+        # Delete the corrupted file and retry once with a fresh database.
+        index_path.unlink()
+        conn = sqlite3.connect(str(index_path))
+        conn.row_factory = sqlite3.Row
+        conn.executescript(_SCHEMA)
     return conn
 
 
@@ -175,9 +181,9 @@ def rebuild_index(project_root: Path, full: bool = False) -> Dict[str, Any]:
     # Detect if this is the first rebuild: database doesn't exist yet.
     is_first_rebuild = not index_path.exists()
 
-    # If full rebuild, enable corruption recovery so a damaged index is
-    # detected and deleted before re-syncing from source files.
-    conn = _connect(project_root, recover_from_corruption=full)
+    # _connect self-heals from a corrupted index.db unconditionally (see its
+    # docstring), independent of whether `full` was requested here.
+    conn = _connect(project_root)
     try:
         if full:
             conn.execute("DELETE FROM results")
