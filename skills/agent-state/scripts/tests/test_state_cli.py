@@ -800,3 +800,87 @@ def test_default_project_is_created_lazily_only_once(tmp_path: Path) -> None:
 
     doc = yaml.safe_load((project / ".research" / "state" / "projects.yaml").read_text())
     assert list(doc["projects"].keys()) == ["proj_default"]
+
+
+def _create_question_id(project: Path, text: str = "Needs offline support?") -> str:
+    result = _run(
+        project, "--start-run", "--skill", "research-mode", "--question", text, "--json"
+    )
+    return json.loads(result.stdout)["question_id"]
+
+
+def test_create_hypothesis_returns_proposed_hypothesis(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    question_id = _create_question_id(project)
+
+    result = _run(
+        project, "--create-hypothesis", "--question-id", question_id,
+        "--statement", "Offline support is unnecessary.",
+        "--skill", "deep-research", "--json",
+    )
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["question_id"] == question_id
+    assert data["statement"] == "Offline support is unnecessary."
+    assert data["status"] == "proposed"
+    assert data["synthetic"] is False
+    assert data["created_by"] == "deep-research"
+    assert data["id"].startswith("hyp_")
+
+
+def test_create_hypothesis_without_statement_errors(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    question_id = _create_question_id(project)
+
+    result = _run(project, "--create-hypothesis", "--question-id", question_id, "--json")
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "ValueError"
+
+
+def test_create_hypothesis_unknown_question_id_errors(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+
+    result = _run(
+        project, "--create-hypothesis", "--question-id", "q_missing",
+        "--statement", "x", "--json",
+    )
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "QuestionNotFoundError"
+
+
+def test_set_hypothesis_status_updates_status(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    question_id = _create_question_id(project)
+    hypothesis_id = json.loads(
+        _run(
+            project, "--create-hypothesis", "--question-id", question_id,
+            "--statement", "x", "--json",
+        ).stdout
+    )["id"]
+
+    result = _run(
+        project, "--set-hypothesis-status", "--hypothesis-id", hypothesis_id,
+        "--status", "supported", "--json",
+    )
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["status"] == "supported"
+
+
+def test_set_hypothesis_status_unknown_id_errors(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+
+    result = _run(
+        project, "--set-hypothesis-status", "--hypothesis-id", "hyp_missing",
+        "--status", "refuted", "--json",
+    )
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "HypothesisNotFoundError"

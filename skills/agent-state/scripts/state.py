@@ -46,6 +46,8 @@ def _build_parser() -> argparse.ArgumentParser:
     action.add_argument("--rebuild-index", action="store_true")
     action.add_argument("--report", action="store_true")
     action.add_argument("--create-project", action="store_true")
+    action.add_argument("--create-hypothesis", action="store_true")
+    action.add_argument("--set-hypothesis-status", action="store_true")
 
     parser.add_argument("--skill", metavar="NAME")
     parser.add_argument("--mode", metavar="MODE")
@@ -53,8 +55,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--description", metavar="TEXT")
     parser.add_argument("--question", metavar="TEXT")
     parser.add_argument("--question-id", metavar="ID")
+    parser.add_argument("--hypothesis-id", metavar="ID")
     parser.add_argument("--run-id", metavar="ID")
-    parser.add_argument("--status", choices=["completed", "failed"])
+    parser.add_argument(
+        "--status",
+        choices=["completed", "failed", "running", "supported", "refuted", "inconclusive"],
+    )
     parser.add_argument("--summary", metavar="TEXT")
     parser.add_argument("--artifact-role", metavar="ROLE")
     parser.add_argument("--artifact-path", metavar="PATH")
@@ -109,6 +115,15 @@ def _dispatch(args: argparse.Namespace, project_root: Path) -> Dict[str, Any]:
         return state_store.create_project(
             project_root, args.name,
             description=args.description, created_by=args.skill or "user",
+        )
+    if args.create_hypothesis:
+        return state_store.create_hypothesis(
+            project_root, args.question_id, args.statement,
+            created_by=args.skill or "user",
+        )
+    if args.set_hypothesis_status:
+        return state_store.set_hypothesis_status(
+            project_root, args.hypothesis_id, args.status
         )
     raise AssertionError("no action selected despite argparse required group")
 
@@ -172,6 +187,7 @@ def main() -> None:
         state_store.ProjectRootNotFoundError,
         state_store.StateParseError,
         state_store.QuestionNotFoundError,
+        state_store.HypothesisNotFoundError,
         state_store.RunNotFoundError,
         state_store.LockTimeoutError,
         ValueError,
