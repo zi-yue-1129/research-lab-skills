@@ -15,7 +15,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterator
+from typing import Any, Dict, Iterator, Optional
 
 try:
     import yaml
@@ -157,26 +157,208 @@ def _locked_file(path: Path) -> Iterator[None]:
         os.close(fd)
 
 
-def _load_yaml_map(path: Path, entity_name: str) -> Dict[str, Any]:
-    """Load a YAML file as a dict, returning empty dict if file doesn't exist.
+def _load_yaml_map(path: Path, top_key: str) -> Dict[str, Any]:
+    """Load an id-keyed YAML document, defaulting to an empty map.
 
     Args:
-        path: Path to the YAML file.
-        entity_name: Descriptive name for error messages (e.g. "questions").
+        path: Path to the YAML file (e.g. state/questions.yaml).
+        top_key: The top-level key holding the id -> record map
+            ("questions" or "runs").
 
     Returns:
-        The parsed YAML dict, or an empty dict if the file doesn't exist.
+        The parsed id -> record map ({} if the file doesn't exist yet).
 
     Raises:
-        StateParseError: If the file exists but cannot be parsed as valid YAML.
+        StateParseError: If the file exists but isn't valid YAML, or its
+            top-level structure isn't a mapping with `top_key` holding a map.
     """
-    if not path.exists():
+    if not path.is_file():
         return {}
     try:
-        content = path.read_text(encoding="utf-8")
-        data = yaml.safe_load(content)
-        return data if data is not None else {}
-    except (yaml.YAMLError, OSError) as exc:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise StateParseError(f"Invalid YAML in {path}: {exc}") from exc
+    if data is None:
+        return {}
+    if not isinstance(data, dict) or not isinstance(data.get(top_key), dict):
         raise StateParseError(
-            f"Failed to parse {entity_name} from {path}: {exc}"
-        ) from exc
+            f"{path} must be a mapping with a top-level '{top_key}' map."
+        )
+    return data[top_key]
+
+
+def _save_yaml_map(path: Path, top_key: str, records: Dict[str, Any]) -> None:
+    """Write an id-keyed YAML document, replacing the file atomically.
+
+    Args:
+        path: Destination YAML path.
+        top_key: Top-level key to nest `records` under.
+        records: The full id -> record map to persist.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_text(
+        yaml.safe_dump({top_key: records}, sort_keys=True, allow_unicode=True),
+        encoding="utf-8",
+    )
+    tmp_path.replace(path)
+
+
+def load_questions(project_root: Path) -> Dict[str, Any]:
+    """Load all Question records.
+
+    Args:
+        project_root: The project's root directory (see find_project_root).
+
+    Returns:
+        id -> Question record map (empty if none exist yet).
+    """
+    return _load_yaml_map(project_root / QUESTIONS_RELATIVE_PATH, "questions")
+
+
+def load_runs(project_root: Path) -> Dict[str, Any]:
+    """Load all Run records.
+
+    Args:
+        project_root: The project's root directory.
+
+    Returns:
+        id -> Run record map (empty if none exist yet).
+    """
+    return _load_yaml_map(project_root / RUNS_RELATIVE_PATH, "runs")
+
+
+def create_question(project_root: Path, text: str, origin_skill: str) -> Dict[str, Any]:
+    """Create a new Question record with status "open".
+
+    Args:
+        project_root: The project's root directory.
+        text: The request or sub-task text.
+        origin_skill: Name of the skill that raised this Question.
+
+    Returns:
+        The full new Question record, including its generated "id".
+    """
+    path = project_root / QUESTIONS_RELATIVE_PATH
+    with _locked_file(path):
+        questions = _load_yaml_map(path, "questions")
+        question_id = generate_id("q")
+        now = _utc_now_iso()
+        record = {
+            "id": question_id,
+            "text": text,
+            "origin_skill": origin_skill,
+            "status": "open",
+            "created_at": now,
+            "updated_at": now,
+        }
+        questions[question_id] = record
+        _save_yaml_map(path, "questions", questions)
+    return record
+
+
+def set_question_status(project_root: Path, question_id: str, status: str) -> Dict[str, Any]:
+    """Transition a Question's status.
+
+    Args:
+        project_root: The project's root directory.
+        question_id: The Question to update.
+        status: New status, must be "answered" or "abandoned".
+
+    Returns:
+        The updated Question record.
+
+    Raises:
+        QuestionNotFoundError: If question_id doesn't exist.
+        ValueError: If status isn't "answered" or "abandoned".
+    """
+    if status not in _QUESTION_STATUSES:
+        raise ValueError(f"status must be 'answered' or 'abandoned', got {status!r}")
+    path = project_root / QUESTIONS_RELATIVE_PATH
+    with _locked_file(path):
+        questions = _load_yaml_map(path, "questions")
+        if question_id not in questions:
+            raise QuestionNotFoundError(f"Unknown question_id: {question_id}")
+        questions[question_id]["status"] = status
+        questions[question_id]["updated_at"] = _utc_now_iso()
+        _save_yaml_map(path, "questions", questions)
+        return questions[question_id]
+
+
+def start_run(
+    project_root: Path,
+    skill: str,
+    mode: Optional[str] = None,
+    question_id: Optional[str] = None,
+    question_text: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Start a new Run, optionally creating or linking a Question.
+
+    Args:
+        project_root: The project's root directory.
+        skill: Name of the skill executing this Run.
+        mode: Optional mode name within that skill.
+        question_id: Link to an existing Question. Mutually exclusive with
+            question_text.
+        question_text: Create a new Question (status "open") and link this
+            Run to it. Mutually exclusive with question_id.
+
+    Returns:
+        The full new Run record, including its generated "id".
+
+    Raises:
+        QuestionNotFoundError: If question_id is given but doesn't exist.
+        ValueError: If both question_id and question_text are given.
+    """
+    if question_id and question_text:
+        raise ValueError("question_id and question_text are mutually exclusive")
+    if question_text:
+        question = create_question(project_root, question_text, origin_skill=skill)
+        question_id = question["id"]
+    elif question_id and question_id not in load_questions(project_root):
+        raise QuestionNotFoundError(f"Unknown question_id: {question_id}")
+
+    path = project_root / RUNS_RELATIVE_PATH
+    with _locked_file(path):
+        runs = _load_yaml_map(path, "runs")
+        run_id = generate_id("run")
+        record = {
+            "id": run_id,
+            "skill": skill,
+            "mode": mode,
+            "question_id": question_id,
+            "status": "running",
+            "started_at": _utc_now_iso(),
+            "ended_at": None,
+        }
+        runs[run_id] = record
+        _save_yaml_map(path, "runs", runs)
+    return record
+
+
+def complete_run(project_root: Path, run_id: str, status: str) -> Dict[str, Any]:
+    """Transition a Run to a terminal status.
+
+    Args:
+        project_root: The project's root directory.
+        run_id: The Run to update.
+        status: New status, must be "completed" or "failed".
+
+    Returns:
+        The updated Run record.
+
+    Raises:
+        RunNotFoundError: If run_id doesn't exist.
+        ValueError: If status isn't "completed" or "failed".
+    """
+    if status not in _CLOSING_RUN_STATUSES:
+        raise ValueError(f"status must be 'completed' or 'failed', got {status!r}")
+    path = project_root / RUNS_RELATIVE_PATH
+    with _locked_file(path):
+        runs = _load_yaml_map(path, "runs")
+        if run_id not in runs:
+            raise RunNotFoundError(f"Unknown run_id: {run_id}")
+        runs[run_id]["status"] = status
+        runs[run_id]["ended_at"] = _utc_now_iso()
+        _save_yaml_map(path, "runs", runs)
+        return runs[run_id]

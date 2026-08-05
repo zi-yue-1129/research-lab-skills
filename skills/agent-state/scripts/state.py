@@ -74,6 +74,13 @@ def _dispatch(args: argparse.Namespace, project_root: Path) -> Dict[str, Any]:
     Returns:
         The JSON-serializable result of the selected action.
     """
+    if args.start_run:
+        return state_store.start_run(
+            project_root, args.skill, mode=args.mode,
+            question_id=args.question_id, question_text=args.question,
+        )
+    if args.complete_run:
+        return state_store.complete_run(project_root, args.run_id, args.status)
     if args.rebuild_index:
         return state_index.rebuild_index(project_root, full=args.full)
     raise AssertionError("no action selected despite argparse required group")

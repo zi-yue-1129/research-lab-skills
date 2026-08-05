@@ -83,3 +83,69 @@ def test_errors_on_unrecognized_event_type(tmp_path: Path) -> None:
     assert data["error"] == "StateParseError"
     assert "unknown_type" in data["message"]
     assert "2026-08-05.jsonl" in data["message"]
+
+
+def test_start_run_without_question(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+
+    result = _run(project, "--start-run", "--skill", "deep-research", "--mode", "full", "--json")
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["skill"] == "deep-research"
+    assert data["mode"] == "full"
+    assert data["question_id"] is None
+    assert data["status"] == "running"
+    assert data["ended_at"] is None
+    assert data["id"].startswith("run_")
+
+
+def test_start_run_with_new_question_creates_and_links_it(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+
+    result = _run(
+        project, "--start-run", "--skill", "research-mode",
+        "--question", "Does this need offline support?", "--json",
+    )
+
+    data = json.loads(result.stdout)
+    assert data["question_id"].startswith("q_")
+    questions_yaml = (project / ".research" / "state" / "questions.yaml").read_text()
+    assert "Does this need offline support?" in questions_yaml
+
+
+def test_start_run_with_unknown_question_id_errors(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+
+    result = _run(
+        project, "--start-run", "--skill", "deep-research",
+        "--question-id", "q_does_not_exist", "--json",
+    )
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "QuestionNotFoundError"
+
+
+def test_complete_run_updates_status_and_ended_at(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    started = json.loads(_run(project, "--start-run", "--skill", "deep-research", "--json").stdout)
+
+    result = _run(
+        project, "--complete-run", "--run-id", started["id"], "--status", "completed", "--json"
+    )
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["status"] == "completed"
+    assert data["ended_at"] is not None
+
+
+def test_complete_run_unknown_run_id_errors(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+
+    result = _run(project, "--complete-run", "--run-id", "run_missing", "--status", "failed", "--json")
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "RunNotFoundError"
