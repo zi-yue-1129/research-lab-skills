@@ -414,3 +414,29 @@ def test_full_rebuild_recovers_from_manually_corrupted_index(tmp_path: Path) -> 
     assert data == {"rebuilt": "full", "shards_scanned": 1}
     query_result = _run(project, "--query", "--run-id", run_id, "--json")
     assert json.loads(query_result.stdout)["results"][0]["summary"] == "s1"
+
+
+def test_report_lists_runs_with_result_and_claim_counts(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    run_id = _start_run(project, skill="deep-research")
+    _run(project, "--record-result", "--run-id", run_id, "--summary", "s1", "--json")
+    _run(project, "--record-claim", "--run-id", run_id, "--statement", "c1", "--json")
+    _run(project, "--complete-run", "--run-id", run_id, "--status", "completed", "--json")
+
+    result = _run(project, "--report")
+
+    assert result.returncode == 0, result.stderr
+    assert "1 run(s)" in result.stdout
+    assert "deep-research" in result.stdout
+    assert run_id in result.stdout
+    assert "1 result(s)" in result.stdout
+    assert "1 claim(s)" in result.stdout
+
+
+def test_report_on_empty_project_says_zero_runs(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+
+    result = _run(project, "--report")
+
+    assert result.returncode == 0, result.stderr
+    assert "0 run(s)" in result.stdout

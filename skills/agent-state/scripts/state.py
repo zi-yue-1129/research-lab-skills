@@ -105,6 +105,48 @@ def _dispatch(args: argparse.Namespace, project_root: Path) -> Dict[str, Any]:
     raise AssertionError("no action selected despite argparse required group")
 
 
+def _report(project_root: Path, since: Any = None) -> str:
+    """Build the plain-text --report summary.
+
+    Args:
+        project_root: The project's root directory.
+        since: Optional ISO-8601 date/datetime string; if given, restrict
+            to Runs started at or after it.
+
+    Returns:
+        A multi-line human-readable summary of Runs, newest first, with
+        per-Run Result/Claim counts.
+    """
+    state_index.rebuild_index(project_root, full=False)
+    conn = state_index._connect(project_root)
+    try:
+        sql = "SELECT * FROM runs"
+        params: tuple = ()
+        if since:
+            sql += " WHERE started_at >= ?"
+            params = (since,)
+        sql += " ORDER BY started_at DESC"
+        runs = state_index._rows(conn, sql, params)
+
+        suffix = f" since {since}" if since else ""
+        lines = [f"{len(runs)} run(s){suffix}:"]
+        for run in runs:
+            result_count = state_index._rows(
+                conn, "SELECT COUNT(*) AS n FROM results WHERE run_id = ?", (run["id"],)
+            )[0]["n"]
+            claim_count = state_index._rows(
+                conn, "SELECT COUNT(*) AS n FROM claims WHERE run_id = ?", (run["id"],)
+            )[0]["n"]
+            lines.append(
+                f"  [{run['status']:>9}] {run['skill']} ({run['id']}) "
+                f"started {run['started_at']} -- "
+                f"{result_count} result(s), {claim_count} claim(s)"
+            )
+        return "\n".join(lines)
+    finally:
+        conn.close()
+
+
 def main() -> None:
     """CLI entry point for state.py."""
     parser = _build_parser()
@@ -112,6 +154,11 @@ def main() -> None:
 
     try:
         project_root = state_store.find_project_root(Path.cwd())
+
+        if args.report:
+            print(_report(project_root, since=args.since))
+            return
+
         result = _dispatch(args, project_root)
     except (
         state_store.ProjectRootNotFoundError,
