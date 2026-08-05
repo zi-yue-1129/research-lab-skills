@@ -102,8 +102,42 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
+_RESEARCH_GITIGNORE_CONTENTS = (
+    "state/*.lock\n"
+    "events/\n"
+    "indexes/\n"
+    "cache/\n"
+    "*.tmp\n"
+)
+
+
+def _ensure_research_gitignore(project_root: Path) -> None:
+    """Ensure .research/.gitignore exists, creating it on first write only.
+
+    `.research/state/*.yaml` is canonical and git-tracked by design, but the
+    lock sidecar files that live alongside it (state/*.lock), plus the
+    events/, indexes/, and cache/ directories, are disposable/generated and
+    should never show up as git diff noise. Nothing else in this project
+    creates `.research/.gitignore` (resource-resolver, which also writes
+    under `.research/`, doesn't add one either), so this skill bootstraps it
+    itself the first time it actually writes anything.
+
+    Never overwrites an existing `.gitignore` -- a user or another skill may
+    have customized it, and clobbering that would be its own kind of
+    surprising data loss.
+
+    Args:
+        project_root: The project's root directory.
+    """
+    gitignore_path = project_root / ".research" / ".gitignore"
+    if gitignore_path.exists():
+        return
+    gitignore_path.parent.mkdir(parents=True, exist_ok=True)
+    gitignore_path.write_text(_RESEARCH_GITIGNORE_CONTENTS, encoding="utf-8")
+
+
 @contextmanager
-def _locked_file(path: Path) -> Iterator[None]:
+def _locked_file(project_root: Path, path: Path) -> Iterator[None]:
     """Hold an exclusive advisory lock guarding `path` for the block's duration.
 
     POSIX: fcntl.flock(LOCK_EX | LOCK_NB), retried on a short poll interval
@@ -130,7 +164,14 @@ def _locked_file(path: Path) -> Iterator[None]:
     any code atomically replace the lock file itself; that would reintroduce
     the same race this function exists to prevent.
 
+    Every call site of this function is a write choke point for
+    `.research/`, so it's also where `.research/.gitignore` gets bootstrapped
+    on first use (see `_ensure_research_gitignore`) -- this keeps that
+    one-line concern out of every individual public function.
+
     Args:
+        project_root: The project's root directory; used only to locate
+            `.research/.gitignore` for the one-time bootstrap check.
         path: The data file being protected. Its sidecar lock file
             (`path` + ".lock") is created (empty) if it doesn't exist yet,
             so the lock has something stable to hold onto even before
@@ -144,6 +185,7 @@ def _locked_file(path: Path) -> Iterator[None]:
             LOCK_TIMEOUT_SECONDS, or if OS-level exclusion isn't available
             on this platform.
     """
+    _ensure_research_gitignore(project_root)
     try:
         import fcntl as _fcntl
     except ImportError as exc:
@@ -261,7 +303,7 @@ def create_question(project_root: Path, text: str, origin_skill: str) -> Dict[st
         The full new Question record, including its generated "id".
     """
     path = project_root / QUESTIONS_RELATIVE_PATH
-    with _locked_file(path):
+    with _locked_file(project_root, path):
         questions = _load_yaml_map(path, "questions")
         question_id = generate_id("q")
         now = _utc_now_iso()
@@ -296,7 +338,7 @@ def set_question_status(project_root: Path, question_id: str, status: str) -> Di
     if status not in _QUESTION_STATUSES:
         raise ValueError(f"status must be 'answered' or 'abandoned', got {status!r}")
     path = project_root / QUESTIONS_RELATIVE_PATH
-    with _locked_file(path):
+    with _locked_file(project_root, path):
         questions = _load_yaml_map(path, "questions")
         if question_id not in questions:
             raise QuestionNotFoundError(f"Unknown question_id: {question_id}")
@@ -343,7 +385,7 @@ def start_run(
         raise QuestionNotFoundError(f"Unknown question_id: {question_id}")
 
     path = project_root / RUNS_RELATIVE_PATH
-    with _locked_file(path):
+    with _locked_file(project_root, path):
         runs = _load_yaml_map(path, "runs")
         run_id = generate_id("run")
         record = {
@@ -378,7 +420,7 @@ def complete_run(project_root: Path, run_id: str, status: str) -> Dict[str, Any]
     if status not in _CLOSING_RUN_STATUSES:
         raise ValueError(f"status must be 'completed' or 'failed', got {status!r}")
     path = project_root / RUNS_RELATIVE_PATH
-    with _locked_file(path):
+    with _locked_file(project_root, path):
         runs = _load_yaml_map(path, "runs")
         if run_id not in runs:
             raise RunNotFoundError(f"Unknown run_id: {run_id}")
@@ -410,7 +452,7 @@ def _append_event(project_root: Path, event: Dict[str, Any]) -> None:
         event: The fully populated event dict to serialize (including "ts").
     """
     shard_path = _events_shard_path(project_root, datetime.now(timezone.utc))
-    with _locked_file(shard_path):
+    with _locked_file(project_root, shard_path):
         with shard_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(event, sort_keys=True))
             f.write("\n")
@@ -440,8 +482,11 @@ def record_result(
 
     Raises:
         RunNotFoundError: If run_id doesn't exist in state/runs.yaml.
-        ValueError: If exactly one of artifact_role/artifact_path is given.
+        ValueError: If summary is empty/missing, or if exactly one of
+            artifact_role/artifact_path is given.
     """
+    if not summary:
+        raise ValueError("summary is required")
     if bool(artifact_role) != bool(artifact_path):
         raise ValueError("artifact_role and artifact_path must be given together")
     if run_id not in load_runs(project_root):
@@ -481,7 +526,10 @@ def record_claim(
 
     Raises:
         RunNotFoundError: If run_id doesn't exist in state/runs.yaml.
+        ValueError: If statement is empty/missing.
     """
+    if not statement:
+        raise ValueError("statement is required")
     if run_id not in load_runs(project_root):
         raise RunNotFoundError(f"Unknown run_id: {run_id}")
     event: Dict[str, Any] = {

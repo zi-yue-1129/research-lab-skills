@@ -115,6 +115,33 @@ def test_start_run_with_new_question_creates_and_links_it(tmp_path: Path) -> Non
     assert "Does this need offline support?" in questions_yaml
 
 
+def test_start_run_creates_research_gitignore(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+
+    _run(project, "--start-run", "--skill", "deep-research", "--json")
+
+    gitignore_path = project / ".research" / ".gitignore"
+    assert gitignore_path.is_file()
+    contents = gitignore_path.read_text()
+    assert "state/*.lock" in contents
+    assert "events/" in contents
+    assert "indexes/" in contents
+    assert "cache/" in contents
+    assert "*.tmp" in contents
+
+
+def test_start_run_does_not_overwrite_existing_gitignore(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    research_dir = project / ".research"
+    research_dir.mkdir(parents=True)
+    gitignore_path = research_dir / ".gitignore"
+    gitignore_path.write_text("# custom, do not touch\n")
+
+    _run(project, "--start-run", "--skill", "deep-research", "--json")
+
+    assert gitignore_path.read_text() == "# custom, do not touch\n"
+
+
 def test_start_run_without_skill_errors(tmp_path: Path) -> None:
     project = _make_project(tmp_path)
 
@@ -252,6 +279,21 @@ def test_record_result_unknown_run_id_errors(tmp_path: Path) -> None:
     assert data["error"] == "RunNotFoundError"
 
 
+def test_record_result_without_summary_errors_and_writes_no_event(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    run_id = _start_run(project)
+
+    result = _run(project, "--record-result", "--run-id", run_id, "--json")
+
+    assert result.returncode == 1, result.stderr
+    data = json.loads(result.stdout)
+    assert data["error"] == "ValueError"
+    # An append-only event log can never be corrected once a null-summary
+    # Result is written, so this must fail before any shard file is touched.
+    events_dir = project / ".research" / "events"
+    assert not events_dir.exists() or not any(events_dir.glob("*.jsonl"))
+
+
 def test_record_claim_appends_event(tmp_path: Path) -> None:
     project = _make_project(tmp_path)
     run_id = _start_run(project)
@@ -267,6 +309,19 @@ def test_record_claim_appends_event(tmp_path: Path) -> None:
     assert data["event"] == "claim"
     assert data["confidence"] == "high"
     assert data["evidence_ref"] == "review.json:findings[2]"
+
+
+def test_record_claim_without_statement_errors_and_writes_no_event(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    run_id = _start_run(project)
+
+    result = _run(project, "--record-claim", "--run-id", run_id, "--json")
+
+    assert result.returncode == 1, result.stderr
+    data = json.loads(result.stdout)
+    assert data["error"] == "ValueError"
+    events_dir = project / ".research" / "events"
+    assert not events_dir.exists() or not any(events_dir.glob("*.jsonl"))
 
 
 def test_record_claim_invalid_confidence_errors(tmp_path: Path) -> None:
@@ -414,6 +469,43 @@ def test_full_rebuild_recovers_from_manually_corrupted_index(tmp_path: Path) -> 
     assert data == {"rebuilt": "full", "shards_scanned": 1}
     query_result = _run(project, "--query", "--run-id", run_id, "--json")
     assert json.loads(query_result.stdout)["results"][0]["summary"] == "s1"
+
+
+def test_query_recovers_from_corrupted_index(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    run_id = _start_run(project)
+    _run(project, "--record-result", "--run-id", run_id, "--summary", "s1", "--json")
+
+    index_db = project / ".research" / "indexes" / "index.db"
+    index_db.parent.mkdir(parents=True, exist_ok=True)
+    index_db.write_bytes(b"not a sqlite db")
+
+    # --query only ever does an incremental (full=False) sync internally --
+    # the design spec says a corrupted index self-heals transparently on
+    # --query regardless, with no --full/--rebuild-index required by the user.
+    result = _run(project, "--query", "--run-id", run_id, "--json")
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["runs"][0]["id"] == run_id
+    assert data["results"][0]["summary"] == "s1"
+
+
+def test_report_recovers_from_corrupted_index(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    run_id = _start_run(project, skill="deep-research")
+    _run(project, "--record-result", "--run-id", run_id, "--summary", "s1", "--json")
+
+    index_db = project / ".research" / "indexes" / "index.db"
+    index_db.parent.mkdir(parents=True, exist_ok=True)
+    index_db.write_bytes(b"not a sqlite db")
+
+    result = _run(project, "--report")
+
+    assert result.returncode == 0, result.stderr
+    assert "1 run(s)" in result.stdout
+    assert run_id in result.stdout
+    assert "1 result(s)" in result.stdout
 
 
 def test_report_lists_runs_with_result_and_claim_counts(tmp_path: Path) -> None:
