@@ -308,8 +308,11 @@ def start_run(
 
     Raises:
         QuestionNotFoundError: If question_id is given but doesn't exist.
-        ValueError: If both question_id and question_text are given.
+        ValueError: If skill is empty/missing, or if both question_id and
+            question_text are given.
     """
+    if not skill:
+        raise ValueError("skill is required")
     if question_id and question_text:
         raise ValueError("question_id and question_text are mutually exclusive")
     if question_text:

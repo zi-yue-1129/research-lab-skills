@@ -114,6 +114,17 @@ def test_start_run_with_new_question_creates_and_links_it(tmp_path: Path) -> Non
     assert "Does this need offline support?" in questions_yaml
 
 
+def test_start_run_without_skill_errors(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+
+    result = _run(project, "--start-run", "--json")
+
+    assert result.returncode == 1, result.stderr
+    data = json.loads(result.stdout)
+    assert data["error"] == "ValueError"
+    assert not (project / ".research" / "state" / "runs.yaml").exists()
+
+
 def test_start_run_with_unknown_question_id_errors(tmp_path: Path) -> None:
     project = _make_project(tmp_path)
 
