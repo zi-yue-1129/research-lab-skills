@@ -113,6 +113,14 @@ class VisualModuleNotFoundError(ValueError):
     """Raised when a module_id does not exist in state/visual_modules.yaml."""
 
 
+class ProductionNotAllowedError(RuntimeError):
+    """Raised when a production-guarded action is attempted before a Deck
+    reaches "approved" or a later status."""
+
+
+_APPROVED_OR_LATER = frozenset({"approved", "producing", "draft_review", "revising", "validating", "completed"})
+
+
 class LockTimeoutError(RuntimeError):
     """Raised when an exclusive lock can't be acquired within the timeout."""
 
@@ -719,6 +727,113 @@ def create_revision_request(
     return record
 
 
+def assert_production_allowed(project_root: Path, deck_id: str) -> Dict[str, Any]:
+    """Guard used by every artifact-producing script before it writes
+    anything -- the mechanism that makes "no presentation artifact before
+    plan approval" a real, deterministic guarantee rather than a prose
+    instruction.
+
+    Args:
+        project_root: The project's root directory.
+        deck_id: The Deck the artifact belongs to.
+
+    Returns:
+        The Deck record, if production is currently allowed.
+
+    Raises:
+        DeckNotFoundError: If deck_id doesn't exist.
+        ProductionNotAllowedError: If the Deck's status is earlier than
+            "approved".
+    """
+    decks = load_decks(project_root)
+    if deck_id not in decks:
+        raise DeckNotFoundError(f"Unknown deck_id: {deck_id}")
+    record = decks[deck_id]
+    if record["status"] not in _APPROVED_OR_LATER:
+        raise ProductionNotAllowedError(
+            f"Deck {deck_id} is at status {record['status']!r}; no presentation "
+            "artifact may be produced before it reaches 'approved'."
+        )
+    return record
+
+
+def query(project_root: Path, deck_id: str) -> Dict[str, Any]:
+    """Return a Deck plus every Slide, Visual Module, and Revision
+    Request linked to it.
+
+    This is the single read path used both for normal inspection and for
+    resuming an interrupted workflow: the returned status is always the
+    last durably-written state, never inferred or replayed from a log.
+
+    Args:
+        project_root: The project's root directory.
+        deck_id: The Deck to look up.
+
+    Returns:
+        {"deck": {...}, "slides": [...], "visual_modules": [...],
+        "revision_requests": [...]}, each list ordered by created_at.
+
+    Raises:
+        DeckNotFoundError: If deck_id doesn't exist.
+    """
+    decks = load_decks(project_root)
+    if deck_id not in decks:
+        raise DeckNotFoundError(f"Unknown deck_id: {deck_id}")
+    slides = [s for s in load_slides(project_root).values() if s["deck_id"] == deck_id]
+    slide_ids = {s["id"] for s in slides}
+    modules = [m for m in load_visual_modules(project_root).values() if m["slide_id"] in slide_ids]
+    module_ids = {m["id"] for m in modules}
+    revisions = [
+        r for r in load_revision_requests(project_root).values()
+        if r["subject_id"] == deck_id or r["subject_id"] in slide_ids or r["subject_id"] in module_ids
+    ]
+    return {
+        "deck": decks[deck_id],
+        "slides": sorted(slides, key=lambda s: s["created_at"]),
+        "visual_modules": sorted(modules, key=lambda m: m["created_at"]),
+        "revision_requests": sorted(revisions, key=lambda r: r["created_at"]),
+    }
+
+
+def validate_referential_integrity(project_root: Path) -> list:
+    """Scan state/*.yaml for dangling foreign keys.
+
+    Diagnostic pass over hand-authored/hand-edited data -- every write
+    path in this module already rejects a dangling reference at write
+    time, so a clean project should always report zero violations.
+
+    Args:
+        project_root: The project's root directory.
+
+    Returns:
+        A list of violation dicts, each shaped {"entity", "id", "field",
+        "missing_id"}. Empty if nothing is broken.
+    """
+    decks = load_decks(project_root)
+    slides = load_slides(project_root)
+    modules = load_visual_modules(project_root)
+    revisions = load_revision_requests(project_root)
+
+    violations: list = []
+    for slide_id, slide in slides.items():
+        deck_id = slide.get("deck_id")
+        if deck_id not in decks:
+            violations.append({"entity": "slide", "id": slide_id, "field": "deck_id", "missing_id": deck_id})
+    for module_id, module in modules.items():
+        slide_id = module.get("slide_id")
+        if slide_id not in slides:
+            violations.append({"entity": "visual_module", "id": module_id, "field": "slide_id", "missing_id": slide_id})
+        for dep_id in module.get("dependencies", []):
+            if dep_id not in modules:
+                violations.append({"entity": "visual_module", "id": module_id, "field": "dependencies", "missing_id": dep_id})
+    known_ids = set(decks) | set(slides) | set(modules)
+    for request_id, request in revisions.items():
+        subject_id = request.get("subject_id")
+        if subject_id not in known_ids:
+            violations.append({"entity": "revision_request", "id": request_id, "field": "subject_id", "missing_id": subject_id})
+    return violations
+
+
 def _build_parser() -> argparse.ArgumentParser:
     """Construct the presentation_state.py argument parser."""
     parser = argparse.ArgumentParser(
@@ -733,6 +848,9 @@ def _build_parser() -> argparse.ArgumentParser:
     action.add_argument("--set-module-status", action="store_true")
     action.add_argument("--record-review", action="store_true")
     action.add_argument("--create-revision-request", action="store_true")
+    action.add_argument("--check-production-allowed", action="store_true")
+    action.add_argument("--query", action="store_true")
+    action.add_argument("--validate", action="store_true")
 
     parser.add_argument("--skill", metavar="NAME")
     parser.add_argument("--title", metavar="TEXT")
@@ -795,6 +913,13 @@ def _dispatch(args: argparse.Namespace, project_root: Path) -> Dict[str, Any]:
             project_root, args.subject_type, args.subject_id, args.requested_by,
             args.instructions, supersedes=args.supersedes,
         )
+    if args.check_production_allowed:
+        return assert_production_allowed(project_root, args.deck_id)
+    if args.query:
+        return query(project_root, args.deck_id)
+    if args.validate:
+        violations = validate_referential_integrity(project_root)
+        return {"violations": violations, "clean": len(violations) == 0}
     raise AssertionError("no action selected despite argparse required group")
 
 
@@ -808,7 +933,8 @@ def main() -> None:
         result = _dispatch(args, project_root)
     except (
         ProjectRootNotFoundError, StateParseError, DeckNotFoundError,
-        SlideNotFoundError, VisualModuleNotFoundError, LockTimeoutError, ValueError,
+        SlideNotFoundError, VisualModuleNotFoundError, ProductionNotAllowedError,
+        LockTimeoutError, ValueError,
     ) as exc:
         error = {"error": type(exc).__name__, "message": str(exc)}
         print(json.dumps(error) if args.json else f"Error: {exc}")

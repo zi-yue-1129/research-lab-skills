@@ -2,6 +2,7 @@
 import json
 import subprocess
 import sys
+import yaml
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parent.parent / "presentation_state.py"
@@ -445,3 +446,152 @@ def test_create_revision_request_invalid_requested_by_errors(tmp_path: Path) -> 
     assert result.returncode == 1
     data = json.loads(result.stdout)
     assert data["error"] == "ValueError"
+
+
+def test_check_production_allowed_blocks_before_approved(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    deck = json.loads(_run(project, "--create-deck", "--title", "T", "--json").stdout)
+    _run(project, "--set-deck-status", "--deck-id", deck["id"], "--status", "content_review", "--json")
+    _run(project, "--set-deck-status", "--deck-id", deck["id"], "--status", "awaiting_approval", "--json")
+
+    result = _run(project, "--check-production-allowed", "--deck-id", deck["id"], "--json")
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "ProductionNotAllowedError"
+
+
+def test_check_production_allowed_passes_at_approved(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    deck = json.loads(_run(project, "--create-deck", "--title", "T", "--json").stdout)
+    for status in ("content_review", "awaiting_approval", "approved"):
+        _run(project, "--set-deck-status", "--deck-id", deck["id"], "--status", status, "--json")
+
+    result = _run(project, "--check-production-allowed", "--deck-id", deck["id"], "--json")
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["status"] == "approved"
+
+
+def test_check_production_allowed_unknown_deck_id_errors(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+
+    result = _run(project, "--check-production-allowed", "--deck-id", "deck_does_not_exist", "--json")
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "DeckNotFoundError"
+
+
+def test_query_returns_deck_with_slides_modules_and_revisions(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    deck_id, slide_id = _make_deck_and_slide(project)
+    module = json.loads(_run(
+        project, "--create-visual-module", "--slide-id", slide_id,
+        "--module-key", "m1", "--module-type", "architecture", "--json",
+    ).stdout)
+    _run(
+        project, "--create-revision-request", "--subject-type", "slide", "--subject-id", slide_id,
+        "--requested-by", "user", "--instructions", "Shorten.", "--json",
+    )
+
+    result = _run(project, "--query", "--deck-id", deck_id, "--json")
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["deck"]["id"] == deck_id
+    assert [s["id"] for s in data["slides"]] == [slide_id]
+    assert [m["id"] for m in data["visual_modules"]] == [module["id"]]
+    assert len(data["revision_requests"]) == 1
+
+
+def test_query_unknown_deck_id_errors(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+
+    result = _run(project, "--query", "--deck-id", "deck_does_not_exist", "--json")
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "DeckNotFoundError"
+
+
+def test_query_after_reinvocation_reflects_durable_state_with_no_duplicates(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    deck_id, slide_id = _make_deck_and_slide(project)
+    _run(project, "--set-slide-status", "--slide-id", slide_id, "--status", "ready", "--json")
+
+    # Simulate resuming an interrupted workflow: a brand-new process
+    # re-queries the same deck_id with no in-memory state carried over.
+    first = json.loads(_run(project, "--query", "--deck-id", deck_id, "--json").stdout)
+    second = json.loads(_run(project, "--query", "--deck-id", deck_id, "--json").stdout)
+
+    assert first == second
+    assert len(second["slides"]) == 1
+    assert second["slides"][0]["status"] == "ready"
+
+
+def test_validate_on_clean_project_reports_no_violations(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    _make_deck_and_slide(project)
+
+    result = _run(project, "--validate", "--json")
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {"violations": [], "clean": True}
+
+
+def test_validate_catches_dangling_slide_deck_id(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    _, slide_id = _make_deck_and_slide(project)
+    slides_path = project / ".research" / "presentations" / "state" / "slides.yaml"
+    doc = yaml.safe_load(slides_path.read_text())
+    doc["slides"][slide_id]["deck_id"] = "deck_does_not_exist"
+    slides_path.write_text(yaml.safe_dump(doc, sort_keys=True))
+
+    result = _run(project, "--validate", "--json")
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["clean"] is False
+    assert {"entity": "slide", "id": slide_id, "field": "deck_id", "missing_id": "deck_does_not_exist"} in data["violations"]
+
+
+def test_validate_catches_dangling_module_slide_id(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    _, slide_id = _make_deck_and_slide(project)
+    module = json.loads(_run(
+        project, "--create-visual-module", "--slide-id", slide_id,
+        "--module-key", "m1", "--module-type", "architecture", "--json",
+    ).stdout)
+    modules_path = project / ".research" / "presentations" / "state" / "visual_modules.yaml"
+    doc = yaml.safe_load(modules_path.read_text())
+    doc["visual_modules"][module["id"]]["slide_id"] = "sld_does_not_exist"
+    modules_path.write_text(yaml.safe_dump(doc, sort_keys=True))
+
+    result = _run(project, "--validate", "--json")
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["clean"] is False
+    assert {"entity": "visual_module", "id": module["id"], "field": "slide_id", "missing_id": "sld_does_not_exist"} in data["violations"]
+
+
+def test_validate_catches_dangling_revision_subject_id(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    deck_id, _ = _make_deck_and_slide(project)
+    request = json.loads(_run(
+        project, "--create-revision-request", "--subject-type", "deck", "--subject-id", deck_id,
+        "--requested-by", "user", "--instructions", "X", "--json",
+    ).stdout)
+    requests_path = project / ".research" / "presentations" / "state" / "revision_requests.yaml"
+    doc = yaml.safe_load(requests_path.read_text())
+    doc["revision_requests"][request["id"]]["subject_id"] = "deck_does_not_exist"
+    requests_path.write_text(yaml.safe_dump(doc, sort_keys=True))
+
+    result = _run(project, "--validate", "--json")
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["clean"] is False
+    assert {"entity": "revision_request", "id": request["id"], "field": "subject_id", "missing_id": "deck_does_not_exist"} in data["violations"]
