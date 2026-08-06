@@ -39,7 +39,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SCHEMAS = REPO_ROOT / "shared/contracts/passport"
 
 BIBLIOGRAPHY_AGENT_PATH = REPO_ROOT / "skills/deep-research/agents/bibliography_agent.md"
-BIBLIOGRAPHY_AGENT_SHA256 = "d0ef5a14490c5c2907f764802fcb7d07c95eeed7008ff29d0434d4a9175d0a8c"  # updated for skills/ path migration: backpointer updated from academic-pipeline/... to skills/academic-pipeline/... (path-fix only, no substantive content change). Previous baseline 4d8bee0… was the post-v3.10-PR-B state.
+BIBLIOGRAPHY_AGENT_SHA256 = "c8b02f51c4393316cc291fcd98dbbb45a60b7f3b0425dee19397b07a1c6e86e9"  # updated for the agent-state Source/Evidence registration section: adds structured-data bookkeeping instructions (--create-source / --set-source-screening calls plus a Source ID Map for downstream agents), no temporal/version-family logic. Previous baseline d0ef5a1… was the post-skills/-path-migration state.
 
 
 def _validate(yaml_path: Path, schema_path: Path) -> list[str]:

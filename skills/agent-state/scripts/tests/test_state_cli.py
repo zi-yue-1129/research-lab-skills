@@ -1631,6 +1631,29 @@ def test_create_source_deduplicates_by_normalized_url(tmp_path: Path) -> None:
     assert second["id"] == first["id"]
 
 
+def test_create_source_does_not_deduplicate_urls_differing_by_document_id(
+    tmp_path: Path,
+) -> None:
+    project = _make_project(tmp_path)
+    first = json.loads(_run(
+        project, "--create-source", "--title", "First PLOS Paper",
+        "--url",
+        "https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0111111",
+        "--json",
+    ).stdout)
+
+    second = json.loads(_run(
+        project, "--create-source", "--title", "Second PLOS Paper",
+        "--url",
+        "https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0222222",
+        "--json",
+    ).stdout)
+
+    assert second["id"] != first["id"]
+    sources_yaml = (project / ".research" / "state" / "sources.yaml").read_text()
+    assert sources_yaml.count("id: src_") == 2
+
+
 def test_create_source_surfaces_duplicate_hint_without_merging(tmp_path: Path) -> None:
     project = _make_project(tmp_path)
     first = json.loads(_run(
@@ -1913,14 +1936,20 @@ def test_validate_catches_dangling_source_project_id(tmp_path: Path) -> None:
 def test_validate_catches_dangling_evidence_foreign_keys(tmp_path: Path) -> None:
     project = _make_project(tmp_path)
     source_id, question_id = _make_source_and_question(project)
+    hypothesis = json.loads(_run(
+        project, "--create-hypothesis", "--question-id", question_id,
+        "--statement", "X helps Y", "--json",
+    ).stdout)
     evidence = json.loads(_run(
         project, "--create-evidence", "--source-id", source_id,
-        "--question-id", question_id, "--statement", "A finding",
-        "--stance", "supports", "--json",
+        "--question-id", question_id, "--hypothesis-id", hypothesis["id"],
+        "--statement", "A finding", "--stance", "supports", "--json",
     ).stdout)
     evidence_path = project / ".research" / "state" / "evidence.yaml"
     data = yaml.safe_load(evidence_path.read_text())
     data["evidence"][evidence["id"]]["source_id"] = "src_does_not_exist"
+    data["evidence"][evidence["id"]]["question_id"] = "q_does_not_exist"
+    data["evidence"][evidence["id"]]["hypothesis_id"] = "hyp_does_not_exist"
     evidence_path.write_text(yaml.safe_dump(data))
 
     result = _run(project, "--validate", "--json")
@@ -1931,6 +1960,14 @@ def test_validate_catches_dangling_evidence_foreign_keys(tmp_path: Path) -> None
     assert {
         "entity": "evidence", "id": evidence["id"],
         "field": "source_id", "missing_id": "src_does_not_exist",
+    } in data["violations"]
+    assert {
+        "entity": "evidence", "id": evidence["id"],
+        "field": "question_id", "missing_id": "q_does_not_exist",
+    } in data["violations"]
+    assert {
+        "entity": "evidence", "id": evidence["id"],
+        "field": "hypothesis_id", "missing_id": "hyp_does_not_exist",
     } in data["violations"]
 
 

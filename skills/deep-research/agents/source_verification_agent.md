@@ -215,7 +215,9 @@ Flag immediately if ANY of:
 After assigning each source its evidence-hierarchy grade (Level I-VII,
 per the table above), record that grade against the Source registered by
 `bibliography_agent`, using the calling convention in
-`skills/agent-state/SKILL.md`:
+`skills/agent-state/SKILL.md`. Resolve each source's `source_id` from
+`bibliography_agent`'s Source ID Map (its Phase 2 output) by matching the
+same citation reference:
 
 ```bash
 STATE="$(find ~/.claude -path "*/agent-state/scripts/state.py" | head -1)"

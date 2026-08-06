@@ -236,7 +236,9 @@ Each Key Theme's synthesis and each row of the Contradictions &
 Resolutions table is, at its core, a finding extracted from one or more
 sources and given a stance toward the current Research Question. Register
 each one as a structured Evidence Statement, using the calling convention
-in `skills/agent-state/SKILL.md`:
+in `skills/agent-state/SKILL.md`. Resolve each source's `source_id` from
+`bibliography_agent`'s Source ID Map (its Phase 2 output) by matching the
+citation reference the finding is drawn from:
 
 ```bash
 STATE="$(find ~/.claude -path "*/agent-state/scripts/state.py" | head -1)"

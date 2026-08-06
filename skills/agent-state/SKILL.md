@@ -214,7 +214,8 @@ returns `{"violations": [], "clean": true}`.
 
 ## Schema versioning
 
-`state/questions.yaml` and `state/runs.yaml` each carry a top-level
+Every `state/*.yaml` file (including `state/sources.yaml` and
+`state/evidence.yaml`) carries a top-level
 `version:` field (currently `1`); every `events/*.jsonl` line carries a
 `schema_version` field (currently `1`); `indexes/index.db` carries its
 version in SQLite's own `PRAGMA user_version` (currently `3`, bumped from

@@ -7,6 +7,7 @@ All notable changes to this project will be documented in this file.
 ### Added
 
 - **`research-project-init`: new skill** — turns a preliminary research idea into a scoped project charter (problem statement, scope, exclusions, contributions, constraints, resources, milestones, success/stop conditions, risks, ethics) and registers a Project plus its Initial Research Questions in `agent-state`. Sits upstream of `deep-research`.
+- **`agent-state`: Source/Evidence entities** — structured, deduplicated literature sources (dedup by DOI, then normalized URL, then a title+author+year hint) and stance-tagged Evidence Statements, registered automatically by `deep-research`'s `bibliography_agent`/`source_verification_agent`/`synthesis_agent` alongside the Markdown reports they already produce. `record_claim` can now point at a specific Evidence record via `--evidence-id`.
 
 ## [1.1.0] - 2026-08-04
 

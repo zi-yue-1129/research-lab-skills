@@ -680,23 +680,44 @@ def load_sources(project_root: Path) -> Dict[str, Any]:
     return _load_yaml_map(project_root / SOURCES_RELATIVE_PATH, "sources")
 
 
+_URL_TRACKING_PARAMS = frozenset({
+    "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+    "ref", "fbclid", "gclid", "via",
+})
+
+
 def _normalize_url(url: str) -> str:
     """Normalize a URL for exact-match deduplication.
 
-    Strips the scheme and any query string or fragment, and lowercases the
-    rest, so "http vs https" or a tracking parameter doesn't create two
-    Source records for the same page.
+    Strips the scheme and any fragment, lowercases only the scheme+host
+    (never the path, which is often case-sensitive), and drops known
+    tracking query parameters while preserving the rest of the query
+    string -- a discriminator like "?id=10.1371/journal.pone.0111111" is
+    load-bearing on sites (e.g. PLOS ONE) that put the actual document
+    identity in the query string, so query strings are never discarded
+    wholesale.
 
     Args:
         url: The raw URL.
 
     Returns:
-        A normalized "host/path" string, lowercased.
+        A normalized "host/path[?query]" string with the host lowercased.
     """
     without_fragment = url.split("#", 1)[0]
-    without_query = without_fragment.split("?", 1)[0]
-    without_scheme = without_query.split("://", 1)[-1]
-    return without_scheme.lower().rstrip("/")
+    without_scheme = without_fragment.split("://", 1)[-1]
+    host_and_rest = without_scheme.split("/", 1)
+    host = host_and_rest[0].lower()
+    rest = "/" + host_and_rest[1] if len(host_and_rest) > 1 else ""
+    path, _, query = rest.partition("?")
+    path = path.rstrip("/")
+    if query:
+        kept_params = [
+            param for param in query.split("&")
+            if param.split("=", 1)[0] not in _URL_TRACKING_PARAMS
+        ]
+        if kept_params:
+            return f"{host}{path}?{'&'.join(kept_params)}"
+    return f"{host}{path}"
 
 
 def _title_author_year_key(
@@ -751,7 +772,10 @@ def create_source(
         evidence_tier: Optional free-text evidence grade (e.g. "Level II -
             RCT"); not validated against a fixed taxonomy.
         project_id: Project this Source belongs to. Defaults to the
-            lazily-created "proj_default" if omitted.
+            lazily-created "proj_default" if omitted. On a doi/URL dedup
+            hit this argument is ignored for that call and the existing
+            record's own project_id is returned as-is -- deliberate, since
+            reusing one Source across projects is a design goal.
         created_by: Name of the skill creating this Source, or "user" for
             a direct CLI call.
 
@@ -761,7 +785,8 @@ def create_source(
         None, or {"source_id": <id>, "reason": "title+author+year match"}
         when no doi/URL match was found but a title+first-author+year
         match against an existing Source was. An existing record returned
-        via a doi/URL match carries no "duplicate_hint" key at all.
+        via a doi/URL match carries "duplicate_hint": None, so the key is
+        always present regardless of which path produced the record.
 
     Raises:
         ValueError: If title is empty/missing.
@@ -779,13 +804,13 @@ def create_source(
         if doi:
             for existing in sources.values():
                 if existing.get("doi") == doi:
-                    return existing
+                    return {**existing, "duplicate_hint": None}
         normalized_url = _normalize_url(url) if url else None
         if normalized_url:
             for existing in sources.values():
                 existing_url = existing.get("url")
                 if existing_url and _normalize_url(existing_url) == normalized_url:
-                    return existing
+                    return {**existing, "duplicate_hint": None}
         hint_key = _title_author_year_key(title, authors, year)
         duplicate_hint = None
         for existing in sources.values():

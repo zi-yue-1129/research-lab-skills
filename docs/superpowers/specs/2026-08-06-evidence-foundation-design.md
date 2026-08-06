@@ -143,15 +143,20 @@ their normal work:
 - New exceptions: `SourceNotFoundError(ValueError)`,
   `EvidenceNotFoundError(ValueError)`.
 
-- **`validate_referential_integrity`** extended to check:
-  `sources.project_id -> projects`, `evidence.source_id -> sources`,
-  `evidence.question_id -> questions`, `evidence.hypothesis_id ->
-  hypotheses`, `claims.evidence_id -> evidence` (via the events shards).
+- **`validate_referential_integrity`** extended to check the four new
+  YAML-to-YAML foreign keys: `sources.project_id -> projects`,
+  `evidence.source_id -> sources`, `evidence.question_id -> questions`,
+  `evidence.hypothesis_id -> hypotheses`. It does **not** check
+  `claims.evidence_id -> evidence`: Claims live in the append-only
+  `events/*.jsonl` shards, not in `state/*.yaml`, and this pass is a scan
+  of the YAML state files only. `record_claim` already rejects an unknown
+  `evidence_id` at write time.
 
 ### `state.py` CLI
 
 New mutually-exclusive actions: `--create-source`,
-`--set-source-screening`, `--create-evidence`.
+`--set-source-screening`, `--set-source-evidence-tier`,
+`--create-evidence`.
 
 New flags: `--title`, `--authors`, `--year`, `--doi`, `--url`, `--venue`,
 `--evidence-tier`, `--source-id`, `--screening-status`,
@@ -187,9 +192,12 @@ integration surface that actually makes registration automatic:
   established in `skills/research-project-init/SKILL.md` and
   `skills/agent-state/SKILL.md`.
 - `skills/deep-research/agents/source_verification_agent.md`: add
-  instructions to call `--create-evidence` for each verified key finding,
-  linking it to the current run's `question_id`.
-- `skills/agent-state/SKILL.md`: document the three new actions (with
+  instructions to call `--set-source-evidence-tier` for each source once
+  its evidence-hierarchy grade is assigned.
+- `skills/deep-research/agents/synthesis_agent.md`: add instructions to
+  call `--create-evidence` for each synthesized key finding, linking it
+  to the current run's `question_id`.
+- `skills/agent-state/SKILL.md`: document the four new actions (with
   bash examples) in its "Research chain" section, the same way
   `--create-question` was documented there.
 
@@ -198,7 +206,8 @@ integration surface that actually makes registration automatic:
 1. `bibliography_agent` finds and screens a source → calls
    `--create-source` (dedup-checked) → gets a `source_id`; calls
    `--set-source-screening` if the source is excluded during screening.
-2. `source_verification_agent` / `synthesis_agent` extracts a key finding
+2. `source_verification_agent` grades an included source → calls
+   `--set-source-evidence-tier`. `synthesis_agent` extracts a key finding
    from an included source → calls `--create-evidence` with the
    `source_id`, the current research run's `question_id`, the finding as
    `statement`, and a `stance` (plus optional `hypothesis_id`/

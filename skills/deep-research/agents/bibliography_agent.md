@@ -469,6 +469,29 @@ python "$STATE" --set-source-screening --source-id src_20260806_ab12cd \
 This registration is additive bookkeeping -- it never changes what goes
 into the Annotated Bibliography or Search Strategy Report themselves.
 
+### Source ID Map (for downstream agents)
+
+`source_verification_agent` and `synthesis_agent` both need each source's
+`source_id` to register their own downstream data, but the Annotated
+Bibliography itself never carries it (per the rule above). Resolve this
+by appending a Source ID Map to this agent's own Phase 2 output, after
+the Annotated Bibliography and Search Strategy Report, in a location
+downstream agents already MAY READ (their own Phase Boundary section
+lists Phase 2 output as readable context):
+
+```markdown
+## Source ID Map
+
+| Citation Ref | source_id |
+|---|---|
+| [APA short ref, matching the Annotated Bibliography's numbered list] | src_20260806_ab12cd |
+```
+
+One row per registered source, using the same short reference the
+Annotated Bibliography's numbered list already uses, so downstream
+agents can match a citation to its `source_id` without re-parsing full
+APA citations.
+
 ## Quality Criteria
 
 - Minimum 10 sources for full mode, 5 for quick mode
