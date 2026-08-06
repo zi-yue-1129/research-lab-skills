@@ -1201,3 +1201,75 @@ def test_index_rebuild_recovers_from_pre_experiment_id_schema(tmp_path: Path) ->
     columns = {row[1] for row in conn.execute("PRAGMA table_info(runs)")}
     assert "experiment_id" in columns
     conn.close()
+
+
+def test_validate_on_clean_project_reports_no_violations(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    _run(project, "--start-run", "--skill", "deep-research", "--question", "Q?", "--json")
+
+    result = _run(project, "--validate", "--json")
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data == {"violations": [], "clean": True}
+
+
+def test_validate_detects_dangling_hypothesis_question_id(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    _run(project, "--start-run", "--skill", "deep-research", "--question", "Q?", "--json")
+    hypotheses_path = project / ".research" / "state" / "hypotheses.yaml"
+    doc = yaml.safe_load(hypotheses_path.read_text())
+    only_hypothesis = next(iter(doc["hypotheses"].values()))
+    only_hypothesis["question_id"] = "q_does_not_exist"
+    hypotheses_path.write_text(yaml.safe_dump(doc, sort_keys=True))
+
+    result = _run(project, "--validate", "--json")
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["clean"] is False
+    assert data["violations"] == [{
+        "entity": "hypothesis", "id": only_hypothesis["id"],
+        "field": "question_id", "missing_id": "q_does_not_exist",
+    }]
+
+
+def test_validate_detects_dangling_experiment_hypothesis_id(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    _run(project, "--start-run", "--skill", "deep-research", "--question", "Q?", "--json")
+    experiments_path = project / ".research" / "state" / "experiments.yaml"
+    doc = yaml.safe_load(experiments_path.read_text())
+    only_experiment = next(iter(doc["experiments"].values()))
+    only_experiment["hypothesis_id"] = "hyp_does_not_exist"
+    experiments_path.write_text(yaml.safe_dump(doc, sort_keys=True))
+
+    result = _run(project, "--validate", "--json")
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["clean"] is False
+    assert {
+        "entity": "experiment", "id": only_experiment["id"],
+        "field": "hypothesis_id", "missing_id": "hyp_does_not_exist",
+    } in data["violations"]
+
+
+def test_validate_detects_dangling_question_project_id(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    started = json.loads(
+        _run(project, "--start-run", "--skill", "deep-research", "--question", "Q?", "--json").stdout
+    )
+    questions_path = project / ".research" / "state" / "questions.yaml"
+    doc = yaml.safe_load(questions_path.read_text())
+    doc["questions"][started["question_id"]]["project_id"] = "proj_does_not_exist"
+    questions_path.write_text(yaml.safe_dump(doc, sort_keys=True))
+
+    result = _run(project, "--validate", "--json")
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["clean"] is False
+    assert {
+        "entity": "question", "id": started["question_id"],
+        "field": "project_id", "missing_id": "proj_does_not_exist",
+    } in data["violations"]

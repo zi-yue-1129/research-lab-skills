@@ -50,6 +50,7 @@ def _build_parser() -> argparse.ArgumentParser:
     action.add_argument("--set-hypothesis-status", action="store_true")
     action.add_argument("--create-experiment", action="store_true")
     action.add_argument("--set-experiment-status", action="store_true")
+    action.add_argument("--validate", action="store_true")
 
     parser.add_argument("--skill", metavar="NAME")
     parser.add_argument("--mode", metavar="MODE")
@@ -140,6 +141,9 @@ def _dispatch(args: argparse.Namespace, project_root: Path) -> Dict[str, Any]:
         return state_store.set_experiment_status(
             project_root, args.experiment_id, args.status
         )
+    if args.validate:
+        violations = state_store.validate_referential_integrity(project_root)
+        return {"violations": violations, "clean": len(violations) == 0}
     raise AssertionError("no action selected despite argparse required group")
 
 

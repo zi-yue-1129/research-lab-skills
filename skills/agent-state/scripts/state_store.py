@@ -16,7 +16,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterator, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
 try:
     import yaml
@@ -921,3 +921,57 @@ def record_claim(
     }
     _append_event(project_root, event)
     return event
+
+
+def validate_referential_integrity(project_root: Path) -> List[Dict[str, Any]]:
+    """Scan state/*.yaml for dangling foreign keys.
+
+    This is a diagnostic pass over hand-authored/hand-edited data -- every
+    write path in this module already rejects a dangling reference at write
+    time, so a clean project should always report zero violations. Nothing
+    is repaired; repair is a human decision.
+
+    Args:
+        project_root: The project's root directory.
+
+    Returns:
+        A list of violation dicts, each shaped
+        {"entity": <type>, "id": <record id>, "field": <fk field name>,
+        "missing_id": <the dangling id>}. Empty if nothing is broken.
+    """
+    projects = load_projects(project_root)
+    questions = load_questions(project_root)
+    hypotheses = load_hypotheses(project_root)
+    experiments = load_experiments(project_root)
+    runs = load_runs(project_root)
+
+    violations: List[Dict[str, Any]] = []
+    for question_id, question in questions.items():
+        project_id = question.get("project_id")
+        if project_id and project_id not in projects:
+            violations.append({
+                "entity": "question", "id": question_id,
+                "field": "project_id", "missing_id": project_id,
+            })
+    for hypothesis_id, hypothesis in hypotheses.items():
+        question_id = hypothesis.get("question_id")
+        if question_id not in questions:
+            violations.append({
+                "entity": "hypothesis", "id": hypothesis_id,
+                "field": "question_id", "missing_id": question_id,
+            })
+    for experiment_id, experiment in experiments.items():
+        hypothesis_id = experiment.get("hypothesis_id")
+        if hypothesis_id not in hypotheses:
+            violations.append({
+                "entity": "experiment", "id": experiment_id,
+                "field": "hypothesis_id", "missing_id": hypothesis_id,
+            })
+    for run_id, run in runs.items():
+        experiment_id = run.get("experiment_id")
+        if experiment_id and experiment_id not in experiments:
+            violations.append({
+                "entity": "run", "id": run_id,
+                "field": "experiment_id", "missing_id": experiment_id,
+            })
+    return violations
