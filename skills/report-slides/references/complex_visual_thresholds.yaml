@@ -1,0 +1,8 @@
+# Configurable numeric thresholds for complex_visual_detector.py's
+# region_count / route_count signals. The remaining detection signals
+# (multi_stage, mixed_technique, heavy_cross_region_connections,
+# expected_reuse, not_atomic) are inherently qualitative judgments the
+# Slide Architect records as explicit booleans -- any true value triggers
+# the complex-visual workflow regardless of these thresholds.
+region_count_threshold: 3
+route_count_threshold: 1
