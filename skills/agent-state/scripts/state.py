@@ -28,6 +28,14 @@ Usage:
     python state.py --set-experiment-status --experiment-id EXP_ID \
         --status running|completed|failed [--json]
 
+    python state.py --create-source --title "..." [--authors "..."] [--year YEAR] \
+        [--doi "..."] [--url "..."] [--venue "..."] [--evidence-tier "..."] \
+        [--project-id PROJ_ID] [--skill NAME] [--json]
+    python state.py --set-source-screening --source-id SRC_ID \
+        --screening-status included|excluded|pending [--exclusion-reason "..."] [--json]
+    python state.py --set-source-evidence-tier --source-id SRC_ID \
+        --evidence-tier "..." [--json]
+
     python state.py --record-result --run-id RUN_ID --summary "..." \
         [--artifact-role ROLE --artifact-path PATH] [--json]
     python state.py --record-claim --run-id RUN_ID --statement "..." \
@@ -81,17 +89,32 @@ def _build_parser() -> argparse.ArgumentParser:
     action.add_argument("--set-hypothesis-status", action="store_true")
     action.add_argument("--create-experiment", action="store_true")
     action.add_argument("--set-experiment-status", action="store_true")
+    action.add_argument("--create-source", action="store_true")
+    action.add_argument("--set-source-screening", action="store_true")
+    action.add_argument("--set-source-evidence-tier", action="store_true")
     action.add_argument("--validate", action="store_true")
 
     parser.add_argument("--skill", metavar="NAME")
     parser.add_argument("--mode", metavar="MODE")
     parser.add_argument("--name", metavar="TEXT")
     parser.add_argument("--description", metavar="TEXT")
+    parser.add_argument("--title", metavar="TEXT")
+    parser.add_argument("--authors", metavar="TEXT")
+    parser.add_argument("--year", type=int, metavar="YEAR")
+    parser.add_argument("--doi", metavar="TEXT")
+    parser.add_argument("--url", metavar="TEXT")
+    parser.add_argument("--venue", metavar="TEXT")
+    parser.add_argument("--evidence-tier", metavar="TEXT")
+    parser.add_argument(
+        "--screening-status", choices=["included", "excluded", "pending"]
+    )
+    parser.add_argument("--exclusion-reason", metavar="TEXT")
     parser.add_argument("--question", metavar="TEXT")
     parser.add_argument("--question-id", metavar="ID")
     parser.add_argument("--project-id", metavar="ID")
     parser.add_argument("--hypothesis-id", metavar="ID")
     parser.add_argument("--experiment-id", metavar="ID")
+    parser.add_argument("--source-id", metavar="ID")
     parser.add_argument("--run-id", metavar="ID")
     parser.add_argument(
         "--status",
@@ -178,6 +201,22 @@ def _dispatch(args: argparse.Namespace, project_root: Path) -> Dict[str, Any]:
         return state_store.set_experiment_status(
             project_root, args.experiment_id, args.status
         )
+    if args.create_source:
+        return state_store.create_source(
+            project_root, args.title,
+            authors=args.authors, year=args.year, doi=args.doi, url=args.url,
+            venue=args.venue, evidence_tier=args.evidence_tier,
+            project_id=args.project_id, created_by=args.skill or "user",
+        )
+    if args.set_source_screening:
+        return state_store.set_source_screening(
+            project_root, args.source_id, args.screening_status,
+            exclusion_reason=args.exclusion_reason,
+        )
+    if args.set_source_evidence_tier:
+        return state_store.set_source_evidence_tier(
+            project_root, args.source_id, args.evidence_tier,
+        )
     if args.validate:
         violations = state_store.validate_referential_integrity(project_root)
         return {"violations": violations, "clean": len(violations) == 0}
@@ -246,6 +285,7 @@ def main() -> None:
         state_store.HypothesisNotFoundError,
         state_store.ExperimentNotFoundError,
         state_store.RunNotFoundError,
+        state_store.SourceNotFoundError,
         state_store.LockTimeoutError,
         ValueError,
     ) as exc:

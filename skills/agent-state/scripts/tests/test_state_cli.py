@@ -1552,3 +1552,175 @@ def test_create_question_does_not_create_a_run(tmp_path: Path) -> None:
     )
 
     assert not (project / ".research" / "state" / "runs.yaml").exists()
+
+
+def test_create_source_returns_new_record(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+
+    result = _run(
+        project, "--create-source", "--title", "Offline-First Mobile UX Patterns",
+        "--authors", "Ng T, Osei K", "--year", "2025", "--doi", "10.1000/xyz123",
+        "--venue", "Journal of Mobile Computing", "--skill", "bibliography_agent", "--json",
+    )
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["id"].startswith("src_")
+    assert data["title"] == "Offline-First Mobile UX Patterns"
+    assert data["doi"] == "10.1000/xyz123"
+    assert data["screening_status"] == "pending"
+    assert data["exclusion_reason"] is None
+    assert data["created_by"] == "bibliography_agent"
+    assert data["duplicate_hint"] is None
+    assert data["project_id"] == "proj_default"
+
+
+def test_create_source_without_title_errors(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+
+    result = _run(project, "--create-source", "--json")
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "ValueError"
+
+
+def test_create_source_with_unknown_project_id_errors(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+
+    result = _run(
+        project, "--create-source", "--title", "Some Title",
+        "--project-id", "proj_does_not_exist", "--json",
+    )
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "ProjectNotFoundError"
+
+
+def test_create_source_deduplicates_by_exact_doi(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    first = json.loads(_run(
+        project, "--create-source", "--title", "First Title",
+        "--doi", "10.1000/same-doi", "--json",
+    ).stdout)
+
+    second = json.loads(_run(
+        project, "--create-source", "--title", "Different Title Entirely",
+        "--doi", "10.1000/same-doi", "--json",
+    ).stdout)
+
+    assert second["id"] == first["id"]
+    assert second["title"] == "First Title"
+    sources_yaml = (project / ".research" / "state" / "sources.yaml").read_text()
+    assert sources_yaml.count("id: src_") == 1
+
+
+def test_create_source_deduplicates_by_normalized_url(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    first = json.loads(_run(
+        project, "--create-source", "--title", "A Title",
+        "--url", "https://example.com/paper?utm_source=x", "--json",
+    ).stdout)
+
+    second = json.loads(_run(
+        project, "--create-source", "--title", "A Title",
+        "--url", "http://example.com/paper/", "--json",
+    ).stdout)
+
+    assert second["id"] == first["id"]
+
+
+def test_create_source_surfaces_duplicate_hint_without_merging(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    first = json.loads(_run(
+        project, "--create-source", "--title", "Offline Caching Patterns",
+        "--authors", "Ng T", "--year", "2025", "--json",
+    ).stdout)
+
+    second = json.loads(_run(
+        project, "--create-source", "--title", "Offline Caching Patterns",
+        "--authors", "Ng T", "--year", "2025", "--json",
+    ).stdout)
+
+    assert second["id"] != first["id"]
+    assert second["duplicate_hint"] == {
+        "source_id": first["id"], "reason": "title+author+year match",
+    }
+    sources_yaml = (project / ".research" / "state" / "sources.yaml").read_text()
+    assert sources_yaml.count("id: src_") == 2
+
+
+def test_set_source_screening_records_status_and_reason(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    source = json.loads(_run(
+        project, "--create-source", "--title", "Some Title", "--json",
+    ).stdout)
+
+    result = _run(
+        project, "--set-source-screening", "--source-id", source["id"],
+        "--screening-status", "excluded", "--exclusion-reason", "Predatory journal", "--json",
+    )
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["screening_status"] == "excluded"
+    assert data["exclusion_reason"] == "Predatory journal"
+
+
+def test_set_source_screening_invalid_status_errors(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    source = json.loads(_run(
+        project, "--create-source", "--title", "Some Title", "--json",
+    ).stdout)
+
+    result = _run(
+        project, "--set-source-screening", "--source-id", source["id"],
+        "--screening-status", "maybe", "--json",
+    )
+
+    assert result.returncode == 2  # argparse rejects the choice before dispatch
+
+
+def test_set_source_screening_unknown_source_id_errors(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+
+    result = _run(
+        project, "--set-source-screening", "--source-id", "src_does_not_exist",
+        "--screening-status", "included", "--json",
+    )
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "SourceNotFoundError"
+
+
+def test_set_source_evidence_tier_updates_record(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    source = json.loads(_run(
+        project, "--create-source", "--title", "Some Title", "--json",
+    ).stdout)
+
+    result = _run(
+        project, "--set-source-evidence-tier", "--source-id", source["id"],
+        "--evidence-tier", "Level II - Randomized Controlled Trial", "--json",
+    )
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["evidence_tier"] == "Level II - Randomized Controlled Trial"
+
+
+def test_set_source_evidence_tier_without_value_errors(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    source = json.loads(_run(
+        project, "--create-source", "--title", "Some Title", "--json",
+    ).stdout)
+
+    result = _run(
+        project, "--set-source-evidence-tier", "--source-id", source["id"], "--json",
+    )
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "ValueError"

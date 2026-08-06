@@ -31,6 +31,7 @@ QUESTIONS_RELATIVE_PATH = Path(".research/state/questions.yaml")
 HYPOTHESES_RELATIVE_PATH = Path(".research/state/hypotheses.yaml")
 EXPERIMENTS_RELATIVE_PATH = Path(".research/state/experiments.yaml")
 RUNS_RELATIVE_PATH = Path(".research/state/runs.yaml")
+SOURCES_RELATIVE_PATH = Path(".research/state/sources.yaml")
 EVENTS_RELATIVE_DIR = Path(".research/events")
 STATE_SCHEMA_VERSION = 1
 DEFAULT_PROJECT_ID = "proj_default"
@@ -40,6 +41,7 @@ _CLOSING_RUN_STATUSES = frozenset({"completed", "failed"})
 _QUESTION_STATUSES = frozenset({"answered", "abandoned"})
 _HYPOTHESIS_STATUSES = frozenset({"supported", "refuted", "inconclusive"})
 _EXPERIMENT_STATUSES = frozenset({"running", "completed", "failed"})
+_SOURCE_SCREENING_STATUSES = frozenset({"included", "excluded", "pending"})
 
 
 class ProjectRootNotFoundError(RuntimeError):
@@ -68,6 +70,10 @@ class ExperimentNotFoundError(ValueError):
 
 class RunNotFoundError(ValueError):
     """Raised when a run_id does not exist in state/runs.yaml."""
+
+
+class SourceNotFoundError(ValueError):
+    """Raised when a source_id does not exist in state/sources.yaml."""
 
 
 class LockTimeoutError(RuntimeError):
@@ -654,6 +660,226 @@ def set_experiment_status(project_root: Path, experiment_id: str, status: str) -
         experiments[experiment_id]["status"] = status
         _save_yaml_map(path, "experiments", experiments)
         return experiments[experiment_id]
+
+
+def load_sources(project_root: Path) -> Dict[str, Any]:
+    """Load all Source records.
+
+    Args:
+        project_root: The project's root directory.
+
+    Returns:
+        id -> Source record map (empty if none exist yet).
+    """
+    return _load_yaml_map(project_root / SOURCES_RELATIVE_PATH, "sources")
+
+
+def _normalize_url(url: str) -> str:
+    """Normalize a URL for exact-match deduplication.
+
+    Strips the scheme and any query string or fragment, and lowercases the
+    rest, so "http vs https" or a tracking parameter doesn't create two
+    Source records for the same page.
+
+    Args:
+        url: The raw URL.
+
+    Returns:
+        A normalized "host/path" string, lowercased.
+    """
+    without_fragment = url.split("#", 1)[0]
+    without_query = without_fragment.split("?", 1)[0]
+    without_scheme = without_query.split("://", 1)[-1]
+    return without_scheme.lower().rstrip("/")
+
+
+def _title_author_year_key(
+    title: str, authors: Optional[str], year: Optional[int]
+) -> str:
+    """Build an exact-match hint key from title, first author, and year.
+
+    This is a deliberately exact (not fuzzy) comparison: it strips
+    non-alphanumeric characters and lowercases, so trivial punctuation or
+    casing differences still match, but it never scores similarity. A hit
+    only ever attaches a "duplicate_hint" to a newly created record -- it
+    never merges records or blocks creation.
+
+    Args:
+        title: The source title.
+        authors: Free-text authors string, e.g. "Smith J, Lee K".
+        year: Publication year.
+
+    Returns:
+        A normalized "title|first_author|year" key.
+    """
+    normalized_title = "".join(ch.lower() for ch in title if ch.isalnum())
+    first_author = (authors or "").split(",", 1)[0]
+    normalized_author = "".join(ch.lower() for ch in first_author if ch.isalnum())
+    return f"{normalized_title}|{normalized_author}|{year}"
+
+
+def create_source(
+    project_root: Path,
+    title: str,
+    authors: Optional[str] = None,
+    year: Optional[int] = None,
+    doi: Optional[str] = None,
+    url: Optional[str] = None,
+    venue: Optional[str] = None,
+    evidence_tier: Optional[str] = None,
+    project_id: Optional[str] = None,
+    created_by: str = "user",
+) -> Dict[str, Any]:
+    """Create a new Source record, or return an existing one on an exact
+    doi/URL match.
+
+    Args:
+        project_root: The project's root directory.
+        title: The source's title.
+        authors: Optional free-text authors, e.g. "Smith J, Lee K".
+        year: Optional publication year.
+        doi: Optional DOI. Checked first for deduplication (exact match).
+        url: Optional URL. Checked second for deduplication (normalized
+            exact match), only when no doi match is found.
+        venue: Optional journal/conference/publisher name.
+        evidence_tier: Optional free-text evidence grade (e.g. "Level II -
+            RCT"); not validated against a fixed taxonomy.
+        project_id: Project this Source belongs to. Defaults to the
+            lazily-created "proj_default" if omitted.
+        created_by: Name of the skill creating this Source, or "user" for
+            a direct CLI call.
+
+    Returns:
+        The full Source record (existing or new), including its generated
+        "id". A newly created record also carries "duplicate_hint": either
+        None, or {"source_id": <id>, "reason": "title+author+year match"}
+        when no doi/URL match was found but a title+first-author+year
+        match against an existing Source was. An existing record returned
+        via a doi/URL match carries no "duplicate_hint" key at all.
+
+    Raises:
+        ValueError: If title is empty/missing.
+        ProjectNotFoundError: If project_id is given but doesn't exist.
+    """
+    if not title:
+        raise ValueError("title is required")
+    if project_id is None:
+        project_id = _ensure_default_project(project_root)
+    elif project_id not in load_projects(project_root):
+        raise ProjectNotFoundError(f"Unknown project_id: {project_id}")
+    path = project_root / SOURCES_RELATIVE_PATH
+    with _locked_file(project_root, path):
+        sources = _load_yaml_map(path, "sources")
+        if doi:
+            for existing in sources.values():
+                if existing.get("doi") == doi:
+                    return existing
+        normalized_url = _normalize_url(url) if url else None
+        if normalized_url:
+            for existing in sources.values():
+                existing_url = existing.get("url")
+                if existing_url and _normalize_url(existing_url) == normalized_url:
+                    return existing
+        hint_key = _title_author_year_key(title, authors, year)
+        duplicate_hint = None
+        for existing in sources.values():
+            if _title_author_year_key(
+                existing.get("title", ""), existing.get("authors"), existing.get("year")
+            ) == hint_key:
+                duplicate_hint = {
+                    "source_id": existing["id"],
+                    "reason": "title+author+year match",
+                }
+                break
+        source_id = generate_id("src")
+        record = {
+            "id": source_id,
+            "title": title,
+            "authors": authors,
+            "year": year,
+            "doi": doi,
+            "url": url,
+            "venue": venue,
+            "evidence_tier": evidence_tier,
+            "screening_status": "pending",
+            "exclusion_reason": None,
+            "project_id": project_id,
+            "created_at": _utc_now_iso(),
+            "created_by": created_by,
+        }
+        sources[source_id] = record
+        _save_yaml_map(path, "sources", sources)
+    return {**record, "duplicate_hint": duplicate_hint}
+
+
+def set_source_screening(
+    project_root: Path,
+    source_id: str,
+    screening_status: str,
+    exclusion_reason: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Record a Source's screening decision.
+
+    Args:
+        project_root: The project's root directory.
+        source_id: The Source to update.
+        screening_status: New status, must be "included", "excluded", or
+            "pending".
+        exclusion_reason: Optional reason, conventionally given when
+            screening_status is "excluded".
+
+    Returns:
+        The updated Source record.
+
+    Raises:
+        SourceNotFoundError: If source_id doesn't exist.
+        ValueError: If screening_status isn't one of the allowed values.
+    """
+    if screening_status not in _SOURCE_SCREENING_STATUSES:
+        raise ValueError(
+            "screening_status must be 'included', 'excluded', or 'pending', "
+            f"got {screening_status!r}"
+        )
+    path = project_root / SOURCES_RELATIVE_PATH
+    with _locked_file(project_root, path):
+        sources = _load_yaml_map(path, "sources")
+        if source_id not in sources:
+            raise SourceNotFoundError(f"Unknown source_id: {source_id}")
+        sources[source_id]["screening_status"] = screening_status
+        sources[source_id]["exclusion_reason"] = exclusion_reason
+        _save_yaml_map(path, "sources", sources)
+        return sources[source_id]
+
+
+def set_source_evidence_tier(
+    project_root: Path, source_id: str, evidence_tier: str
+) -> Dict[str, Any]:
+    """Record a Source's evidence-hierarchy grade.
+
+    Args:
+        project_root: The project's root directory.
+        source_id: The Source to update.
+        evidence_tier: Free-text evidence grade (e.g. "Level II - RCT").
+            Not validated against a fixed taxonomy -- deep-research's
+            source_verification_agent owns the grading rubric.
+
+    Returns:
+        The updated Source record.
+
+    Raises:
+        SourceNotFoundError: If source_id doesn't exist.
+        ValueError: If evidence_tier is empty/missing.
+    """
+    if not evidence_tier:
+        raise ValueError("evidence_tier is required")
+    path = project_root / SOURCES_RELATIVE_PATH
+    with _locked_file(project_root, path):
+        sources = _load_yaml_map(path, "sources")
+        if source_id not in sources:
+            raise SourceNotFoundError(f"Unknown source_id: {source_id}")
+        sources[source_id]["evidence_tier"] = evidence_tier
+        _save_yaml_map(path, "sources", sources)
+        return sources[source_id]
 
 
 def _question_id_for_experiment(project_root: Path, experiment_id: str) -> str:
