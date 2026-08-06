@@ -7,7 +7,12 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from PIL import Image
 
-from validate_visual_review import OverallResult, derive_overall_status, validate_review_record
+from validate_visual_review import (
+    OverallResult,
+    _ALLOWED_FINDING_KINDS,
+    derive_overall_status,
+    validate_review_record,
+)
 
 
 TIMESTAMP = "2026-08-03T10:00:00Z"
@@ -486,3 +491,17 @@ def test_passing_visual_gate_requires_inspected_paths(tmp_path: Path) -> None:
         and "inspected" in issue.message.lower()
         for issue in issues
     )
+
+
+def test_unsupported_claim_is_an_allowed_finding_kind() -> None:
+    """Allow the plan-level unsupported-claim finding kind."""
+    assert "unsupported-claim" in _ALLOWED_FINDING_KINDS
+
+
+def test_all_new_plan_level_finding_kinds_are_allowed() -> None:
+    """Allow every new plan-level finding kind added for Stage 4 review."""
+    for kind in (
+        "unsupported-claim", "duplicated-content", "missing-limitation",
+        "excessive-background", "unnecessary-visual", "weak-continuity",
+    ):
+        assert kind in _ALLOWED_FINDING_KINDS

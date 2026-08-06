@@ -766,6 +766,40 @@ def test_cli_invalid_output_has_path_field_message_and_exit_one(tmp_path: Path) 
     assert result.stderr.startswith("ERROR " + str(manifest_path) + ":purpose:")
 
 
+def test_manifest_without_modules_ref_still_passes(tmp_path: Path) -> None:
+    """Continue validating manifests that omit modules_ref -- it is optional."""
+    manifest_path = _write_asset(tmp_path, asset_id="some-diagram")
+
+    issues = validate_manifest(manifest_path)
+
+    assert issues == []
+
+
+def test_manifest_with_valid_modules_ref_passes(tmp_path: Path) -> None:
+    """Accept a modules_ref that points at an existing sibling file."""
+    payload = _complete_payload(tmp_path / "some-diagram")
+    payload["modules_ref"] = "modules.yaml"
+    manifest_path = _write_asset(tmp_path, asset_id="some-diagram", payload=payload)
+    (manifest_path.parent / "modules.yaml").write_text(
+        "visual_id: some-diagram\n", encoding="utf-8"
+    )
+
+    issues = validate_manifest(manifest_path)
+
+    assert issues == []
+
+
+def test_manifest_with_modules_ref_pointing_at_missing_file_fails(tmp_path: Path) -> None:
+    """Reject a modules_ref that names a file that does not exist."""
+    payload = _complete_payload(tmp_path / "some-diagram")
+    payload["modules_ref"] = "does-not-exist.yaml"
+    manifest_path = _write_asset(tmp_path, asset_id="some-diagram", payload=payload)
+
+    issues = validate_manifest(manifest_path)
+
+    assert any(issue.path == "modules_ref" for issue in issues)
+
+
 def test_cli_requires_exactly_one_validation_target(tmp_path: Path) -> None:
     """Reject missing and multiple mutually exclusive CLI targets."""
     manifest_path = _write_asset(tmp_path)

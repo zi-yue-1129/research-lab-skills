@@ -130,6 +130,13 @@ def validate_manifest(manifest_path: Path) -> List[ValidationIssue]:
         path,
         issues,
     )
+    modules_ref = _validate_optional_text(document, "modules_ref", path, issues)
+    if modules_ref:
+        resolved, path_error = _resolve_relative_path(path.parent, modules_ref)
+        if path_error is not None or resolved is None:
+            issues.append(_issue(path, "modules_ref", path_error or "invalid modules_ref path"))
+        elif not resolved.is_file():
+            issues.append(_issue(path, "modules_ref", "modules_ref file does not exist"))
 
     if diagram_id is not None and diagram_id != path.parent.name:
         issues.append(
@@ -314,6 +321,26 @@ def _validate_nullable_text(
     if value is not None and not isinstance(value, str):
         issues.append(
             _issue(path, field_name, "{} must be a string or null".format(field_name))
+        )
+        return None
+    return value
+
+
+def _validate_optional_text(
+    document: Mapping[str, Any],
+    field_name: str,
+    path: Path,
+    issues: List[ValidationIssue],
+) -> Optional[str]:
+    """Validate a field that may be entirely absent; if present, must be
+    a string or null. Unlike _validate_nullable_text, absence is not
+    itself an issue -- this is for genuinely optional fields."""
+    if field_name not in document:
+        return None
+    value = document[field_name]
+    if value is not None and not isinstance(value, str):
+        issues.append(
+            _issue(path, field_name, "{} must be a string or null if present".format(field_name))
         )
         return None
     return value

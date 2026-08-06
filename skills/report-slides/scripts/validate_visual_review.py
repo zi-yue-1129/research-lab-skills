@@ -38,6 +38,14 @@ _ALLOWED_FINDING_KINDS: Tuple[str, ...] = (
     "z-order",
     "alignment",
     "other",
+    # Plan-level finding kinds (Content Reviewer, Stage 4) -- reusing this
+    # same findings[].kind vocabulary rather than a parallel one.
+    "unsupported-claim",
+    "duplicated-content",
+    "missing-limitation",
+    "excessive-background",
+    "unnecessary-visual",
+    "weak-continuity",
 )
 _ALLOWED_FINDING_SOURCES: Tuple[str, ...] = (
     "svg-preview",
