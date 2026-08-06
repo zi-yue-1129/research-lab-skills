@@ -515,7 +515,7 @@ def test_full_rebuild_recovers_from_manually_corrupted_index(tmp_path: Path) -> 
     try:
         # The rebuilt database went through the same _fresh_connection path
         # as a schema-version mismatch, so it must also come out re-stamped.
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 3
     finally:
         conn.close()
 
@@ -712,7 +712,7 @@ def test_connect_stamps_fresh_database_with_user_version(tmp_path: Path) -> None
 
     conn = sqlite3.connect(str(project / ".research" / "indexes" / "index.db"))
     try:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 3
     finally:
         conn.close()
 
@@ -736,7 +736,7 @@ def test_connect_recovers_from_mismatched_user_version(tmp_path: Path) -> None:
 
     conn = sqlite3.connect(str(index_db))
     try:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 3
     finally:
         conn.close()
 
@@ -1197,7 +1197,7 @@ def test_index_rebuild_recovers_from_pre_experiment_id_schema(tmp_path: Path) ->
 
     assert result.returncode == 0, result.stderr
     conn = sqlite3.connect(str(index_path))
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 3
     columns = {row[1] for row in conn.execute("PRAGMA table_info(runs)")}
     assert "experiment_id" in columns
     conn.close()
@@ -1232,7 +1232,7 @@ def test_index_rebuild_recovers_from_unversioned_pre_experiment_id_schema(
     assert result.returncode == 0, result.stdout + result.stderr
     conn = sqlite3.connect(str(index_path))
     try:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 3
         columns = {row[1] for row in conn.execute("PRAGMA table_info(runs)")}
         assert "experiment_id" in columns
     finally:
@@ -1889,3 +1889,132 @@ def test_record_claim_with_unknown_evidence_id_errors(tmp_path: Path) -> None:
     assert result.returncode == 1
     data = json.loads(result.stdout)
     assert data["error"] == "EvidenceNotFoundError"
+
+
+def test_validate_catches_dangling_source_project_id(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    source = json.loads(_run(project, "--create-source", "--title", "T", "--json").stdout)
+    sources_path = project / ".research" / "state" / "sources.yaml"
+    data = yaml.safe_load(sources_path.read_text())
+    data["sources"][source["id"]]["project_id"] = "proj_does_not_exist"
+    sources_path.write_text(yaml.safe_dump(data))
+
+    result = _run(project, "--validate", "--json")
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["clean"] is False
+    assert {
+        "entity": "source", "id": source["id"],
+        "field": "project_id", "missing_id": "proj_does_not_exist",
+    } in data["violations"]
+
+
+def test_validate_catches_dangling_evidence_foreign_keys(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    source_id, question_id = _make_source_and_question(project)
+    evidence = json.loads(_run(
+        project, "--create-evidence", "--source-id", source_id,
+        "--question-id", question_id, "--statement", "A finding",
+        "--stance", "supports", "--json",
+    ).stdout)
+    evidence_path = project / ".research" / "state" / "evidence.yaml"
+    data = yaml.safe_load(evidence_path.read_text())
+    data["evidence"][evidence["id"]]["source_id"] = "src_does_not_exist"
+    evidence_path.write_text(yaml.safe_dump(data))
+
+    result = _run(project, "--validate", "--json")
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["clean"] is False
+    assert {
+        "entity": "evidence", "id": evidence["id"],
+        "field": "source_id", "missing_id": "src_does_not_exist",
+    } in data["violations"]
+
+
+def test_query_source_id_returns_source_and_its_evidence(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    source_id, question_id = _make_source_and_question(project)
+    evidence = json.loads(_run(
+        project, "--create-evidence", "--source-id", source_id,
+        "--question-id", question_id, "--statement", "A finding",
+        "--stance", "supports", "--json",
+    ).stdout)
+
+    result = _run(project, "--query", "--source-id", source_id, "--json")
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["sources"][0]["id"] == source_id
+    assert [e["id"] for e in data["evidence"]] == [evidence["id"]]
+
+
+def test_query_question_id_includes_linked_evidence(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    source_id, question_id = _make_source_and_question(project)
+    evidence = json.loads(_run(
+        project, "--create-evidence", "--source-id", source_id,
+        "--question-id", question_id, "--statement", "A finding",
+        "--stance", "supports", "--json",
+    ).stdout)
+
+    result = _run(project, "--query", "--question-id", question_id, "--json")
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert [e["id"] for e in data["evidence"]] == [evidence["id"]]
+
+
+def test_query_claims_include_evidence_id_column(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    source_id, question_id = _make_source_and_question(project)
+    evidence = json.loads(_run(
+        project, "--create-evidence", "--source-id", source_id,
+        "--question-id", question_id, "--statement", "A finding",
+        "--stance", "supports", "--json",
+    ).stdout)
+    run = json.loads(_run(project, "--start-run", "--skill", "deep-research", "--json").stdout)
+    _run(
+        project, "--record-claim", "--run-id", run["id"], "--statement", "A claim",
+        "--evidence-id", evidence["id"], "--json",
+    )
+
+    result = _run(project, "--query", "--run-id", run["id"], "--json")
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["claims"][0]["evidence_id"] == evidence["id"]
+
+
+def test_rebuild_index_full_picks_up_sources_and_evidence(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    source_id, question_id = _make_source_and_question(project)
+    _run(
+        project, "--create-evidence", "--source-id", source_id,
+        "--question-id", question_id, "--statement", "A finding",
+        "--stance", "supports", "--json",
+    )
+
+    result = _run(project, "--rebuild-index", "--full", "--json")
+
+    assert result.returncode == 0, result.stderr
+    conn = sqlite3.connect(str(project / ".research" / "indexes" / "index.db"))
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM sources").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM evidence").fetchone()[0] == 1
+    finally:
+        conn.close()
+
+
+def test_index_schema_version_is_stamped_as_3(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+
+    _run(project, "--rebuild-index", "--json")
+
+    conn = sqlite3.connect(str(project / ".research" / "indexes" / "index.db"))
+    try:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 3
+    finally:
+        conn.close()

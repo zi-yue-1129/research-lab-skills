@@ -46,7 +46,8 @@ Usage:
         [--confidence low|medium|high] [--evidence "..."] [--evidence-id EVD_ID] [--json]
 
     python state.py --query (--run-id ID | --question-id ID | --project-id ID \
-        | --hypothesis-id ID | --experiment-id ID | --skill NAME | --since DATE) [--json]
+        | --hypothesis-id ID | --experiment-id ID | --source-id ID | --skill NAME \
+        | --since DATE) [--json]
         (exactly one filter; each returns the named record plus its children)
     python state.py --validate [--json]
     python state.py --rebuild-index [--full] [--json]
@@ -179,7 +180,8 @@ def _dispatch(args: argparse.Namespace, project_root: Path) -> Dict[str, Any]:
         return state_index.query(
             project_root, run_id=args.run_id, question_id=args.question_id,
             project_id=args.project_id, hypothesis_id=args.hypothesis_id,
-            experiment_id=args.experiment_id, skill=args.skill, since=args.since,
+            experiment_id=args.experiment_id, source_id=args.source_id,
+            skill=args.skill, since=args.since,
         )
     if args.rebuild_index:
         return state_index.rebuild_index(project_root, full=args.full)

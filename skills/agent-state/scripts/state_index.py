@@ -19,7 +19,7 @@ from state_store import (
 )
 
 INDEX_RELATIVE_PATH = Path(".research/indexes/index.db")
-INDEX_SCHEMA_VERSION = 2
+INDEX_SCHEMA_VERSION = 3
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -48,7 +48,17 @@ CREATE TABLE IF NOT EXISTS results (
 );
 CREATE TABLE IF NOT EXISTS claims (
     id TEXT PRIMARY KEY, run_id TEXT, statement TEXT,
-    confidence TEXT, evidence_ref TEXT, ts TEXT
+    confidence TEXT, evidence_ref TEXT, evidence_id TEXT, ts TEXT
+);
+CREATE TABLE IF NOT EXISTS sources (
+    id TEXT PRIMARY KEY, title TEXT, authors TEXT, year INTEGER, doi TEXT,
+    url TEXT, venue TEXT, evidence_tier TEXT, screening_status TEXT,
+    exclusion_reason TEXT, project_id TEXT, created_at TEXT, created_by TEXT
+);
+CREATE TABLE IF NOT EXISTS evidence (
+    id TEXT PRIMARY KEY, source_id TEXT, question_id TEXT, hypothesis_id TEXT,
+    statement TEXT, stance TEXT, limitations TEXT, uncertainty_note TEXT,
+    created_at TEXT, created_by TEXT
 );
 CREATE TABLE IF NOT EXISTS shard_checkpoints (
     shard_name TEXT PRIMARY KEY, lines_ingested INTEGER NOT NULL
@@ -61,6 +71,10 @@ CREATE INDEX IF NOT EXISTS idx_runs_question_id ON runs(question_id);
 CREATE INDEX IF NOT EXISTS idx_runs_experiment_id ON runs(experiment_id);
 CREATE INDEX IF NOT EXISTS idx_results_run_id ON results(run_id);
 CREATE INDEX IF NOT EXISTS idx_claims_run_id ON claims(run_id);
+CREATE INDEX IF NOT EXISTS idx_sources_project_id ON sources(project_id);
+CREATE INDEX IF NOT EXISTS idx_evidence_source_id ON evidence(source_id);
+CREATE INDEX IF NOT EXISTS idx_evidence_question_id ON evidence(question_id);
+CREATE INDEX IF NOT EXISTS idx_evidence_hypothesis_id ON evidence(hypothesis_id);
 """
 
 
@@ -254,11 +268,13 @@ def _sync_state_tables(conn: sqlite3.Connection, project_root: Path) -> None:
     # state_store's YAML-loading functions except at rebuild time.
     from state_store import (
         DEFAULT_PROJECT_ID,
+        EVIDENCE_RELATIVE_PATH,
         EXPERIMENTS_RELATIVE_PATH,
         HYPOTHESES_RELATIVE_PATH,
         PROJECTS_RELATIVE_PATH,
         QUESTIONS_RELATIVE_PATH,
         RUNS_RELATIVE_PATH,
+        SOURCES_RELATIVE_PATH,
         _load_yaml_map,
     )
 
@@ -267,6 +283,8 @@ def _sync_state_tables(conn: sqlite3.Connection, project_root: Path) -> None:
     hypotheses = _load_yaml_map(project_root / HYPOTHESES_RELATIVE_PATH, "hypotheses")
     experiments = _load_yaml_map(project_root / EXPERIMENTS_RELATIVE_PATH, "experiments")
     runs = _load_yaml_map(project_root / RUNS_RELATIVE_PATH, "runs")
+    sources = _load_yaml_map(project_root / SOURCES_RELATIVE_PATH, "sources")
+    evidence = _load_yaml_map(project_root / EVIDENCE_RELATIVE_PATH, "evidence")
 
     conn.execute("DELETE FROM projects")
     if projects:
@@ -316,6 +334,26 @@ def _sync_state_tables(conn: sqlite3.Connection, project_root: Path) -> None:
             "VALUES (:id, :skill, :mode, :question_id, :experiment_id, :status, :started_at, :ended_at)",
             [{**r, "experiment_id": r.get("experiment_id")} for r in runs.values()],
         )
+    conn.execute("DELETE FROM sources")
+    if sources:
+        conn.executemany(
+            "INSERT INTO sources "
+            "(id, title, authors, year, doi, url, venue, evidence_tier, "
+            "screening_status, exclusion_reason, project_id, created_at, created_by) "
+            "VALUES (:id, :title, :authors, :year, :doi, :url, :venue, :evidence_tier, "
+            ":screening_status, :exclusion_reason, :project_id, :created_at, :created_by)",
+            list(sources.values()),
+        )
+    conn.execute("DELETE FROM evidence")
+    if evidence:
+        conn.executemany(
+            "INSERT INTO evidence "
+            "(id, source_id, question_id, hypothesis_id, statement, stance, "
+            "limitations, uncertainty_note, created_at, created_by) "
+            "VALUES (:id, :source_id, :question_id, :hypothesis_id, :statement, :stance, "
+            ":limitations, :uncertainty_note, :created_at, :created_by)",
+            list(evidence.values()),
+        )
 
 
 def _ingest_shard(conn: sqlite3.Connection, shard_path: Path) -> None:
@@ -364,11 +402,12 @@ def _ingest_shard(conn: sqlite3.Connection, shard_path: Path) -> None:
         elif event["event"] == "claim":
             conn.execute(
                 "INSERT OR REPLACE INTO claims "
-                "(id, run_id, statement, confidence, evidence_ref, ts) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
+                "(id, run_id, statement, confidence, evidence_ref, evidence_id, ts) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
                     event["id"], event["run_id"], event["statement"],
-                    event.get("confidence"), event.get("evidence_ref"), event["ts"],
+                    event.get("confidence"), event.get("evidence_ref"),
+                    event.get("evidence_id"), event["ts"],
                 ),
             )
         else:
@@ -460,6 +499,7 @@ def query(
     project_id: Optional[str] = None,
     hypothesis_id: Optional[str] = None,
     experiment_id: Optional[str] = None,
+    source_id: Optional[str] = None,
     skill: Optional[str] = None,
     since: Optional[str] = None,
 ) -> Dict[str, List[Dict[str, Any]]]:
@@ -473,6 +513,7 @@ def query(
         project_id: Return this Project plus Questions linked to it.
         hypothesis_id: Return this Hypothesis plus Experiments linked to it.
         experiment_id: Return this Experiment plus Runs linked to it.
+        source_id: Return this Source plus its linked Evidence.
         skill: Return Runs executed by this skill.
         since: ISO-8601 date/datetime string; return Runs started at or
             after it.
@@ -486,13 +527,13 @@ def query(
     """
     filters = [
         f for f in
-        (run_id, question_id, project_id, hypothesis_id, experiment_id, skill, since)
+        (run_id, question_id, project_id, hypothesis_id, experiment_id, source_id, skill, since)
         if f is not None
     ]
     if len(filters) != 1:
         raise ValueError(
             "query requires exactly one of "
-            "run_id/question_id/project_id/hypothesis_id/experiment_id/skill/since"
+            "run_id/question_id/project_id/hypothesis_id/experiment_id/source_id/skill/since"
         )
 
     rebuild_index(project_root, full=False)
@@ -522,6 +563,11 @@ def query(
                 "hypotheses": _rows(
                     conn,
                     "SELECT * FROM hypotheses WHERE question_id = ? ORDER BY created_at",
+                    (question_id,),
+                ),
+                "evidence": _rows(
+                    conn,
+                    "SELECT * FROM evidence WHERE question_id = ? ORDER BY created_at",
                     (question_id,),
                 ),
                 "runs": _rows(
@@ -561,6 +607,17 @@ def query(
                     conn,
                     "SELECT * FROM runs WHERE experiment_id = ? ORDER BY started_at",
                     (experiment_id,),
+                ),
+            }
+        if source_id is not None:
+            return {
+                "sources": _rows(
+                    conn, "SELECT * FROM sources WHERE id = ?", (source_id,)
+                ),
+                "evidence": _rows(
+                    conn,
+                    "SELECT * FROM evidence WHERE source_id = ? ORDER BY created_at",
+                    (source_id,),
                 ),
             }
         if skill is not None:

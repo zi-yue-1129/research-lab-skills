@@ -1312,6 +1312,8 @@ def validate_referential_integrity(project_root: Path) -> List[Dict[str, Any]]:
     hypotheses = load_hypotheses(project_root)
     experiments = load_experiments(project_root)
     runs = load_runs(project_root)
+    sources = load_sources(project_root)
+    evidence = load_evidence(project_root)
 
     violations: List[Dict[str, Any]] = []
     for question_id, question in questions.items():
@@ -1341,5 +1343,31 @@ def validate_referential_integrity(project_root: Path) -> List[Dict[str, Any]]:
             violations.append({
                 "entity": "run", "id": run_id,
                 "field": "experiment_id", "missing_id": experiment_id,
+            })
+    for source_id, source in sources.items():
+        project_id = source.get("project_id")
+        if project_id and project_id not in projects:
+            violations.append({
+                "entity": "source", "id": source_id,
+                "field": "project_id", "missing_id": project_id,
+            })
+    for evidence_id, evidence_record in evidence.items():
+        source_id = evidence_record.get("source_id")
+        if source_id not in sources:
+            violations.append({
+                "entity": "evidence", "id": evidence_id,
+                "field": "source_id", "missing_id": source_id,
+            })
+        question_id = evidence_record.get("question_id")
+        if question_id not in questions:
+            violations.append({
+                "entity": "evidence", "id": evidence_id,
+                "field": "question_id", "missing_id": question_id,
+            })
+        hypothesis_id = evidence_record.get("hypothesis_id")
+        if hypothesis_id and hypothesis_id not in hypotheses:
+            violations.append({
+                "entity": "evidence", "id": evidence_id,
+                "field": "hypothesis_id", "missing_id": hypothesis_id,
             })
     return violations
