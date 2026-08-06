@@ -189,13 +189,6 @@ is never silently misread as if it were current.
 - Does not migrate any existing skill (`deep-research`, `research-log`,
   `report-slides`, etc.) to call into this system. Adoption is separate,
   per-skill follow-up work.
-- Does not migrate `research-log`, `report-slides`, `academic-paper`, or any
-  review workflow to actually call into the Project/Hypothesis/Experiment
-  layer -- this defines the schema and CLI contract; wiring a specific
-  consumer to it is separate follow-up work.
-- Does not enforce a status state machine on Hypothesis/Experiment (e.g.
-  nothing stops moving a `completed` Experiment back to `running`) -- status
-  is a label a caller sets, not a guarded lifecycle.
 - Does not define a retention or pruning policy for `.research/events/` --
   old shards accumulate indefinitely under this design.
 - Does not copy artifact content. `--artifact-role`/`--artifact-path` record
@@ -205,3 +198,10 @@ is never silently misread as if it were current.
   or `events/*.jsonl` -- only version detection (see "Schema versioning"
   above). Writing a real migration is future work, once there's a second
   schema version to migrate to or from.
+- Does not migrate `research-log`, `report-slides`, `academic-paper`, or any
+  review workflow to actually call into the Project/Hypothesis/Experiment
+  layer -- this defines the schema and CLI contract; wiring a specific
+  consumer to it is separate follow-up work.
+- Does not enforce a status state machine on Hypothesis/Experiment (e.g.
+  nothing stops moving a `completed` Experiment back to `running`) -- status
+  is a label a caller sets, not a guarded lifecycle.
