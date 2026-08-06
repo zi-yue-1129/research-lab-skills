@@ -13,7 +13,7 @@ const PKG_SKILLS = path.join(__dirname, '..', 'skills');
 // Shared foundation both lab and ARS skills depend on — always installed
 const RESOLVER_SKILLS = ['resource-resolver', 'agent-state'];
 const LAB_SKILLS = ['research-log', 'report-slides', 'research-mode'];
-const ARS_SKILLS = ['deep-research', 'academic-paper', 'academic-paper-reviewer', 'academic-pipeline'];
+const ARS_SKILLS = ['research-project-init', 'deep-research', 'academic-paper', 'academic-paper-reviewer', 'academic-pipeline'];
 const ALL_SKILLS = [...RESOLVER_SKILLS, ...LAB_SKILLS, ...ARS_SKILLS];
 
 // AI target → skills root path

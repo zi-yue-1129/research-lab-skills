@@ -2,6 +2,7 @@
 name: research-project-init
 description: Turn a preliminary research idea into a scoped, reviewable, trackable project. Runs a lightweight guided dialogue covering problem statement, scope, exclusions, expected contributions, initial research questions, constraints, resources, milestones, success criteria, stop conditions, risks, and ethics considerations -- tagging every captured item as confirmed, assumption, suggestion, or open. Writes a project charter to .research/projects/<project_id>/charter.md and registers a Project plus its initial Questions in agent-state. Does not perform literature research or run experiments -- deep-research remains the place a research question gets sharpened. Use when the user has a rough idea and wants to formalize it into a project before research begins. Trigger directly with /research-init, or natural-language phrases like "start a new research project", "formalize this idea", "define project scope", "scope out this project", "建立研究專案", "把這個構想變成正式專案", "幫我把研究範圍定義清楚".
 metadata:
+  version: "1.0.0"
   data_access_level: raw
   task_type: open-ended
 ---
@@ -104,19 +105,29 @@ English by standing convention.
 
 ## Checking for an existing Project first
 
-Before creating a new Project, check whether one already exists in this
-`.research/` directory:
+Before creating a new Project, check whether this skill has already
+initialized one in this `.research/` directory -- `agent-state` has no
+"list all Projects" query, so check for charters this skill itself wrote
+instead:
+
+```bash
+ls .research/projects/*/charter.md 2>/dev/null
+```
+
+If any exist, read their frontmatter (`project_id`) and `# <Project Name>`
+heading and surface the name(s)/ID(s) to the user, confirming they intend a
+genuinely new Project rather than duplicating an existing effort. Also
+check `proj_default` in case a Project was created implicitly by another
+skill's `--start-run --question "..."` call, not by this skill:
 
 ```bash
 python "$STATE" --query --project-id proj_default --json
 ```
 
-If it returns an existing Project (or the user mentions one), surface its
-name and ID and confirm with the user that they intend a genuinely new
-Project rather than duplicating an existing effort. This skill always
-creates a new Project when it proceeds -- it never merges into or edits an
-existing one (see Non-goals) -- so this check exists only to catch an
-accidental duplicate before it happens, not to block or auto-merge.
+This skill always creates a new Project when it proceeds -- it never
+merges into or edits an existing one (see Non-goals) -- so this check
+exists only to catch an accidental duplicate before it happens, not to
+block or auto-merge.
 
 ## Registering in agent-state
 

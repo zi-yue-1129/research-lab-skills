@@ -130,8 +130,9 @@ The Markdown skeleton the dialogue fills in, in this fixed section order:
 11. Risks
 12. Ethics Considerations
 
-Frontmatter mirrors `research-log`'s existing convention (`date`,
-`git_head`) plus this skill's own fields:
+Frontmatter adopts `research-log`'s `git_head` convention, with an
+ISO-8601 `created_at` in place of its date-only `date` field, plus this
+skill's own fields:
 
 ```yaml
 ---

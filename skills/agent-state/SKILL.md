@@ -93,6 +93,12 @@ traceback. Check `error` before trusting any other field, the same rule
 python "$STATE" --create-project --name "Offline Support Initiative" \
   --description "Investigate offline usage patterns." --json
 
+# Register a Question directly, without --start-run's Run side effect --
+# useful when a caller needs to record a Question as bookkeeping only
+# (e.g. research-project-init registering Initial Research Questions).
+python "$STATE" --create-question --question "Does this need offline support?" \
+  --skill research-project-init --project-id proj_20260806_ab12cd --json
+
 # Declare a Hypothesis under an existing Question, and an Experiment under it.
 python "$STATE" --create-hypothesis --question-id q_20260806_ab12cd \
   --statement "Offline support is unnecessary." --skill deep-research --json

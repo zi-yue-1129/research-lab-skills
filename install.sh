@@ -15,7 +15,7 @@ RESOLVER_SKILLS=("resource-resolver" "agent-state")
 # Lab skills (experiment journal + presentations + mode routing)
 LAB_SKILLS=("research-log" "report-slides" "research-mode")
 # Academic Research Skills (deep research, paper writing, review, pipeline)
-ARS_SKILLS=("deep-research" "academic-paper" "academic-paper-reviewer" "academic-pipeline")
+ARS_SKILLS=("research-project-init" "deep-research" "academic-paper" "academic-paper-reviewer" "academic-pipeline")
 # Default: install everything
 SKILLS=("${RESOLVER_SKILLS[@]}" "${LAB_SKILLS[@]}" "${ARS_SKILLS[@]}")
 

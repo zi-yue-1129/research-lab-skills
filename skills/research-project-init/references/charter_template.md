@@ -1,7 +1,7 @@
 ---
 project_id: <PROJECT_ID>
 created_at: "<ISO-8601 timestamp>"
-git_head: <sha, omit this line if the project isn't a git repo>
+git_head: <short SHA, or empty if not a git repo>
 status: initialized
 question_ids: [<QUESTION_ID>, ...]   # empty list if section 5 had no real question yet
 ---

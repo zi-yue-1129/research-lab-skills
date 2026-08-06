@@ -40,7 +40,7 @@ $ResolverSkills = @("resource-resolver", "agent-state")
 # Lab skills (experiment journal + presentations + mode routing)
 $LabSkills = @("research-log", "report-slides", "research-mode")
 # Academic Research Skills (deep research, paper writing, review, pipeline)
-$ArsSkills = @("deep-research", "academic-paper", "academic-paper-reviewer", "academic-pipeline")
+$ArsSkills = @("research-project-init", "deep-research", "academic-paper", "academic-paper-reviewer", "academic-pipeline")
 
 $Skills = $ResolverSkills + $LabSkills + $ArsSkills
 if ($ArsOnly) { $Skills = $ResolverSkills + $ArsSkills }

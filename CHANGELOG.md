@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **`research-project-init`: new skill** — turns a preliminary research idea into a scoped project charter (problem statement, scope, exclusions, contributions, constraints, resources, milestones, success/stop conditions, risks, ethics) and registers a Project plus its Initial Research Questions in `agent-state`. Sits upstream of `deep-research`.
+
 ## [1.1.0] - 2026-08-04
 
 ### Added

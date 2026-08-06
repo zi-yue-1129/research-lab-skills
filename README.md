@@ -289,14 +289,15 @@ End a session with `/mode end` to get a pre-filled journal entry draft.
 ### Full pipeline
 
 ```
-deep-research (socratic/full)
-  → academic-paper (plan/full)
-    → integrity check (Stage 2.5)
-      → academic-paper-reviewer (full/guided)
-        → academic-paper (revision)
-          → academic-paper-reviewer (re-review, max 2 loops)
-            → final integrity check (Stage 4.5)
-              → academic-paper (format-convert → final output)
+research-project-init (optional)
+  → deep-research (socratic/full)
+    → academic-paper (plan/full)
+      → integrity check (Stage 2.5)
+        → academic-paper-reviewer (full/guided)
+          → academic-paper (revision)
+            → academic-paper-reviewer (re-review, max 2 loops)
+              → final integrity check (Stage 4.5)
+                → academic-paper (format-convert → final output)
 ```
 
 See **[examples/showcase/](examples/showcase/)** for artifacts from a complete 10-stage pipeline run (peer review reports, integrity checks, final papers).
