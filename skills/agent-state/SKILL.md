@@ -1,6 +1,6 @@
 ---
 name: agent-state
-description: Records what the agent does as it drives other skills -- Questions worked on, Runs executed, Results produced, Claims asserted -- in .research/state (canonical, low-frequency) and .research/events (canonical, append-only). Also models the research itself as Project/Hypothesis/Experiment, layered above Question/Run, with write-time referential integrity checks. Use when a skill wants to track its own execution history instead of writing one file per run, or when a user wants to see what the agent has been doing. Triggers on phrases like "what have you been running", "log this run", "show agent activity".
+description: Records what the agent does as it drives other skills -- Questions worked on, Runs executed, Results produced, Claims asserted -- in .research/state (canonical, low-frequency) and .research/events (canonical, append-only). Also models the research itself as Project/Hypothesis/Experiment/Source/Evidence, layered above Question/Run, with write-time referential integrity checks. Use when a skill wants to track its own execution history instead of writing one file per run, or when a user wants to see what the agent has been doing. Triggers on phrases like "what have you been running", "log this run", "show agent activity".
 metadata:
   data_access_level: raw
   task_type: open-ended
@@ -8,10 +8,11 @@ metadata:
 
 # Agent State
 
-Stores seven cross-skill entities without one file per record. Project,
-Question, Hypothesis, Experiment, and Run are low-frequency, mutable, and
-live in id-keyed YAML maps under `.research/state/`; Result and Claim are
-immutable facts appended to daily JSONL shards under `.research/events/`.
+Stores nine cross-skill entities without one file per record. Project,
+Question, Hypothesis, Experiment, Run, Source, and Evidence are
+low-frequency, mutable, and live in id-keyed YAML maps under
+`.research/state/`; Result and Claim are immutable facts appended to
+daily JSONL shards under `.research/events/`.
 A SQLite index under `.research/indexes/` gives fast filtered queries and is
 rebuilt on demand -- it is never a source of truth and can be deleted at any
 time.
@@ -32,7 +33,16 @@ a `ValueError` rather than silently letting the more specific one win and
 discarding the other -- which would create no Question at all from a
 `--question` that named one.
 
-Full design rationale: `docs/superpowers/specs/2026-08-05-agent-state-storage-design.md`.
+Source and Evidence sit alongside this chain rather than inside it: a
+Source belongs to a Project directly (not to the linear chain), and an
+Evidence Statement links a Source to a Question (required) and optionally
+a Hypothesis, letting a research finding be traced back to both where it
+came from and what it bears on. Neither participates in `--start-run`'s
+synthetic-record auto-fill.
+
+Full design rationale: `docs/superpowers/specs/2026-08-05-agent-state-storage-design.md`
+(chain design) and `docs/superpowers/specs/2026-08-06-evidence-foundation-design.md`
+(Source/Evidence design).
 
 This skill has no slash command -- it's infrastructure other skills call
 into, the same way `resource-resolver` is. It does not depend on
@@ -114,6 +124,27 @@ python "$STATE" --start-run --skill deep-research --question "New question text"
 # Record a verdict once the Experiment concludes.
 python "$STATE" --set-hypothesis-status --hypothesis-id hyp_20260806_ef34gh --status supported --json
 python "$STATE" --set-experiment-status --experiment-id exp_20260806_ij56kl --status completed --json
+
+# Register a Source (deduplicated by exact doi, then exact normalized URL).
+python "$STATE" --create-source --title "Offline-First Mobile UX Patterns" \
+  --authors "Ng T, Osei K" --year 2025 --doi "10.1000/xyz123" \
+  --skill bibliography_agent --project-id proj_20260806_ab12cd --json
+python "$STATE" --set-source-screening --source-id src_20260806_mn78op \
+  --screening-status included --json
+python "$STATE" --set-source-evidence-tier --source-id src_20260806_mn78op \
+  --evidence-tier "Level III - Controlled Study" --json
+
+# Register an Evidence Statement extracted from that Source, tagged with
+# its stance toward the Question.
+python "$STATE" --create-evidence --source-id src_20260806_mn78op \
+  --question-id q_20260806_ab12cd --statement "Offline caching reduced reported \
+  friction by 40% in the studied cohort" --stance supports --skill synthesis_agent --json
+
+# Point a Claim at that structured Evidence, alongside (or instead of) a
+# free-text evidence_ref.
+python "$STATE" --record-claim --run-id run_20260806_qr12st \
+  --statement "Ship offline caching for v2" --confidence high \
+  --evidence-id evd_20260806_uv34wx --json
 ```
 
 `synthetic: true` on an auto-created Hypothesis/Experiment marks it as
@@ -129,6 +160,7 @@ python "$STATE" --query --question-id q_20260805_ab12cd --json   # question + it
 python "$STATE" --query --project-id proj_default --json      # project + its questions
 python "$STATE" --query --hypothesis-id hyp_20260806_ef34gh --json  # hypothesis + its experiments
 python "$STATE" --query --experiment-id exp_20260806_ij56kl --json  # experiment + its runs
+python "$STATE" --query --source-id src_20260806_mn78op --json      # source + its evidence
 python "$STATE" --query --skill deep-research --json             # that skill's runs
 python "$STATE" --query --since 2026-08-01 --json                # runs started since then
 ```
@@ -183,9 +215,11 @@ returns `{"violations": [], "clean": true}`.
 ## Schema versioning
 
 `state/questions.yaml` and `state/runs.yaml` each carry a top-level
-`version:` field; every `events/*.jsonl` line carries a `schema_version`
-field; `indexes/index.db` carries its version in SQLite's own
-`PRAGMA user_version`. All three currently read `1`.
+`version:` field (currently `1`); every `events/*.jsonl` line carries a
+`schema_version` field (currently `1`); `indexes/index.db` carries its
+version in SQLite's own `PRAGMA user_version` (currently `3`, bumped from
+`2` when the Source/Evidence tables and the `claims.evidence_id` column
+were added).
 
 A file with no version field at all (written before this mechanism existed)
 is treated as version 1 -- the format it was actually written in -- not an

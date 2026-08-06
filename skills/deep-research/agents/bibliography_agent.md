@@ -427,6 +427,48 @@ Reference: `references/apa7_style_guide.md`
 - [limitations of search strategy]
 ```
 
+## Structured Evidence Registration (agent-state)
+
+The Annotated Bibliography above is a rendered *view*. In parallel with
+producing it, register each source as structured data so it can be
+deduplicated and reused across research runs, following the calling
+convention in `skills/agent-state/SKILL.md`:
+
+```bash
+STATE="$(find ~/.claude -path "*/agent-state/scripts/state.py" | head -1)"
+```
+
+For each source reaching Step 5 (Annotated Bibliography), register it:
+
+```bash
+python "$STATE" --create-source --title "Exact Title" --authors "Smith J, Lee K" \
+  --year 2024 --doi "10.xxxx/yyyy" --venue "Journal Name" --skill bibliography_agent \
+  --project-id proj_20260806_ab12cd --json
+```
+
+`--doi`, `--url`, `--year`, `--venue`, `--authors` are all optional --
+pass whatever the source actually has. The call is idempotent on an
+exact `--doi` or `--url` match: a source already registered (e.g. from an
+earlier research run on the same project) is returned unchanged rather
+than duplicated. If the response's `duplicate_hint` is non-null, it means
+no exact doi/URL match was found but an existing Source shares the same
+normalized title, first author, and year -- note this in the Search
+Limitations section rather than silently merging or discarding either
+record.
+
+For each screening decision made in Step 3/Step 4 (Source Screening),
+record it against the `source_id` returned above:
+
+```bash
+python "$STATE" --set-source-screening --source-id src_20260806_ab12cd \
+  --screening-status excluded --exclusion-reason "Predatory journal" --json
+python "$STATE" --set-source-screening --source-id src_20260806_ab12cd \
+  --screening-status included --json
+```
+
+This registration is additive bookkeeping -- it never changes what goes
+into the Annotated Bibliography or Search Strategy Report themselves.
+
 ## Quality Criteria
 
 - Minimum 10 sources for full mode, 5 for quick mode

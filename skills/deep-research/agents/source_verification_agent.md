@@ -210,6 +210,25 @@ Flag immediately if ANY of:
 - [what could not be verified and why]
 ```
 
+## Structured Evidence Registration (agent-state)
+
+After assigning each source its evidence-hierarchy grade (Level I-VII,
+per the table above), record that grade against the Source registered by
+`bibliography_agent`, using the calling convention in
+`skills/agent-state/SKILL.md`:
+
+```bash
+STATE="$(find ~/.claude -path "*/agent-state/scripts/state.py" | head -1)"
+
+python "$STATE" --set-source-evidence-tier --source-id src_20260806_ab12cd \
+  --evidence-tier "Level II - Randomized Controlled Trial" --json
+```
+
+`--evidence-tier` is free text -- pass whatever grade your own Evidence
+Hierarchy table assigned (e.g. "Level I - Meta-analysis", "Level VII -
+Expert Opinion"). This registration is additive bookkeeping; it never
+changes the Source Verification Report itself.
+
 ## Quality Criteria
 
 - Every source must receive an evidence level grade (I-VII)

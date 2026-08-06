@@ -230,6 +230,31 @@ Gap:         [          ] Theme D (0 sources)
 - [limitations of the synthesis itself]
 ```
 
+## Structured Evidence Registration (agent-state)
+
+Each Key Theme's synthesis and each row of the Contradictions &
+Resolutions table is, at its core, a finding extracted from one or more
+sources and given a stance toward the current Research Question. Register
+each one as a structured Evidence Statement, using the calling convention
+in `skills/agent-state/SKILL.md`:
+
+```bash
+STATE="$(find ~/.claude -path "*/agent-state/scripts/state.py" | head -1)"
+
+python "$STATE" --create-evidence --source-id src_20260806_ab12cd \
+  --question-id q_20260806_ab12cd --statement "Offline caching reduces reported \
+  friction in low-connectivity regions" --stance supports \
+  --limitations "Single-region sample" --skill synthesis_agent --json
+```
+
+`--stance` must be `supports`, `refutes`, or `mixed` relative to the
+Question (or `--hypothesis-id`, when the finding bears on a specific
+Hypothesis rather than the Question as a whole). `--limitations` and
+`--uncertainty-note` are optional free text -- use them for the same
+caveats that would otherwise only live in prose inside the Synthesis
+Report. This registration is additive bookkeeping; it never changes the
+Synthesis Report itself.
+
 ## Quality Criteria
 
 - Must integrate (not just list) findings across sources
