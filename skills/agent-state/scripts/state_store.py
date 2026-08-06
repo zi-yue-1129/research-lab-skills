@@ -32,6 +32,7 @@ HYPOTHESES_RELATIVE_PATH = Path(".research/state/hypotheses.yaml")
 EXPERIMENTS_RELATIVE_PATH = Path(".research/state/experiments.yaml")
 RUNS_RELATIVE_PATH = Path(".research/state/runs.yaml")
 SOURCES_RELATIVE_PATH = Path(".research/state/sources.yaml")
+EVIDENCE_RELATIVE_PATH = Path(".research/state/evidence.yaml")
 EVENTS_RELATIVE_DIR = Path(".research/events")
 STATE_SCHEMA_VERSION = 1
 DEFAULT_PROJECT_ID = "proj_default"
@@ -42,6 +43,7 @@ _QUESTION_STATUSES = frozenset({"answered", "abandoned"})
 _HYPOTHESIS_STATUSES = frozenset({"supported", "refuted", "inconclusive"})
 _EXPERIMENT_STATUSES = frozenset({"running", "completed", "failed"})
 _SOURCE_SCREENING_STATUSES = frozenset({"included", "excluded", "pending"})
+_EVIDENCE_STANCES = frozenset({"supports", "refutes", "mixed"})
 
 
 class ProjectRootNotFoundError(RuntimeError):
@@ -74,6 +76,10 @@ class RunNotFoundError(ValueError):
 
 class SourceNotFoundError(ValueError):
     """Raised when a source_id does not exist in state/sources.yaml."""
+
+
+class EvidenceNotFoundError(ValueError):
+    """Raised when an evidence_id does not exist in state/evidence.yaml."""
 
 
 class LockTimeoutError(RuntimeError):
@@ -882,6 +888,92 @@ def set_source_evidence_tier(
         return sources[source_id]
 
 
+def load_evidence(project_root: Path) -> Dict[str, Any]:
+    """Load all Evidence records.
+
+    Args:
+        project_root: The project's root directory.
+
+    Returns:
+        id -> Evidence record map (empty if none exist yet).
+    """
+    return _load_yaml_map(project_root / EVIDENCE_RELATIVE_PATH, "evidence")
+
+
+def create_evidence(
+    project_root: Path,
+    source_id: str,
+    question_id: str,
+    statement: str,
+    stance: str,
+    hypothesis_id: Optional[str] = None,
+    limitations: Optional[str] = None,
+    uncertainty_note: Optional[str] = None,
+    created_by: str = "user",
+) -> Dict[str, Any]:
+    """Create a new Evidence Statement linking a Source to a Question.
+
+    Args:
+        project_root: The project's root directory.
+        source_id: The Source this finding was extracted from; must
+            already exist.
+        question_id: The Research Question this Evidence bears on; must
+            already exist.
+        statement: The extracted finding, in the source's own terms.
+        stance: Must be "supports", "refutes", or "mixed" relative to the
+            Question (or Hypothesis, if given).
+        hypothesis_id: Optional Hypothesis this Evidence bears on more
+            specifically than the Question; must already exist if given.
+        limitations: Optional free-text limitations of this finding.
+        uncertainty_note: Optional free-text note on remaining
+            uncertainty.
+        created_by: Name of the skill creating this Evidence, or "user"
+            for a direct CLI call.
+
+    Returns:
+        The full new Evidence record, including its generated "id".
+
+    Raises:
+        ValueError: If statement is empty/missing, or stance isn't one of
+            the allowed values.
+        SourceNotFoundError: If source_id doesn't exist.
+        QuestionNotFoundError: If question_id doesn't exist.
+        HypothesisNotFoundError: If hypothesis_id is given but doesn't
+            exist.
+    """
+    if not statement:
+        raise ValueError("statement is required")
+    if stance not in _EVIDENCE_STANCES:
+        raise ValueError(
+            f"stance must be 'supports', 'refutes', or 'mixed', got {stance!r}"
+        )
+    if source_id not in load_sources(project_root):
+        raise SourceNotFoundError(f"Unknown source_id: {source_id}")
+    if question_id not in load_questions(project_root):
+        raise QuestionNotFoundError(f"Unknown question_id: {question_id}")
+    if hypothesis_id is not None and hypothesis_id not in load_hypotheses(project_root):
+        raise HypothesisNotFoundError(f"Unknown hypothesis_id: {hypothesis_id}")
+    path = project_root / EVIDENCE_RELATIVE_PATH
+    with _locked_file(project_root, path):
+        evidence = _load_yaml_map(path, "evidence")
+        evidence_id = generate_id("evd")
+        record = {
+            "id": evidence_id,
+            "source_id": source_id,
+            "question_id": question_id,
+            "hypothesis_id": hypothesis_id,
+            "statement": statement,
+            "stance": stance,
+            "limitations": limitations,
+            "uncertainty_note": uncertainty_note,
+            "created_at": _utc_now_iso(),
+            "created_by": created_by,
+        }
+        evidence[evidence_id] = record
+        _save_yaml_map(path, "evidence", evidence)
+    return record
+
+
 def _question_id_for_experiment(project_root: Path, experiment_id: str) -> str:
     """Walk experiment_id -> hypothesis_id -> question_id to find the owning Question.
 
@@ -1158,6 +1250,7 @@ def record_claim(
     statement: str,
     confidence: Optional[str] = None,
     evidence_ref: Optional[str] = None,
+    evidence_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Append a Claim event for an existing Run.
 
@@ -1167,18 +1260,23 @@ def record_claim(
         statement: The assertion or decision text.
         confidence: Optional "low", "medium", or "high".
         evidence_ref: Optional supporting reference (path, quote, URL).
+        evidence_id: Optional id of a structured Evidence record (see
+            create_evidence); must already exist if given.
 
     Returns:
         The full Claim event, including its generated "id" and "ts".
 
     Raises:
         RunNotFoundError: If run_id doesn't exist in state/runs.yaml.
+        EvidenceNotFoundError: If evidence_id is given but doesn't exist.
         ValueError: If statement is empty/missing.
     """
     if not statement:
         raise ValueError("statement is required")
     if run_id not in load_runs(project_root):
         raise RunNotFoundError(f"Unknown run_id: {run_id}")
+    if evidence_id is not None and evidence_id not in load_evidence(project_root):
+        raise EvidenceNotFoundError(f"Unknown evidence_id: {evidence_id}")
     event: Dict[str, Any] = {
         "event": "claim",
         "id": generate_id("clm"),
@@ -1186,6 +1284,7 @@ def record_claim(
         "statement": statement,
         "confidence": confidence,
         "evidence_ref": evidence_ref,
+        "evidence_id": evidence_id,
         "ts": _utc_now_iso(),
     }
     _append_event(project_root, event)

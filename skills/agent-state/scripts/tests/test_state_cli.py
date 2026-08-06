@@ -1724,3 +1724,168 @@ def test_set_source_evidence_tier_without_value_errors(tmp_path: Path) -> None:
     assert result.returncode == 1
     data = json.loads(result.stdout)
     assert data["error"] == "ValueError"
+
+
+def _make_source_and_question(project: Path) -> tuple:
+    source = json.loads(_run(
+        project, "--create-source", "--title", "Some Title", "--json",
+    ).stdout)
+    question = json.loads(_run(
+        project, "--create-question", "--question", "Does X help Y?", "--json",
+    ).stdout)
+    return source["id"], question["id"]
+
+
+def test_create_evidence_returns_new_record(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    source_id, question_id = _make_source_and_question(project)
+
+    result = _run(
+        project, "--create-evidence", "--source-id", source_id,
+        "--question-id", question_id,
+        "--statement", "Offline caching reduced reported friction by 40%",
+        "--stance", "supports", "--limitations", "Single-region sample",
+        "--skill", "synthesis_agent", "--json",
+    )
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["id"].startswith("evd_")
+    assert data["source_id"] == source_id
+    assert data["question_id"] == question_id
+    assert data["hypothesis_id"] is None
+    assert data["stance"] == "supports"
+    assert data["limitations"] == "Single-region sample"
+    assert data["uncertainty_note"] is None
+    assert data["created_by"] == "synthesis_agent"
+
+
+def test_create_evidence_with_hypothesis_id(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    source_id, question_id = _make_source_and_question(project)
+    hypothesis = json.loads(_run(
+        project, "--create-hypothesis", "--question-id", question_id,
+        "--statement", "X helps Y", "--json",
+    ).stdout)
+
+    result = _run(
+        project, "--create-evidence", "--source-id", source_id,
+        "--question-id", question_id, "--hypothesis-id", hypothesis["id"],
+        "--statement", "A finding", "--stance", "refutes", "--json",
+    )
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["hypothesis_id"] == hypothesis["id"]
+    assert data["stance"] == "refutes"
+
+
+def test_create_evidence_without_statement_errors(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    source_id, question_id = _make_source_and_question(project)
+
+    result = _run(
+        project, "--create-evidence", "--source-id", source_id,
+        "--question-id", question_id, "--stance", "mixed", "--json",
+    )
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "ValueError"
+
+
+def test_create_evidence_invalid_stance_errors(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    source_id, question_id = _make_source_and_question(project)
+
+    result = _run(
+        project, "--create-evidence", "--source-id", source_id,
+        "--question-id", question_id, "--statement", "A finding",
+        "--stance", "neutral", "--json",
+    )
+
+    assert result.returncode == 2  # argparse rejects the choice before dispatch
+
+
+def test_create_evidence_unknown_source_id_errors(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    _, question_id = _make_source_and_question(project)
+
+    result = _run(
+        project, "--create-evidence", "--source-id", "src_does_not_exist",
+        "--question-id", question_id, "--statement", "A finding",
+        "--stance", "supports", "--json",
+    )
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "SourceNotFoundError"
+
+
+def test_create_evidence_unknown_question_id_errors(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    source_id, _ = _make_source_and_question(project)
+
+    result = _run(
+        project, "--create-evidence", "--source-id", source_id,
+        "--question-id", "q_does_not_exist", "--statement", "A finding",
+        "--stance", "supports", "--json",
+    )
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "QuestionNotFoundError"
+
+
+def test_create_evidence_unknown_hypothesis_id_errors(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    source_id, question_id = _make_source_and_question(project)
+
+    result = _run(
+        project, "--create-evidence", "--source-id", source_id,
+        "--question-id", question_id, "--hypothesis-id", "hyp_does_not_exist",
+        "--statement", "A finding", "--stance", "supports", "--json",
+    )
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "HypothesisNotFoundError"
+
+
+def test_record_claim_with_evidence_id(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    source_id, question_id = _make_source_and_question(project)
+    evidence = json.loads(_run(
+        project, "--create-evidence", "--source-id", source_id,
+        "--question-id", question_id, "--statement", "A finding",
+        "--stance", "supports", "--json",
+    ).stdout)
+    run = json.loads(_run(
+        project, "--start-run", "--skill", "deep-research", "--json",
+    ).stdout)
+
+    result = _run(
+        project, "--record-claim", "--run-id", run["id"],
+        "--statement", "Ship offline caching for v2", "--confidence", "high",
+        "--evidence-id", evidence["id"], "--json",
+    )
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["evidence_id"] == evidence["id"]
+
+
+def test_record_claim_with_unknown_evidence_id_errors(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    run = json.loads(_run(
+        project, "--start-run", "--skill", "deep-research", "--json",
+    ).stdout)
+
+    result = _run(
+        project, "--record-claim", "--run-id", run["id"],
+        "--statement", "A claim", "--evidence-id", "evd_does_not_exist", "--json",
+    )
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "EvidenceNotFoundError"

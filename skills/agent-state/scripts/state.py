@@ -36,10 +36,14 @@ Usage:
     python state.py --set-source-evidence-tier --source-id SRC_ID \
         --evidence-tier "..." [--json]
 
+    python state.py --create-evidence --source-id SRC_ID --question-id Q_ID \
+        [--hypothesis-id HYP_ID] --statement "..." --stance supports|refutes|mixed \
+        [--limitations "..."] [--uncertainty-note "..."] [--skill NAME] [--json]
+
     python state.py --record-result --run-id RUN_ID --summary "..." \
         [--artifact-role ROLE --artifact-path PATH] [--json]
     python state.py --record-claim --run-id RUN_ID --statement "..." \
-        [--confidence low|medium|high] [--evidence "..."] [--json]
+        [--confidence low|medium|high] [--evidence "..."] [--evidence-id EVD_ID] [--json]
 
     python state.py --query (--run-id ID | --question-id ID | --project-id ID \
         | --hypothesis-id ID | --experiment-id ID | --skill NAME | --since DATE) [--json]
@@ -92,6 +96,7 @@ def _build_parser() -> argparse.ArgumentParser:
     action.add_argument("--create-source", action="store_true")
     action.add_argument("--set-source-screening", action="store_true")
     action.add_argument("--set-source-evidence-tier", action="store_true")
+    action.add_argument("--create-evidence", action="store_true")
     action.add_argument("--validate", action="store_true")
 
     parser.add_argument("--skill", metavar="NAME")
@@ -109,6 +114,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "--screening-status", choices=["included", "excluded", "pending"]
     )
     parser.add_argument("--exclusion-reason", metavar="TEXT")
+    parser.add_argument("--stance", choices=["supports", "refutes", "mixed"])
+    parser.add_argument("--limitations", metavar="TEXT")
+    parser.add_argument("--uncertainty-note", metavar="TEXT")
+    parser.add_argument("--evidence-id", metavar="ID")
     parser.add_argument("--question", metavar="TEXT")
     parser.add_argument("--question-id", metavar="ID")
     parser.add_argument("--project-id", metavar="ID")
@@ -164,6 +173,7 @@ def _dispatch(args: argparse.Namespace, project_root: Path) -> Dict[str, Any]:
         return state_store.record_claim(
             project_root, args.run_id, args.statement,
             confidence=args.confidence, evidence_ref=args.evidence,
+            evidence_id=args.evidence_id,
         )
     if args.query:
         return state_index.query(
@@ -216,6 +226,13 @@ def _dispatch(args: argparse.Namespace, project_root: Path) -> Dict[str, Any]:
     if args.set_source_evidence_tier:
         return state_store.set_source_evidence_tier(
             project_root, args.source_id, args.evidence_tier,
+        )
+    if args.create_evidence:
+        return state_store.create_evidence(
+            project_root, args.source_id, args.question_id, args.statement,
+            args.stance, hypothesis_id=args.hypothesis_id,
+            limitations=args.limitations, uncertainty_note=args.uncertainty_note,
+            created_by=args.skill or "user",
         )
     if args.validate:
         violations = state_store.validate_referential_integrity(project_root)
@@ -286,6 +303,7 @@ def main() -> None:
         state_store.ExperimentNotFoundError,
         state_store.RunNotFoundError,
         state_store.SourceNotFoundError,
+        state_store.EvidenceNotFoundError,
         state_store.LockTimeoutError,
         ValueError,
     ) as exc:
