@@ -34,7 +34,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterator
+from typing import Any, Dict, Iterator, Optional
 
 try:
     import yaml
@@ -87,6 +87,11 @@ _PRODUCTION_UNIT_TRANSITIONS: Dict[str, frozenset] = {
 }
 _PRODUCTION_UNIT_STATUSES = frozenset(_PRODUCTION_UNIT_TRANSITIONS.keys())
 
+_MODULE_TYPES = frozenset({"data_visualization", "architecture", "conceptual", "annotation"})
+_REVIEW_SUBJECT_TYPES = frozenset({"plan", "module", "slide", "deck"})
+_REVIEW_STATUSES = frozenset({"passed", "failed", "blocked"})
+_REVISION_REQUESTERS = frozenset({"user", "reviewer"})
+
 
 class ProjectRootNotFoundError(RuntimeError):
     """Raised when no ancestor directory containing a .git entry can be found."""
@@ -102,6 +107,10 @@ class DeckNotFoundError(ValueError):
 
 class SlideNotFoundError(ValueError):
     """Raised when a slide_id does not exist in state/slides.yaml."""
+
+
+class VisualModuleNotFoundError(ValueError):
+    """Raised when a module_id does not exist in state/visual_modules.yaml."""
 
 
 class LockTimeoutError(RuntimeError):
@@ -420,6 +429,296 @@ def set_slide_status(project_root: Path, slide_id: str, status: str) -> Dict[str
         return slides[slide_id]
 
 
+def load_visual_modules(project_root: Path) -> Dict[str, Any]:
+    """Load all Visual Module records.
+
+    Args:
+        project_root: The project's root directory.
+
+    Returns:
+        id -> Visual Module record map (empty if none exist yet).
+    """
+    return _load_yaml_map(project_root / VISUAL_MODULES_RELATIVE_PATH, "visual_modules")
+
+
+def create_visual_module(
+    project_root: Path,
+    slide_id: str,
+    module_key: str,
+    module_type: str,
+    dependencies: Optional[list] = None,
+    created_by: str = "user",
+) -> Dict[str, Any]:
+    """Create a new Visual Module record with status "planned".
+
+    Args:
+        project_root: The project's root directory.
+        slide_id: The Slide this module belongs to; must already exist.
+        module_key: The module's id from its Complex Visual Specification
+            (e.g. "observation-input") -- distinct from this record's own
+            generated "id", kept for cross-reference with the spec.
+        module_type: Must be one of "data_visualization", "architecture",
+            "conceptual", "annotation".
+        dependencies: Ids (this store's generated "id", not module_key) of
+            other Visual Modules that must reach "passed" before this one
+            may enter "producing". Each must already exist.
+        created_by: Name of the skill/agent creating this module, or "user".
+
+    Returns:
+        The full new Visual Module record, including its generated "id".
+
+    Raises:
+        ValueError: If module_key is empty/missing, or module_type is not
+            one of the four allowed values.
+        SlideNotFoundError: If slide_id doesn't exist.
+        VisualModuleNotFoundError: If any id in dependencies doesn't exist.
+    """
+    if not module_key:
+        raise ValueError("module_key is required")
+    if module_type not in _MODULE_TYPES:
+        raise ValueError(f"module_type must be one of {sorted(_MODULE_TYPES)}, got {module_type!r}")
+    if slide_id not in load_slides(project_root):
+        raise SlideNotFoundError(f"Unknown slide_id: {slide_id}")
+    dependencies = list(dependencies or [])
+    existing_modules = load_visual_modules(project_root)
+    for dep_id in dependencies:
+        if dep_id not in existing_modules:
+            raise VisualModuleNotFoundError(f"Unknown dependency module id: {dep_id}")
+    path = project_root / VISUAL_MODULES_RELATIVE_PATH
+    with _locked_file(project_root, path):
+        modules = _load_yaml_map(path, "visual_modules")
+        module_id = generate_id("mod")
+        now = _utc_now_iso()
+        record = {
+            "id": module_id, "slide_id": slide_id, "module_key": module_key,
+            "module_type": module_type, "dependencies": dependencies, "status": "planned",
+            "created_at": now, "updated_at": now, "created_by": created_by,
+        }
+        modules[module_id] = record
+        _save_yaml_map(path, "visual_modules", modules)
+    return record
+
+
+def set_module_status(project_root: Path, module_id: str, status: str) -> Dict[str, Any]:
+    """Transition a Visual Module's production status.
+
+    Entering "producing" additionally requires every id in this module's
+    "dependencies" to already be "passed" -- the mechanism that lets
+    independent modules run in parallel while a module with an unresolved
+    dependency stays blocked from starting.
+
+    Args:
+        project_root: The project's root directory.
+        module_id: The Visual Module to update.
+        status: New status; must be a legal transition from the module's
+            current status per the shared production-unit state machine.
+
+    Returns:
+        The updated Visual Module record.
+
+    Raises:
+        VisualModuleNotFoundError: If module_id doesn't exist.
+        ValueError: If status is unrecognized, not a legal transition
+            from the current status, or is "producing" while an
+            unresolved dependency remains.
+    """
+    if status not in _PRODUCTION_UNIT_STATUSES:
+        raise ValueError(f"Unrecognized module status: {status!r}")
+    path = project_root / VISUAL_MODULES_RELATIVE_PATH
+    with _locked_file(project_root, path):
+        modules = _load_yaml_map(path, "visual_modules")
+        if module_id not in modules:
+            raise VisualModuleNotFoundError(f"Unknown module_id: {module_id}")
+        record = modules[module_id]
+        current = record["status"]
+        if status not in _PRODUCTION_UNIT_TRANSITIONS[current]:
+            raise ValueError(
+                f"Illegal module transition: {current!r} -> {status!r} "
+                f"(allowed from {current!r}: {sorted(_PRODUCTION_UNIT_TRANSITIONS[current])})"
+            )
+        if status == "producing":
+            unresolved = [
+                dep_id for dep_id in record["dependencies"]
+                if modules.get(dep_id, {}).get("status") != "passed"
+            ]
+            if unresolved:
+                raise ValueError(f"Cannot enter 'producing': unresolved dependencies {unresolved}")
+        record["status"] = status
+        record["updated_at"] = _utc_now_iso()
+        _save_yaml_map(path, "visual_modules", modules)
+        return record
+
+
+def _events_shard_path(project_root: Path, when: datetime) -> Path:
+    """Return today's (or `when`'s) events shard path.
+
+    Args:
+        project_root: The project's root directory.
+        when: The UTC datetime to shard by (date component only).
+
+    Returns:
+        Path to .research/presentations/events/YYYY-MM-DD.jsonl.
+    """
+    return project_root / EVENTS_RELATIVE_DIR / f"{when:%Y-%m-%d}.jsonl"
+
+
+def _append_event(project_root: Path, event: Dict[str, Any]) -> None:
+    """Append one JSON event line to today's shard, under its own lock.
+
+    Args:
+        project_root: The project's root directory.
+        event: The event dict to append (already fully built).
+    """
+    shard_path = _events_shard_path(project_root, datetime.now(timezone.utc))
+    with _locked_file(project_root, shard_path):
+        shard_path.parent.mkdir(parents=True, exist_ok=True)
+        with shard_path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(event, sort_keys=True) + "\n")
+
+
+def record_review(
+    project_root: Path,
+    subject_type: str,
+    subject_id: str,
+    reviewer_role: str,
+    status: str,
+    findings: Optional[list] = None,
+    round_number: int = 1,
+) -> Dict[str, Any]:
+    """Append a Review Result event.
+
+    Args:
+        project_root: The project's root directory.
+        subject_type: Must be one of "plan", "module", "slide", "deck".
+        subject_id: The id of the reviewed record. "plan" and "deck" are
+            both validated against Deck records (a plan is embedded in
+            its Deck, with no separate store record of its own).
+        reviewer_role: Free-text reviewer identity, e.g.
+            "content_reviewer", "scientific_visual_reviewer".
+        status: Must be one of "passed", "failed", "blocked".
+        findings: Optional list of finding dicts; stored as given, not
+            schema-validated here (that is validate_deck_plan.py's /
+            validate_visual_module.py's job at the contract layer).
+        round_number: Which review round this is for the subject (1-based).
+
+    Returns:
+        The full Review Result event, including its generated "id" and "ts".
+
+    Raises:
+        ValueError: If subject_type/status is not one of the allowed
+            values, or round_number is not a positive int.
+        DeckNotFoundError: If subject_type is "plan"/"deck" and
+            subject_id doesn't exist.
+        SlideNotFoundError: If subject_type is "slide" and subject_id
+            doesn't exist.
+        VisualModuleNotFoundError: If subject_type is "module" and
+            subject_id doesn't exist.
+    """
+    if subject_type not in _REVIEW_SUBJECT_TYPES:
+        raise ValueError(f"subject_type must be one of {sorted(_REVIEW_SUBJECT_TYPES)}, got {subject_type!r}")
+    if status not in _REVIEW_STATUSES:
+        raise ValueError(f"status must be one of {sorted(_REVIEW_STATUSES)}, got {status!r}")
+    if round_number < 1:
+        raise ValueError("round_number must be a positive integer")
+    if subject_type in ("plan", "deck"):
+        if subject_id not in load_decks(project_root):
+            raise DeckNotFoundError(f"Unknown deck_id: {subject_id}")
+    elif subject_type == "slide":
+        if subject_id not in load_slides(project_root):
+            raise SlideNotFoundError(f"Unknown slide_id: {subject_id}")
+    else:
+        if subject_id not in load_visual_modules(project_root):
+            raise VisualModuleNotFoundError(f"Unknown module_id: {subject_id}")
+    event: Dict[str, Any] = {
+        "event": "review_result", "id": generate_id("rev"), "subject_type": subject_type,
+        "subject_id": subject_id, "reviewer_role": reviewer_role, "status": status,
+        "findings": findings or [], "round": round_number, "ts": _utc_now_iso(),
+    }
+    _append_event(project_root, event)
+    return event
+
+
+def load_revision_requests(project_root: Path) -> Dict[str, Any]:
+    """Load all Revision Request records.
+
+    Args:
+        project_root: The project's root directory.
+
+    Returns:
+        id -> Revision Request record map (empty if none exist yet).
+    """
+    return _load_yaml_map(project_root / REVISION_REQUESTS_RELATIVE_PATH, "revision_requests")
+
+
+def create_revision_request(
+    project_root: Path,
+    subject_type: str,
+    subject_id: str,
+    requested_by: str,
+    instructions: str,
+    supersedes: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Create a new Revision Request record.
+
+    Args:
+        project_root: The project's root directory.
+        subject_type: Must be one of "plan", "module", "slide", "deck".
+        subject_id: The id of the record the revision targets; existence
+            checked the same way as record_review's subject_id.
+        requested_by: Must be "user" or "reviewer".
+        instructions: Free-text description of the requested change.
+        supersedes: Optional id of a prior Slide or Visual Module this
+            revision replaces; if given and it currently exists as a
+            Slide or Visual Module, that record is marked "superseded" as
+            part of this same call.
+
+    Returns:
+        The full new Revision Request record, including its generated "id".
+
+    Raises:
+        ValueError: If subject_type/requested_by is not one of the
+            allowed values, or instructions is empty/missing.
+        DeckNotFoundError: If subject_type is "plan"/"deck" and
+            subject_id doesn't exist.
+        SlideNotFoundError: If subject_type is "slide" and subject_id
+            doesn't exist.
+        VisualModuleNotFoundError: If subject_type is "module" and
+            subject_id doesn't exist.
+    """
+    if subject_type not in _REVIEW_SUBJECT_TYPES:
+        raise ValueError(f"subject_type must be one of {sorted(_REVIEW_SUBJECT_TYPES)}, got {subject_type!r}")
+    if requested_by not in _REVISION_REQUESTERS:
+        raise ValueError(f"requested_by must be one of {sorted(_REVISION_REQUESTERS)}, got {requested_by!r}")
+    if not instructions:
+        raise ValueError("instructions is required")
+    if subject_type in ("plan", "deck"):
+        if subject_id not in load_decks(project_root):
+            raise DeckNotFoundError(f"Unknown deck_id: {subject_id}")
+    elif subject_type == "slide":
+        if subject_id not in load_slides(project_root):
+            raise SlideNotFoundError(f"Unknown slide_id: {subject_id}")
+    else:
+        if subject_id not in load_visual_modules(project_root):
+            raise VisualModuleNotFoundError(f"Unknown module_id: {subject_id}")
+    path = project_root / REVISION_REQUESTS_RELATIVE_PATH
+    with _locked_file(project_root, path):
+        requests = _load_yaml_map(path, "revision_requests")
+        request_id = generate_id("rvq")
+        record = {
+            "id": request_id, "subject_type": subject_type, "subject_id": subject_id,
+            "requested_by": requested_by, "instructions": instructions,
+            "supersedes": supersedes, "created_at": _utc_now_iso(),
+        }
+        requests[request_id] = record
+        _save_yaml_map(path, "revision_requests", requests)
+    if supersedes:
+        if subject_type == "slide" and supersedes in load_slides(project_root):
+            set_slide_status(project_root, supersedes, "superseded")
+        elif subject_type == "module" and supersedes in load_visual_modules(project_root):
+            set_module_status(project_root, supersedes, "superseded")
+    return record
+
+
 def _build_parser() -> argparse.ArgumentParser:
     """Construct the presentation_state.py argument parser."""
     parser = argparse.ArgumentParser(
@@ -430,12 +729,28 @@ def _build_parser() -> argparse.ArgumentParser:
     action.add_argument("--set-deck-status", action="store_true")
     action.add_argument("--create-slide", action="store_true")
     action.add_argument("--set-slide-status", action="store_true")
+    action.add_argument("--create-visual-module", action="store_true")
+    action.add_argument("--set-module-status", action="store_true")
+    action.add_argument("--record-review", action="store_true")
+    action.add_argument("--create-revision-request", action="store_true")
 
     parser.add_argument("--skill", metavar="NAME")
     parser.add_argument("--title", metavar="TEXT")
     parser.add_argument("--deck-id", metavar="ID")
     parser.add_argument("--slide-id", metavar="ID")
     parser.add_argument("--plan-slide-id", metavar="ID")
+    parser.add_argument("--module-id", metavar="ID")
+    parser.add_argument("--module-key", metavar="ID")
+    parser.add_argument("--module-type", metavar="TYPE")
+    parser.add_argument("--dependencies", metavar="ID", nargs="*", default=[])
+    parser.add_argument("--subject-type", metavar="TYPE")
+    parser.add_argument("--subject-id", metavar="ID")
+    parser.add_argument("--reviewer-role", metavar="NAME")
+    parser.add_argument("--findings-json", metavar="JSON")
+    parser.add_argument("--round", type=int, default=1, metavar="N")
+    parser.add_argument("--requested-by", metavar="WHO")
+    parser.add_argument("--instructions", metavar="TEXT")
+    parser.add_argument("--supersedes", metavar="ID")
     parser.add_argument("--status", metavar="STATUS")
     parser.add_argument("--json", action="store_true")
     return parser
@@ -462,6 +777,24 @@ def _dispatch(args: argparse.Namespace, project_root: Path) -> Dict[str, Any]:
         )
     if args.set_slide_status:
         return set_slide_status(project_root, args.slide_id, args.status)
+    if args.create_visual_module:
+        return create_visual_module(
+            project_root, args.slide_id, args.module_key, args.module_type,
+            dependencies=args.dependencies, created_by=args.skill or "user",
+        )
+    if args.set_module_status:
+        return set_module_status(project_root, args.module_id, args.status)
+    if args.record_review:
+        findings = json.loads(args.findings_json) if args.findings_json else None
+        return record_review(
+            project_root, args.subject_type, args.subject_id, args.reviewer_role,
+            args.status, findings=findings, round_number=args.round,
+        )
+    if args.create_revision_request:
+        return create_revision_request(
+            project_root, args.subject_type, args.subject_id, args.requested_by,
+            args.instructions, supersedes=args.supersedes,
+        )
     raise AssertionError("no action selected despite argparse required group")
 
 
@@ -475,7 +808,7 @@ def main() -> None:
         result = _dispatch(args, project_root)
     except (
         ProjectRootNotFoundError, StateParseError, DeckNotFoundError,
-        SlideNotFoundError, LockTimeoutError, ValueError,
+        SlideNotFoundError, VisualModuleNotFoundError, LockTimeoutError, ValueError,
     ) as exc:
         error = {"error": type(exc).__name__, "message": str(exc)}
         print(json.dumps(error) if args.json else f"Error: {exc}")

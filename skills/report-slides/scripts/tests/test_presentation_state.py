@@ -198,3 +198,250 @@ def test_bootstraps_own_gitignore_not_shared_one(tmp_path: Path) -> None:
 
     assert (project / ".research" / "presentations" / ".gitignore").is_file()
     assert not (project / ".research" / ".gitignore").exists()
+
+
+def _make_deck_and_slide(project: Path) -> tuple:
+    deck = json.loads(_run(project, "--create-deck", "--title", "T", "--json").stdout)
+    slide = json.loads(_run(
+        project, "--create-slide", "--deck-id", deck["id"], "--plan-slide-id", "slide-01", "--title", "T", "--json",
+    ).stdout)
+    return deck["id"], slide["id"]
+
+
+def test_create_visual_module_returns_new_record(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    _, slide_id = _make_deck_and_slide(project)
+
+    result = _run(
+        project, "--create-visual-module", "--slide-id", slide_id,
+        "--module-key", "observation-input", "--module-type", "architecture",
+        "--skill", "architecture_diagram_worker", "--json",
+    )
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["id"].startswith("mod_")
+    assert data["slide_id"] == slide_id
+    assert data["module_key"] == "observation-input"
+    assert data["module_type"] == "architecture"
+    assert data["status"] == "planned"
+    assert data["dependencies"] == []
+
+
+def test_create_visual_module_invalid_type_errors(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    _, slide_id = _make_deck_and_slide(project)
+
+    result = _run(
+        project, "--create-visual-module", "--slide-id", slide_id,
+        "--module-key", "m1", "--module-type", "not-a-real-type", "--json",
+    )
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "ValueError"
+
+
+def test_create_visual_module_unknown_slide_id_errors(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+
+    result = _run(
+        project, "--create-visual-module", "--slide-id", "sld_does_not_exist",
+        "--module-key", "m1", "--module-type", "architecture", "--json",
+    )
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "SlideNotFoundError"
+
+
+def test_create_visual_module_unknown_dependency_errors(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    _, slide_id = _make_deck_and_slide(project)
+
+    result = _run(
+        project, "--create-visual-module", "--slide-id", slide_id,
+        "--module-key", "m1", "--module-type", "architecture",
+        "--dependencies", "mod_does_not_exist", "--json",
+    )
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "VisualModuleNotFoundError"
+
+
+def test_module_cannot_start_producing_with_unresolved_dependency(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    _, slide_id = _make_deck_and_slide(project)
+    upstream = json.loads(_run(
+        project, "--create-visual-module", "--slide-id", slide_id,
+        "--module-key", "upstream", "--module-type", "architecture", "--json",
+    ).stdout)
+    downstream = json.loads(_run(
+        project, "--create-visual-module", "--slide-id", slide_id,
+        "--module-key", "downstream", "--module-type", "architecture",
+        "--dependencies", upstream["id"], "--json",
+    ).stdout)
+    for status in ("ready", "assigned"):
+        _run(project, "--set-module-status", "--module-id", downstream["id"], "--status", status, "--json")
+
+    result = _run(project, "--set-module-status", "--module-id", downstream["id"], "--status", "producing", "--json")
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "ValueError"
+    assert "unresolved dependencies" in data["message"]
+
+
+def test_module_can_start_producing_once_dependency_passed(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    _, slide_id = _make_deck_and_slide(project)
+    upstream = json.loads(_run(
+        project, "--create-visual-module", "--slide-id", slide_id,
+        "--module-key", "upstream", "--module-type", "architecture", "--json",
+    ).stdout)
+    downstream = json.loads(_run(
+        project, "--create-visual-module", "--slide-id", slide_id,
+        "--module-key", "downstream", "--module-type", "architecture",
+        "--dependencies", upstream["id"], "--json",
+    ).stdout)
+    for status in ("ready", "assigned", "producing", "review_required", "passed"):
+        _run(project, "--set-module-status", "--module-id", upstream["id"], "--status", status, "--json")
+    for status in ("ready", "assigned"):
+        _run(project, "--set-module-status", "--module-id", downstream["id"], "--status", status, "--json")
+
+    result = _run(project, "--set-module-status", "--module-id", downstream["id"], "--status", "producing", "--json")
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["status"] == "producing"
+
+
+def test_two_independent_modules_can_both_reach_producing(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    _, slide_id = _make_deck_and_slide(project)
+    a = json.loads(_run(
+        project, "--create-visual-module", "--slide-id", slide_id,
+        "--module-key", "a", "--module-type", "data_visualization", "--json",
+    ).stdout)
+    b = json.loads(_run(
+        project, "--create-visual-module", "--slide-id", slide_id,
+        "--module-key", "b", "--module-type", "conceptual", "--json",
+    ).stdout)
+
+    for module_id in (a["id"], b["id"]):
+        for status in ("ready", "assigned", "producing"):
+            result = _run(project, "--set-module-status", "--module-id", module_id, "--status", status, "--json")
+            assert result.returncode == 0, result.stderr
+
+    assert json.loads(_run(project, "--set-module-status", "--module-id", a["id"], "--status", "producing", "--json").stderr or "{}") == {}
+
+
+def test_record_review_returns_new_event(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    deck_id, _ = _make_deck_and_slide(project)
+
+    result = _run(
+        project, "--record-review", "--subject-type", "deck", "--subject-id", deck_id,
+        "--reviewer-role", "content_reviewer", "--status", "failed",
+        "--findings-json", json.dumps([{"kind": "unsupported-claim", "description": "Slide 2 claims X without a citation"}]),
+        "--round", "1", "--json",
+    )
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["id"].startswith("rev_")
+    assert data["subject_type"] == "deck"
+    assert data["subject_id"] == deck_id
+    assert data["status"] == "failed"
+    assert data["findings"][0]["kind"] == "unsupported-claim"
+    assert data["round"] == 1
+
+
+def test_record_review_invalid_subject_type_errors(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    deck_id, _ = _make_deck_and_slide(project)
+
+    result = _run(
+        project, "--record-review", "--subject-type", "not-a-real-type", "--subject-id", deck_id,
+        "--reviewer-role", "content_reviewer", "--status", "passed", "--json",
+    )
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "ValueError"
+
+
+def test_record_review_invalid_status_errors(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    deck_id, _ = _make_deck_and_slide(project)
+
+    result = _run(
+        project, "--record-review", "--subject-type", "deck", "--subject-id", deck_id,
+        "--reviewer-role", "content_reviewer", "--status", "not-a-real-status", "--json",
+    )
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "ValueError"
+
+
+def test_record_review_unknown_subject_id_errors(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+
+    result = _run(
+        project, "--record-review", "--subject-type", "slide", "--subject-id", "sld_does_not_exist",
+        "--reviewer-role", "content_reviewer", "--status", "passed", "--json",
+    )
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "SlideNotFoundError"
+
+
+def test_create_revision_request_returns_new_record(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    deck_id, _ = _make_deck_and_slide(project)
+
+    result = _run(
+        project, "--create-revision-request", "--subject-type", "deck", "--subject-id", deck_id,
+        "--requested-by", "user", "--instructions", "Shorten the introduction slide.", "--json",
+    )
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["id"].startswith("rvq_")
+    assert data["requested_by"] == "user"
+    assert data["instructions"] == "Shorten the introduction slide."
+    assert data["supersedes"] is None
+
+
+def test_create_revision_request_supersedes_marks_prior_slide_superseded(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    _, slide_id = _make_deck_and_slide(project)
+    for status in ("ready", "assigned", "producing", "review_required", "passed"):
+        _run(project, "--set-slide-status", "--slide-id", slide_id, "--status", status, "--json")
+
+    result = _run(
+        project, "--create-revision-request", "--subject-type", "slide", "--subject-id", slide_id,
+        "--requested-by", "reviewer", "--instructions", "Re-run with corrected data.",
+        "--supersedes", slide_id, "--json",
+    )
+
+    assert result.returncode == 0, result.stderr
+    result = _run(project, "--set-slide-status", "--slide-id", slide_id, "--status", "blocked", "--json")
+    assert result.returncode == 1
+    assert json.loads(result.stdout)["error"] == "ValueError"
+
+
+def test_create_revision_request_invalid_requested_by_errors(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    deck_id, _ = _make_deck_and_slide(project)
+
+    result = _run(
+        project, "--create-revision-request", "--subject-type", "deck", "--subject-id", deck_id,
+        "--requested-by", "not-a-real-requester", "--instructions", "X", "--json",
+    )
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "ValueError"
