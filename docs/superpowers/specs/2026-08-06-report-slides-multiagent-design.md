@@ -12,7 +12,16 @@ Full audit detail is in the accompanying research trace; the load-bearing facts:
 - **`svg_to_pptx/`** is a self-contained, untouched-by-this-redesign rendering/conversion library; out of scope per the task.
 - **Resource resolver**: report-slides uses only the shared `slides` and `research_log` roles; it defines no roles of its own today.
 - **Regression surface:** `test_visual_review_docs.py` asserts literal substrings exist in `SKILL.md`/reference docs — any prose rewrite must keep those strings or update the test in lockstep. `test_validate_diagram_manifest.py` (44 cases) and `test_validate_visual_review.py` (13 cases) pin the existing schemas exactly.
-- **Notable discrepancy:** the task says to preserve "PPTX structure validation" as an existing capability. It does not exist as real code — `validate_visual_review.py` only checks that a review-record JSON *claims* a `pptx_structure` status in the right shape; no script anywhere parses an actual `.pptx` file's internal structure. See Open Decision D5.
+- **Notable discrepancy, now resolved:** the task says to preserve "PPTX structure validation" as an existing capability. It does not exist as real code — `validate_visual_review.py` only checks that a review-record JSON *claims* a `pptx_structure` status in the right shape; no script anywhere parses an actual `.pptx` file's internal structure. Decision: this redesign adds a real structural validator (§5b) rather than continuing to preserve only the schema-only illusion of one.
+
+## Decisions confirmed before implementation
+
+Four architectural forks were presented for confirmation; all four are reflected in this document as written:
+
+1. **State/contract storage** — a new, independent `presentation_state.py` module (not an extension of `agent-state`), under `.research/presentations/`, sharing `agent-state`'s proven pattern (locking, atomic YAML writes, id-keyed maps, `--validate`) without importing its code or creating a cross-skill dependency.
+2. **PPTX structure validation** — build a real structural validator (new scope, §5b), not just preserve the existing schema-only gate.
+3. **Orchestrator execution model** — `SKILL.md` itself is the orchestrator (matching the existing `deep-research`/`academic-pipeline` precedent in this repo); no separate `presentation_orchestrator_agent.md` persona file.
+4. **Delivery** — phased: **Phase A** (state store + all contract validators + the deterministic approval/production gate + their tests) → **Phase B** (`SKILL.md` rewrite + all 11 agent persona files) → **Phase C** (worked example + reference docs). Each phase gets its own plan and full subagent-driven-development review cycle before the next begins.
 
 ## 1. Agent Roster
 
@@ -101,6 +110,17 @@ The existing per-diagram manifest schema (`manifest.yaml`: `schema_version, diag
 
 For a visual that entered the complex-visual workflow, its manifest gains one new optional key, `modules_ref: <path to the Complex Visual Specification YAML>`, and one manifest is written **per module** (each module is its own `diagram_id`-equivalent asset with its own `source_files`, so each module stays independently reusable/versioned exactly like today's atomic diagrams), plus one **integration manifest** for the assembled visual whose `source_files` is the final integrated SVG and whose new `modules_ref` lists the module manifests it composed. `used_in`/`derived_from`/`changes`/`review` all keep their current meaning at both the module and integration level, so partial revision (Acceptance Criterion 10) is just "one module's manifest re-enters `review.status: draft`" without touching its siblings' manifests.
 
+## 5b. PPTX Structural Validation (new capability, Stage 15)
+
+`scripts/validate_pptx_structure.py` — a new, dependency-light validator (stdlib `zipfile`/`xml.etree.ElementTree` plus the `python-pptx` already required by `to_pptx.py`; no new dependencies), fully deterministic and offline, satisfying Acceptance Criterion 15. Given a `.pptx` path and the deck's `expected_slides`/manifest set, it checks:
+
+- **Package integrity:** the file is a valid zip; `[Content_Types].xml` and `ppt/presentation.xml` parse as well-formed XML.
+- **Slide count:** the number of `<p:sldId>` entries in `ppt/presentation.xml`'s slide list matches `expected_slides` (reusing the exact field name `validate_visual_review.py` already defines).
+- **Relationship integrity:** for every slide, every `r:embed`/`r:id`/`r:link` reference inside `ppt/slides/slideN.xml` resolves to an entry in `ppt/slides/_rels/slideN.xml.rels`, and that entry's `Target` exists inside the package (catches broken image/media references — a real defect class `svg_to_pptx`'s post-processing zip surgery could in principle introduce).
+- **Editability cross-check:** per slide, classifies shape content into "vector shapes present" (`<p:sp>`/`<p:cxnSp>` with real geometry, not just a full-bleed picture) vs. "raster-only" (a single `<p:pic>` covering the slide bounds), and returns this as a fact (`slide_editability_observed: native|raster|hybrid`) the caller cross-checks against what the manifest/module declared — a mismatch (e.g. manifest claims `native` but the slide is one raster picture) is a **finding**, not a silent pass.
+
+Output shape mirrors the existing review-record's `statuses.pptx_structure` object (so `validate_visual_review.py`'s already-tested schema for that status is satisfied by real data instead of an agent's unverified claim): `{status, checked_at, slide_count_expected, slide_count_actual, relationship_violations: [...], editability_mismatches: [...]}`. This closes the gap identified in §0 without touching `svg_to_pptx/`'s generation code — it is a read-only auditor of what that code already produced.
+
 ## 6. Complex Visual Detection (Stage 7)
 
 A deterministic function in `presentation_state.py` (or a small sibling module `complex_visual_detector.py`), reading a config file `references/complex_visual_thresholds.yaml` (new, style-file-like: plain key: value, resolved the same project-relative way as `_style.md`):
@@ -143,6 +163,7 @@ skills/report-slides/
     validate_visual_module.py                 # new — Complex Visual Spec / ModuleSpec schema
     validate_diagram_manifest.py              # extended: optional `modules_ref` key
     validate_visual_review.py                 # extended: plan-level finding kinds
+    validate_pptx_structure.py                # new — real PPTX structural validator (§5b)
     generate_slides.py, to_pptx.py, svg_to_pptx/   # unchanged
     tests/                                    # new test files for the above, existing ones untouched
   references/
@@ -171,5 +192,7 @@ Every item in Acceptance Criterion 13 is a **state-machine or contract-validatio
 | visual-quality review failure | same, `reviewer_role=visual_quality` — asserted as an independent gate from scientific review |
 | partial slide regeneration | one slide revised; sibling slides' manifests/state untouched (assert file mtimes / status unchanged) |
 | interrupted workflow resume | kill and re-invoke against the same `deck_id`; state store returns the exact prior in-flight status, no duplicate records created |
+
+`validate_pptx_structure.py` (§5b) gets its own deterministic, offline test suite built from small synthetic/fixture `.pptx` files (a minimal valid deck, one with a deliberately broken relationship reference, one with a manifest/rendered-output editability mismatch) — no dependency on the other scenarios above, since it operates purely on a finished `.pptx` file.
 
 Existing `svg_to_pptx/` and `scripts/tests/` suites (item 12) run unmodified and must stay green; `test_visual_review_docs.py`'s literal-string assertions are updated in lockstep with any `SKILL.md`/reference-doc wording this redesign touches, not treated as untouchable.
