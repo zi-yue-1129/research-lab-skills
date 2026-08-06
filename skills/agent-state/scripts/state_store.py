@@ -422,8 +422,11 @@ def create_question(
         The full new Question record, including its generated "id".
 
     Raises:
+        ValueError: If text is empty/missing.
         ProjectNotFoundError: If project_id is given but doesn't exist.
     """
+    if not text:
+        raise ValueError("text is required")
     if project_id is None:
         project_id = _ensure_default_project(project_root)
     elif project_id not in load_projects(project_root):

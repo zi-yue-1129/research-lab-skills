@@ -6,6 +6,9 @@ Usage:
     python state.py --create-project --name "..." [--description "..."] \
         [--skill NAME] [--json]
 
+    python state.py --create-question --question "..." [--skill NAME] \
+        [--project-id PROJ_ID] [--json]
+
     python state.py --start-run --skill NAME [--mode MODE] \
         [--question "..." [--project-id PROJ_ID] | --question-id Q_ID \
          | --hypothesis-id HYP_ID | --experiment-id EXP_ID] [--json]
@@ -73,6 +76,7 @@ def _build_parser() -> argparse.ArgumentParser:
     action.add_argument("--rebuild-index", action="store_true")
     action.add_argument("--report", action="store_true")
     action.add_argument("--create-project", action="store_true")
+    action.add_argument("--create-question", action="store_true")
     action.add_argument("--create-hypothesis", action="store_true")
     action.add_argument("--set-hypothesis-status", action="store_true")
     action.add_argument("--create-experiment", action="store_true")
@@ -150,6 +154,11 @@ def _dispatch(args: argparse.Namespace, project_root: Path) -> Dict[str, Any]:
         return state_store.create_project(
             project_root, args.name,
             description=args.description, created_by=args.skill or "user",
+        )
+    if args.create_question:
+        return state_store.create_question(
+            project_root, args.question, args.skill or "user",
+            project_id=args.project_id,
         )
     if args.create_hypothesis:
         return state_store.create_hypothesis(

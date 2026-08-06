@@ -1476,3 +1476,79 @@ def test_validate_detects_dangling_question_project_id(tmp_path: Path) -> None:
         "entity": "question", "id": started["question_id"],
         "field": "project_id", "missing_id": "proj_does_not_exist",
     } in data["violations"]
+
+
+def test_create_question_returns_open_question(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+
+    result = _run(
+        project, "--create-question", "--question", "Does this need offline support?",
+        "--skill", "research-project-init", "--json",
+    )
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["text"] == "Does this need offline support?"
+    assert data["origin_skill"] == "research-project-init"
+    assert data["project_id"] == "proj_default"
+    assert data["status"] == "open"
+    assert data["id"].startswith("q_")
+
+
+def test_create_question_without_skill_defaults_to_user(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+
+    result = _run(project, "--create-question", "--question", "Q?", "--json")
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["origin_skill"] == "user"
+
+
+def test_create_question_with_explicit_project_id(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    created = _run(project, "--create-project", "--name", "Offline Support Initiative", "--json")
+    project_id = json.loads(created.stdout)["id"]
+
+    result = _run(
+        project, "--create-question", "--question", "Does this need offline support?",
+        "--skill", "research-project-init", "--project-id", project_id, "--json",
+    )
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["project_id"] == project_id
+
+
+def test_create_question_unknown_project_id_errors(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+
+    result = _run(
+        project, "--create-question", "--question", "Q?",
+        "--project-id", "proj_missing", "--json",
+    )
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "ProjectNotFoundError"
+
+
+def test_create_question_without_question_text_errors(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+
+    result = _run(project, "--create-question", "--skill", "research-project-init", "--json")
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "ValueError"
+
+
+def test_create_question_does_not_create_a_run(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+
+    _run(
+        project, "--create-question", "--question", "Does this need offline support?",
+        "--skill", "research-project-init", "--json",
+    )
+
+    assert not (project / ".research" / "state" / "runs.yaml").exists()
