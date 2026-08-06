@@ -26,6 +26,12 @@ never broken. A Run given none of `--question`/`--question-id`/
 before this chain existed: `question_id`, `hypothesis_id`, and
 `experiment_id` are all `null`, and nothing is auto-created.
 
+`--start-run` accepts at most *one* level of that chain per call.
+Combining levels (e.g. `--question` with `--experiment-id`) is rejected with
+a `ValueError` rather than silently letting the more specific one win and
+discarding the other -- which would create no Question at all from a
+`--question` that named one.
+
 Full design rationale: `docs/superpowers/specs/2026-08-05-agent-state-storage-design.md`.
 
 This skill has no slash command -- it's infrastructure other skills call
@@ -44,6 +50,12 @@ STATE="$(find ~/.claude -path "*/agent-state/scripts/state.py" | head -1)"
 python "$STATE" --start-run --skill deep-research --mode full \
   --question "Does this need offline support?" --json
 python "$STATE" --start-run --skill deep-research --question-id q_20260805_ab12cd --json
+
+# A newly created Question lands in proj_default unless --project-id names
+# another Project. --project-id only applies to --question (a Question named
+# any other way already belongs to a Project).
+python "$STATE" --start-run --skill deep-research \
+  --question "Does this need offline support?" --project-id proj_20260806_ab12cd --json
 
 # Close it out
 python "$STATE" --complete-run --run-id run_20260805_9f3a1c --status completed --json
@@ -107,7 +119,7 @@ a hand-created record otherwise (queryable, its status can be changed).
 
 ```bash
 python "$STATE" --query --run-id run_20260805_9f3a1c --json      # run + its results + claims
-python "$STATE" --query --question-id q_20260805_ab12cd --json   # question + its runs
+python "$STATE" --query --question-id q_20260805_ab12cd --json   # question + its hypotheses + its runs
 python "$STATE" --query --project-id proj_default --json      # project + its questions
 python "$STATE" --query --hypothesis-id hyp_20260806_ef34gh --json  # hypothesis + its experiments
 python "$STATE" --query --experiment-id exp_20260806_ij56kl --json  # experiment + its runs

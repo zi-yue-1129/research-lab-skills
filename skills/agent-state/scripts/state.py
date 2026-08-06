@@ -1,17 +1,39 @@
 #!/usr/bin/env python3
-"""state.py -- Agent State CLI: record and query Question/Run/Result/Claim.
+"""state.py -- Agent State CLI for the Project/Question/Hypothesis/Experiment/
+Run/Result/Claim research chain.
 
 Usage:
-    python state.py --start-run --skill deep-research [--mode full] \
-        [--question "..." | --question-id Q_ID] [--json]
+    python state.py --create-project --name "..." [--description "..."] \
+        [--skill NAME] [--json]
+
+    python state.py --start-run --skill NAME [--mode MODE] \
+        [--question "..." [--project-id PROJ_ID] | --question-id Q_ID \
+         | --hypothesis-id HYP_ID | --experiment-id EXP_ID] [--json]
+        (at most one chain level; --project-id only applies to --question)
     python state.py --complete-run --run-id RUN_ID --status completed|failed [--json]
+
     python state.py --answer-question --question-id Q_ID [--json]
     python state.py --abandon-question --question-id Q_ID [--json]
+
+    python state.py --create-hypothesis --question-id Q_ID --statement "..." \
+        [--skill NAME] [--json]
+    python state.py --set-hypothesis-status --hypothesis-id HYP_ID \
+        --status supported|refuted|inconclusive [--json]
+
+    python state.py --create-experiment --hypothesis-id HYP_ID --description "..." \
+        [--skill NAME] [--json]
+    python state.py --set-experiment-status --experiment-id EXP_ID \
+        --status running|completed|failed [--json]
+
     python state.py --record-result --run-id RUN_ID --summary "..." \
         [--artifact-role ROLE --artifact-path PATH] [--json]
     python state.py --record-claim --run-id RUN_ID --statement "..." \
         [--confidence low|medium|high] [--evidence "..."] [--json]
-    python state.py --query (--run-id ID | --question-id ID | --skill NAME | --since DATE) [--json]
+
+    python state.py --query (--run-id ID | --question-id ID | --project-id ID \
+        | --hypothesis-id ID | --experiment-id ID | --skill NAME | --since DATE) [--json]
+        (exactly one filter; each returns the named record plus its children)
+    python state.py --validate [--json]
     python state.py --rebuild-index [--full] [--json]
     python state.py --report [--since DATE]
 """
@@ -33,7 +55,12 @@ def _build_parser() -> argparse.ArgumentParser:
         action group plus the shared value flags each action consumes.
     """
     parser = argparse.ArgumentParser(
-        description="Agent State: record and query Question/Run/Result/Claim."
+        description=(
+            "Agent State: record and query the research chain -- Project, "
+            "Question, Hypothesis, Experiment, Run, Result, and Claim -- "
+            "plus referential-integrity validation (--validate) and the "
+            "rebuildable SQLite query index (--query/--report/--rebuild-index)."
+        )
     )
     action = parser.add_mutually_exclusive_group(required=True)
     action.add_argument("--start-run", action="store_true")
@@ -93,6 +120,7 @@ def _dispatch(args: argparse.Namespace, project_root: Path) -> Dict[str, Any]:
             project_root, args.skill, mode=args.mode,
             question_id=args.question_id, question_text=args.question,
             hypothesis_id=args.hypothesis_id, experiment_id=args.experiment_id,
+            project_id=args.project_id,
         )
     if args.complete_run:
         return state_store.complete_run(project_root, args.run_id, args.status)

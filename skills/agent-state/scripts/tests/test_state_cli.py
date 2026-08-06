@@ -1203,6 +1203,209 @@ def test_index_rebuild_recovers_from_pre_experiment_id_schema(tmp_path: Path) ->
     conn.close()
 
 
+def test_index_rebuild_recovers_from_unversioned_pre_experiment_id_schema(
+    tmp_path: Path,
+) -> None:
+    # Distinct from the test above: that one covers user_version == 1, an
+    # index stamped by a *later* build. This one covers user_version == 0 --
+    # a database from before user_version stamping existed at all, which is
+    # indistinguishable from a brand-new file by version alone and so used
+    # to fall straight through to executescript(_SCHEMA), dying permanently
+    # on CREATE INDEX ... ON runs(experiment_id).
+    project = _make_project(tmp_path)
+    _run(project, "--start-run", "--skill", "deep-research", "--json")
+    index_path = project / ".research" / "indexes" / "index.db"
+    _run(project, "--rebuild-index", "--json")
+
+    conn = sqlite3.connect(str(index_path))
+    conn.execute("PRAGMA user_version = 0")
+    conn.execute("DROP TABLE runs")
+    conn.execute(
+        "CREATE TABLE runs (id TEXT PRIMARY KEY, skill TEXT, mode TEXT, "
+        "question_id TEXT, status TEXT, started_at TEXT, ended_at TEXT)"
+    )
+    conn.commit()
+    conn.close()
+
+    result = _run(project, "--rebuild-index", "--json")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    conn = sqlite3.connect(str(index_path))
+    try:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(runs)")}
+        assert "experiment_id" in columns
+    finally:
+        conn.close()
+
+
+def test_start_run_rejects_experiment_id_combined_with_question_text(
+    tmp_path: Path,
+) -> None:
+    project = _make_project(tmp_path)
+    question_id = _create_question_id(project)
+    hypothesis_id = _create_hypothesis_id(project, question_id)
+    experiment_id = json.loads(
+        _run(
+            project, "--create-experiment", "--hypothesis-id", hypothesis_id,
+            "--description", "E1", "--json",
+        ).stdout
+    )["id"]
+    questions_before = yaml.safe_load(
+        (project / ".research" / "state" / "questions.yaml").read_text()
+    )["questions"]
+
+    result = _run(
+        project, "--start-run", "--skill", "deep-research",
+        "--question", "This text would have been silently discarded",
+        "--experiment-id", experiment_id, "--json",
+    )
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "ValueError"
+    assert "mutually exclusive" in data["message"]
+    # The discarded-Question scenario the error exists to prevent: nothing
+    # was created from the ignored --question text.
+    questions_after = yaml.safe_load(
+        (project / ".research" / "state" / "questions.yaml").read_text()
+    )["questions"]
+    assert questions_after.keys() == questions_before.keys()
+
+
+def test_start_run_rejects_hypothesis_id_combined_with_question_id(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    question_id = _create_question_id(project)
+    hypothesis_id = _create_hypothesis_id(project, question_id)
+
+    result = _run(
+        project, "--start-run", "--skill", "deep-research",
+        "--question-id", question_id, "--hypothesis-id", hypothesis_id, "--json",
+    )
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "ValueError"
+    assert "mutually exclusive" in data["message"]
+
+
+def test_start_run_with_project_id_puts_new_question_in_that_project(
+    tmp_path: Path,
+) -> None:
+    project = _make_project(tmp_path)
+    project_id = json.loads(
+        _run(project, "--create-project", "--name", "Offline Support", "--json").stdout
+    )["id"]
+
+    result = _run(
+        project, "--start-run", "--skill", "deep-research",
+        "--question", "Does this need offline support?",
+        "--project-id", project_id, "--json",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    started = json.loads(result.stdout)
+    doc = yaml.safe_load(
+        (project / ".research" / "state" / "questions.yaml").read_text()
+    )
+    assert doc["questions"][started["question_id"]]["project_id"] == project_id
+    assert project_id != "proj_default"
+
+
+def test_query_returns_synthetic_as_a_json_boolean(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    question_id = _create_question_id(project)
+    hypothesis_id = _create_hypothesis_id(project, question_id)
+    _run(
+        project, "--create-experiment", "--hypothesis-id", hypothesis_id,
+        "--description", "E1", "--json",
+    )
+
+    result = _run(project, "--query", "--hypothesis-id", hypothesis_id, "--json")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    data = json.loads(result.stdout)
+    # `0 is False` is False in Python, so this discriminates a real bool
+    # from the int SQLite would otherwise hand back.
+    assert data["hypotheses"][0]["synthetic"] is False
+    assert data["experiments"][0]["synthetic"] is False
+
+
+def test_start_run_with_experiment_pointing_at_missing_hypothesis_errors(
+    tmp_path: Path,
+) -> None:
+    project = _make_project(tmp_path)
+    started = json.loads(
+        _run(
+            project, "--start-run", "--skill", "deep-research", "--question", "Q?", "--json"
+        ).stdout
+    )
+    experiment_id = started["experiment_id"]
+    experiments_path = project / ".research" / "state" / "experiments.yaml"
+    doc = yaml.safe_load(experiments_path.read_text())
+    doc["experiments"][experiment_id]["hypothesis_id"] = "hyp_does_not_exist"
+    experiments_path.write_text(yaml.safe_dump(doc, sort_keys=True))
+
+    result = _run(
+        project, "--start-run", "--skill", "deep-research",
+        "--experiment-id", experiment_id, "--json",
+    )
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "HypothesisNotFoundError"
+    assert "hyp_does_not_exist" in data["message"]
+
+
+def test_query_by_question_id_returns_its_hypotheses(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    question_id = _create_question_id(project)
+    hypothesis_id = _create_hypothesis_id(
+        project, question_id, statement="Offline support is unnecessary."
+    )
+
+    result = _run(project, "--query", "--question-id", question_id, "--json")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    data = json.loads(result.stdout)
+    assert data["questions"][0]["id"] == question_id
+    assert hypothesis_id in {h["id"] for h in data["hypotheses"]}
+    # the pre-existing "runs" key is still there alongside the new one
+    assert "runs" in data
+
+
+def test_validate_detects_dangling_run_experiment_id(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    question_id = _create_question_id(project)
+    hypothesis_id = _create_hypothesis_id(project, question_id)
+    experiment_id = json.loads(
+        _run(
+            project, "--create-experiment", "--hypothesis-id", hypothesis_id,
+            "--description", "E1", "--json",
+        ).stdout
+    )["id"]
+    started = json.loads(
+        _run(
+            project, "--start-run", "--skill", "deep-research",
+            "--experiment-id", experiment_id, "--json",
+        ).stdout
+    )
+    runs_path = project / ".research" / "state" / "runs.yaml"
+    doc = yaml.safe_load(runs_path.read_text())
+    doc["runs"][started["id"]]["experiment_id"] = "exp_does_not_exist"
+    runs_path.write_text(yaml.safe_dump(doc, sort_keys=True))
+
+    result = _run(project, "--validate", "--json")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    data = json.loads(result.stdout)
+    assert data["clean"] is False
+    assert {
+        "entity": "run", "id": started["id"],
+        "field": "experiment_id", "missing_id": "exp_does_not_exist",
+    } in data["violations"]
+
+
 def test_validate_on_clean_project_reports_no_violations(tmp_path: Path) -> None:
     project = _make_project(tmp_path)
     _run(project, "--start-run", "--skill", "deep-research", "--question", "Q?", "--json")

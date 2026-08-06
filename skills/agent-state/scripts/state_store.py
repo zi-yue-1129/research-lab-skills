@@ -662,10 +662,25 @@ def _question_id_for_experiment(project_root: Path, experiment_id: str) -> str:
 
     Returns:
         The question_id of the Hypothesis the Experiment belongs to.
+
+    Raises:
+        ExperimentNotFoundError: If experiment_id doesn't exist.
+        HypothesisNotFoundError: If the Experiment's hypothesis_id points at
+            a Hypothesis that doesn't exist -- only reachable through a
+            hand-edited state/hypotheses.yaml, since every write path in
+            this module validates the reference at write time.
     """
     experiments = load_experiments(project_root)
+    if experiment_id not in experiments:
+        raise ExperimentNotFoundError(f"Unknown experiment_id: {experiment_id}")
     hypothesis_id = experiments[experiment_id]["hypothesis_id"]
     hypotheses = load_hypotheses(project_root)
+    if hypothesis_id not in hypotheses:
+        raise HypothesisNotFoundError(
+            f"Experiment {experiment_id} references unknown hypothesis_id "
+            f"{hypothesis_id!r} -- state/hypotheses.yaml may have been "
+            "hand-edited; run --validate to find all broken references"
+        )
     return hypotheses[hypothesis_id]["question_id"]
 
 
@@ -677,10 +692,12 @@ def start_run(
     question_text: Optional[str] = None,
     hypothesis_id: Optional[str] = None,
     experiment_id: Optional[str] = None,
+    project_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Start a new Run, auto-completing its research chain as needed.
 
-    Resolution, most specific first:
+    Exactly one *level* of the chain may be named per call. Resolution,
+    most specific first:
       1. experiment_id given -- validated to exist, used directly.
       2. hypothesis_id given (no experiment_id) -- validated to exist, a
          synthetic Experiment is created under it.
@@ -690,6 +707,12 @@ def start_run(
       4. Nothing given at all -- unchanged standalone behavior: question_id,
          hypothesis_id, and experiment_id are all left None. No Question,
          Hypothesis, or Experiment is created.
+
+    Naming two levels at once (e.g. question_text together with
+    experiment_id) is rejected rather than silently resolved: the more
+    specific level would win and the other argument would be discarded
+    without a trace -- question_text in particular would name a Question
+    that never got created.
 
     Args:
         project_root: The project's root directory.
@@ -702,6 +725,12 @@ def start_run(
         hypothesis_id: Link to an existing Hypothesis; a synthetic
             Experiment is created under it.
         experiment_id: Link directly to an existing Experiment.
+        project_id: Project the newly created Question belongs to. Only
+            meaningful together with question_text, i.e. in branch 3's
+            new-Question path; defaults to "proj_default" when omitted.
+            Linking to an existing question_id, hypothesis_id, or
+            experiment_id ignores it, since those records already belong to
+            a Project through the Question above them.
 
     Returns:
         The full new Run record, including its generated "id". Its
@@ -713,13 +742,22 @@ def start_run(
         QuestionNotFoundError: If question_id is given but doesn't exist.
         HypothesisNotFoundError: If hypothesis_id is given but doesn't exist.
         ExperimentNotFoundError: If experiment_id is given but doesn't exist.
-        ValueError: If skill is empty/missing, or if both question_id and
-            question_text are given.
+        ProjectNotFoundError: If project_id is given but doesn't exist.
+        ValueError: If skill is empty/missing, if both question_id and
+            question_text are given, or if more than one level of the chain
+            (experiment_id / hypothesis_id / question_id-or-question_text)
+            is given.
     """
     if not skill:
         raise ValueError("skill is required")
     if question_id and question_text:
         raise ValueError("question_id and question_text are mutually exclusive")
+    levels_given = [bool(experiment_id), bool(hypothesis_id), bool(question_id or question_text)]
+    if sum(levels_given) > 1:
+        raise ValueError(
+            "experiment_id, hypothesis_id, and question_id/question_text are "
+            "mutually exclusive on --start-run -- give at most one level of the chain"
+        )
 
     if experiment_id:
         if experiment_id not in load_experiments(project_root):
@@ -735,7 +773,9 @@ def start_run(
         experiment_id = experiment["id"]
     elif question_id or question_text:
         if question_text:
-            question = create_question(project_root, question_text, origin_skill=skill)
+            question = create_question(
+                project_root, question_text, origin_skill=skill, project_id=project_id
+            )
             question_id = question["id"]
         elif question_id not in load_questions(project_root):
             raise QuestionNotFoundError(f"Unknown question_id: {question_id}")

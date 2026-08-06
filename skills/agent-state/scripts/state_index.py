@@ -122,15 +122,31 @@ def _connect(project_root: Path) -> sqlite3.Connection:
 
     Separately, this also detects a schema-version mismatch via SQLite's
     built-in `PRAGMA user_version` (an integer stamped into the database
-    file itself, exactly designed for this purpose). A fresh or
-    pre-versioning database reads back 0 and just gets stamped with
-    INDEX_SCHEMA_VERSION going forward -- no data loss, since nothing about
-    the actual table structure changed when versioning was introduced. A
-    database stamped with some *other*, non-zero version is treated the
-    same as corruption: deleted and rebuilt fresh via `_fresh_connection`,
-    since index.db is always fully disposable and rebuildable from
-    state/*.yaml + events/*.jsonl -- there is never a need for an in-place
-    migration here, only a full reconstruction.
+    file itself, exactly designed for this purpose). A database stamped
+    with some *other*, non-zero version is treated the same as corruption:
+    deleted and rebuilt fresh via `_fresh_connection`, since index.db is
+    always fully disposable and rebuildable from state/*.yaml +
+    events/*.jsonl -- there is never a need for an in-place migration here,
+    only a full reconstruction.
+
+    Version 0 needs a second discriminator, because two very different
+    databases both read back 0: a genuinely brand-new file (SQLite's
+    default for a database that has never been stamped or written to), and
+    an *old pre-versioning* database that predates this stamping and can
+    therefore carry an arbitrarily stale table shape. Those two are
+    indistinguishable from the version alone, so the table count settles
+    it: `SELECT COUNT(*) FROM sqlite_master` is 0 for the genuinely fresh
+    file, which falls through to normal schema application and then gets
+    stamped, and is non-zero for a database that already has tables, which
+    is routed to `_fresh_connection` exactly like any other version
+    mismatch. That second case matters: a pre-versioning database whose
+    `runs` table lacks `experiment_id` would otherwise reach
+    `conn.executescript(_SCHEMA)` and die permanently on `CREATE INDEX ...
+    ON runs(experiment_id)` (see the paragraph below), leaving every
+    subsequent --query/--report/--rebuild-index failing identically until a
+    human deleted index.db by hand. Wiping is always safe here for the same
+    reason it is everywhere else in this module: this file is a disposable
+    cache, never a source of truth.
 
     The version check runs BEFORE `_SCHEMA` is applied, not after. Once
     `_SCHEMA` itself started widening already-existing tables (e.g. adding
@@ -191,7 +207,22 @@ def _connect(project_root: Path) -> sqlite3.Connection:
         conn.close()
         return _fresh_connection(index_path)
 
-    if current_version not in (0, INDEX_SCHEMA_VERSION):
+    if current_version == 0:
+        # Ambiguous: either a genuinely brand-new file or a stale
+        # pre-versioning database. Existing tables settle it (see docstring).
+        try:
+            table_count = conn.execute("SELECT COUNT(*) FROM sqlite_master").fetchone()[0]
+        except sqlite3.OperationalError:
+            conn.close()
+            raise
+        except sqlite3.DatabaseError:
+            conn.close()
+            return _fresh_connection(index_path)
+        is_stale = table_count > 0
+    else:
+        is_stale = current_version != INDEX_SCHEMA_VERSION
+
+    if is_stale:
         # Stale version: don't attempt to apply _SCHEMA to tables whose
         # on-disk shape may not match it (see docstring above).
         conn.close()
@@ -395,6 +426,15 @@ def rebuild_index(project_root: Path, full: bool = False) -> Dict[str, Any]:
 def _rows(conn: sqlite3.Connection, sql: str, params: tuple) -> List[Dict[str, Any]]:
     """Run a parameterized SELECT and return rows as plain dicts.
 
+    A "synthetic" column, if the row shape has one (hypotheses and
+    experiments do; questions/runs/results/claims don't), is coerced back to
+    a real Python `bool`. SQLite has no boolean type -- it stores these as
+    INTEGER 0/1 and hands them back as Python `int` -- so without this
+    coercion every --query response would report `"synthetic": 0` where the
+    YAML, the --create-hypothesis/--create-experiment responses, and
+    SKILL.md's documented shape all say `false`. This is the single
+    chokepoint every query branch returning those two entities goes through.
+
     Args:
         conn: Open connection with row_factory set to sqlite3.Row.
         sql: A SELECT statement with `?` placeholders.
@@ -403,7 +443,13 @@ def _rows(conn: sqlite3.Connection, sql: str, params: tuple) -> List[Dict[str, A
     Returns:
         Each matching row as a dict.
     """
-    return [dict(row) for row in conn.execute(sql, params).fetchall()]
+    rows: List[Dict[str, Any]] = []
+    for row in conn.execute(sql, params).fetchall():
+        record = dict(row)
+        if "synthetic" in record:
+            record["synthetic"] = bool(record["synthetic"])
+        rows.append(record)
+    return rows
 
 
 def query(
@@ -422,7 +468,8 @@ def query(
     Args:
         project_root: The project's root directory.
         run_id: Return this Run plus its Results and Claims.
-        question_id: Return this Question plus Runs linked to it.
+        question_id: Return this Question plus its Hypotheses and the Runs
+            linked to it.
         project_id: Return this Project plus Questions linked to it.
         hypothesis_id: Return this Hypothesis plus Experiments linked to it.
         experiment_id: Return this Experiment plus Runs linked to it.
@@ -462,9 +509,20 @@ def query(
                 ),
             }
         if question_id is not None:
+            # Both children are returned: "hypotheses" completes the
+            # Project -> Question -> Hypothesis chain (the middle link was
+            # otherwise unwalkable, even though idx_hypotheses_question_id
+            # exists for exactly this lookup), and "runs" is kept alongside
+            # it since Runs also carry a direct question_id and existing
+            # consumers already read that key.
             return {
                 "questions": _rows(
                     conn, "SELECT * FROM questions WHERE id = ?", (question_id,)
+                ),
+                "hypotheses": _rows(
+                    conn,
+                    "SELECT * FROM hypotheses WHERE question_id = ? ORDER BY created_at",
+                    (question_id,),
                 ),
                 "runs": _rows(
                     conn,
