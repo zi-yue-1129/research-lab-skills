@@ -74,6 +74,8 @@ Otherwise, classify the user's input:
 
 5. **academic-paper-reviewer guided vs full**: guided = Socratic review that engages the author in dialogue about issues. full = standard multi-perspective review report. When the user wants to learn from the review, suggest guided mode.
 
+6. **research-project-init vs deep-research socratic**: research-project-init = scopes a *project* (problem statement, scope, exclusions, contributions, constraints, resources, milestones, success/stop conditions, risks, ethics) and registers it in agent-state, without sharpening any research question or doing research. deep-research socratic = sharpens a *single* research question (FINER scoring, methodology blueprint) once one exists. When the user's request is about project-level scope/governance rather than one question, prefer research-project-init; when it's about clarifying one question, prefer deep-research socratic (unchanged default). Recommended flow: research-project-init → deep-research (socratic/full).
+
 ## Key Rules
 
 - All claims must have citations
@@ -85,15 +87,16 @@ Otherwise, classify the user's input:
 ## Full Academic Pipeline
 
 ```
-deep-research (socratic/full)
-  → academic-paper (plan/full)
-    → integrity check (Stage 2.5)
-      → academic-paper-reviewer (full/guided)
-        → academic-paper (revision)
-          → academic-paper-reviewer (re-review, max 2 loops)
-            → final integrity check (Stage 4.5)
-              → academic-paper (format-convert → final output)
-                → Process Summary + AI Self-Reflection Report
+research-project-init (optional)
+  → deep-research (socratic/full)
+    → academic-paper (plan/full)
+      → integrity check (Stage 2.5)
+        → academic-paper-reviewer (full/guided)
+          → academic-paper (revision)
+            → academic-paper-reviewer (re-review, max 2 loops)
+              → final integrity check (Stage 4.5)
+                → academic-paper (format-convert → final output)
+                  → Process Summary + AI Self-Reflection Report
 ```
 
 - **Suite version**: 1.1.0
@@ -102,12 +105,17 @@ deep-research (socratic/full)
 
 | Skill | Description |
 |-------|-------------|
+| `research-project-init` v1.0.0 | Project scoping (upstream of deep-research) |
 | `deep-research` v2.9.4 | Research engine |
 | `academic-paper` v3.2.0 | Paper writer |
 | `academic-paper-reviewer` v1.10.0 | Peer reviewer |
 | `academic-pipeline` v3.11.1 | Pipeline orchestrator |
 
 ## Handoff Protocol
+
+### research-project-init → deep-research
+Materials: Project ID, Initial Research Question ID(s), charter file path
+(`.research/projects/<project_id>/charter.md`).
 
 ### deep-research → academic-paper
 Materials: RQ Brief, Methodology Blueprint, Annotated Bibliography, Synthesis Report, INSIGHT Collection
