@@ -509,7 +509,7 @@ def test_all_new_plan_level_finding_kinds_are_allowed() -> None:
         assert kind in _ALLOWED_FINDING_KINDS
 
 
-def test_plan_review_finding_does_not_require_scope_or_artifact_path():
+def test_plan_review_finding_does_not_require_scope_or_artifact_path() -> None:
     """Validate plan-level findings without scope or artifact_path."""
     findings = [
         {
@@ -523,7 +523,7 @@ def test_plan_review_finding_does_not_require_scope_or_artifact_path():
     assert issues == []
 
 
-def test_plan_review_finding_rejects_unknown_kind():
+def test_plan_review_finding_rejects_unknown_kind() -> None:
     """Reject plan-level findings with unknown kinds."""
     findings = [
         {
@@ -537,7 +537,7 @@ def test_plan_review_finding_rejects_unknown_kind():
     assert any(issue.path.endswith(".kind") for issue in issues)
 
 
-def test_visual_gate_finding_still_requires_scope_and_artifact_path():
+def test_visual_gate_finding_still_requires_scope_and_artifact_path() -> None:
     """Require scope and artifact_path for visual-gate findings."""
     findings = [
         {
@@ -552,7 +552,7 @@ def test_visual_gate_finding_still_requires_scope_and_artifact_path():
     assert any(p.endswith(".scope") for p in paths)
 
 
-def test_validate_review_result_accepts_a_well_formed_plan_review():
+def test_validate_review_result_accepts_a_well_formed_plan_review() -> None:
     """Accept well-formed plan-level review documents."""
     doc = {
         "subject_type": "plan",
@@ -572,7 +572,7 @@ def test_validate_review_result_accepts_a_well_formed_plan_review():
     assert validate_review_result(doc) == []
 
 
-def test_validate_review_result_rejects_bad_subject_type():
+def test_validate_review_result_rejects_bad_subject_type() -> None:
     """Reject review results with invalid subject_type."""
     doc = {
         "subject_type": "not-a-type",

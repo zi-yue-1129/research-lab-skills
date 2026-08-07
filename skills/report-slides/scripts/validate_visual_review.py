@@ -673,7 +673,7 @@ def validate_review_result(
     if not isinstance(round_number, int) or isinstance(round_number, bool):
         issues.append(ValidationIssue("round", "required int"))
     issues.extend(validate_review_result_findings(doc.get("findings"), artifact_root))
-    return issues
+    return sorted(issues, key=lambda issue: issue.path)
 
 
 def main(arguments: Optional[Sequence[str]] = None) -> int:
