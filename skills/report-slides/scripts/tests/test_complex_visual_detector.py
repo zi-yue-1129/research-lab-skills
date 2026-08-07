@@ -82,6 +82,39 @@ def test_missing_signal_key_raises(tmp_path: Path) -> None:
     assert result.returncode != 0
 
 
+def test_missing_signals_file_reports_structured_error(tmp_path: Path) -> None:
+    thresholds_path = _write_thresholds(tmp_path)
+
+    result = _run("--signals", str(tmp_path / "does-not-exist.json"), "--thresholds", str(thresholds_path), "--json")
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert "error" in data
+
+
+def test_missing_thresholds_file_reports_structured_error(tmp_path: Path) -> None:
+    signals_path = tmp_path / "signals.json"
+    signals_path.write_text(json.dumps(_ALL_FALSE_SIGNALS))
+
+    result = _run("--signals", str(signals_path), "--thresholds", str(tmp_path / "does-not-exist.yaml"), "--json")
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert "error" in data
+
+
+def test_non_int_region_count_reports_structured_error(tmp_path: Path) -> None:
+    signals_path = tmp_path / "signals.json"
+    signals_path.write_text(json.dumps({**_ALL_FALSE_SIGNALS, "region_count": "not-a-number"}))
+    thresholds_path = _write_thresholds(tmp_path)
+
+    result = _run("--signals", str(signals_path), "--thresholds", str(thresholds_path), "--json")
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert "error" in data
+
+
 def test_default_thresholds_file_is_used_when_not_specified(tmp_path: Path) -> None:
     signals_path = tmp_path / "signals.json"
     signals_path.write_text(json.dumps(_ALL_FALSE_SIGNALS))

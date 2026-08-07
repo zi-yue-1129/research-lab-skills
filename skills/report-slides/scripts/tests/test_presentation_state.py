@@ -319,7 +319,7 @@ def test_module_can_start_producing_once_dependency_passed(tmp_path: Path) -> No
 
 def test_two_independent_modules_can_both_reach_producing(tmp_path: Path) -> None:
     project = _make_project(tmp_path)
-    _, slide_id = _make_deck_and_slide(project)
+    deck_id, slide_id = _make_deck_and_slide(project)
     a = json.loads(_run(
         project, "--create-visual-module", "--slide-id", slide_id,
         "--module-key", "a", "--module-type", "data_visualization", "--json",
@@ -334,7 +334,10 @@ def test_two_independent_modules_can_both_reach_producing(tmp_path: Path) -> Non
             result = _run(project, "--set-module-status", "--module-id", module_id, "--status", status, "--json")
             assert result.returncode == 0, result.stderr
 
-    assert json.loads(_run(project, "--set-module-status", "--module-id", a["id"], "--status", "producing", "--json").stderr or "{}") == {}
+    queried = json.loads(_run(project, "--query", "--deck-id", deck_id, "--json").stdout)
+    statuses = {m["id"]: m["status"] for m in queried["visual_modules"]}
+    assert statuses[a["id"]] == "producing"
+    assert statuses[b["id"]] == "producing"
 
 
 def test_record_review_returns_new_event(tmp_path: Path) -> None:
@@ -432,6 +435,28 @@ def test_create_revision_request_supersedes_marks_prior_slide_superseded(tmp_pat
     result = _run(project, "--set-slide-status", "--slide-id", slide_id, "--status", "blocked", "--json")
     assert result.returncode == 1
     assert json.loads(result.stdout)["error"] == "ValueError"
+
+
+def test_create_revision_request_rejects_illegal_supersede_without_persisting(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    _, slide_id = _make_deck_and_slide(project)
+    # slide_id is still "planned" -- "superseded" is only legal from "passed",
+    # so this supersede attempt must be rejected, and the request itself
+    # must never be written to disk.
+
+    result = _run(
+        project, "--create-revision-request", "--subject-type", "slide", "--subject-id", slide_id,
+        "--requested-by", "reviewer", "--instructions", "Try to supersede too early.",
+        "--supersedes", slide_id, "--json",
+    )
+
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "ValueError"
+    requests_path = project / ".research" / "presentations" / "state" / "revision_requests.yaml"
+    if requests_path.exists():
+        doc = yaml.safe_load(requests_path.read_text())
+        assert not (doc or {}).get("revision_requests")
 
 
 def test_create_revision_request_invalid_requested_by_errors(tmp_path: Path) -> None:

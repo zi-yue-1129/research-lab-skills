@@ -204,11 +204,13 @@ def main() -> None:
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 
-    declared = json.loads(args.declared_editability.read_text(encoding="utf-8")) if args.declared_editability else None
-
     try:
+        declared = (
+            json.loads(args.declared_editability.read_text(encoding="utf-8"))
+            if args.declared_editability else None
+        )
         result = validate_pptx_structure(args.pptx, args.expected_slides, declared)
-    except PptxStructureError as exc:
+    except (PptxStructureError, OSError, json.JSONDecodeError) as exc:
         result = {"status": "failed", "error": str(exc)}
         print(json.dumps(result) if args.json else json.dumps(result, indent=2))
         sys.exit(1)

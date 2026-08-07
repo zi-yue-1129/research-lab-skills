@@ -55,7 +55,16 @@ def requires_complex_workflow(signals: Dict[str, Any], thresholds: Dict[str, int
 
     Raises:
         KeyError: If a required signal key is missing from `signals`.
+        ValueError: If region_count/route_count are not ints, or a
+            qualitative signal is not a bool.
     """
+    if not isinstance(signals["region_count"], int) or isinstance(signals["region_count"], bool):
+        raise ValueError(f"signals['region_count'] must be an int, got {signals['region_count']!r}")
+    if not isinstance(signals["route_count"], int) or isinstance(signals["route_count"], bool):
+        raise ValueError(f"signals['route_count'] must be an int, got {signals['route_count']!r}")
+    for key in _QUALITATIVE_SIGNALS:
+        if not isinstance(signals[key], bool):
+            raise ValueError(f"signals[{key!r}] must be a bool, got {signals[key]!r}")
     triggered = []
     if signals["region_count"] > thresholds["region_count_threshold"]:
         triggered.append("region_count")
@@ -79,7 +88,7 @@ def main() -> None:
         signals = json.loads(args.signals.read_text(encoding="utf-8"))
         thresholds = load_thresholds(args.thresholds)
         result = requires_complex_workflow(signals, thresholds)
-    except (KeyError, ValueError) as exc:
+    except (OSError, yaml.YAMLError, json.JSONDecodeError, KeyError, ValueError) as exc:
         print(json.dumps({"error": type(exc).__name__, "message": str(exc)}) if args.json else f"Error: {exc}")
         sys.exit(1)
 

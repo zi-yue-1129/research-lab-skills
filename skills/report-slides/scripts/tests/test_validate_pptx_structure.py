@@ -4,6 +4,7 @@ import subprocess
 import sys
 import zipfile
 from pathlib import Path
+from typing import Optional
 
 from pptx import Presentation
 from pptx.util import Inches
@@ -11,7 +12,7 @@ from pptx.util import Inches
 SCRIPT = Path(__file__).resolve().parent.parent / "validate_pptx_structure.py"
 
 
-def _build_pptx(path: Path, n_slides: int, picture_path: Path = None) -> None:
+def _build_pptx(path: Path, n_slides: int, picture_path: Optional[Path] = None) -> None:
     prs = Presentation()
     blank_layout = prs.slide_layouts[6]
     for i in range(n_slides):
@@ -113,6 +114,26 @@ def test_editability_match_passes(tmp_path: Path) -> None:
     _build_pptx(pptx_path, n_slides=1)  # textbox only -> native
     declared_path = tmp_path / "declared.json"
     declared_path.write_text(json.dumps({"0": "native"}))
+
+    result = _run("--pptx", str(pptx_path), "--expected-slides", "1", "--declared-editability", str(declared_path), "--json")
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["status"] == "passed"
+    assert data["editability_mismatches"] == []
+
+
+def test_hybrid_editability_is_classified_correctly(tmp_path: Path) -> None:
+    png_path = _make_test_png(tmp_path / "img.png")
+    pptx_path = tmp_path / "deck.pptx"
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    slide.shapes.add_picture(str(png_path), 0, 0, width=Inches(1), height=Inches(1))
+    box = slide.shapes.add_textbox(Inches(2), Inches(2), Inches(4), Inches(1))
+    box.text_frame.text = "Hybrid slide"
+    prs.save(str(pptx_path))
+    declared_path = tmp_path / "declared.json"
+    declared_path.write_text(json.dumps({"0": "hybrid"}))
 
     result = _run("--pptx", str(pptx_path), "--expected-slides", "1", "--declared-editability", str(declared_path), "--json")
 

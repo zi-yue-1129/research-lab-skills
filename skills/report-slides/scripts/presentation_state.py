@@ -178,7 +178,7 @@ def _ensure_research_gitignore(project_root: Path) -> None:
     if gitignore_path.exists():
         return
     gitignore_path.parent.mkdir(parents=True, exist_ok=True)
-    gitignore_path.write_text("state/*.lock\nevents/\ncache/\n", encoding="utf-8")
+    gitignore_path.write_text("state/*.lock\nstate/*.tmp\nevents/\ncache/\n", encoding="utf-8")
 
 
 @contextmanager
@@ -676,16 +676,25 @@ def create_revision_request(
         requested_by: Must be "user" or "reviewer".
         instructions: Free-text description of the requested change.
         supersedes: Optional id of a prior Slide or Visual Module this
-            revision replaces; if given and it currently exists as a
-            Slide or Visual Module, that record is marked "superseded" as
-            part of this same call.
+            revision replaces -- resolved by actual existence (checked
+            against both Slides and Visual Modules), not by subject_type,
+            since a request's subject and its supersedes target are not
+            always the same kind of record. If given, that record must
+            currently be in a status that can legally transition to
+            "superseded" per the shared production-unit state machine;
+            this is validated BEFORE the Revision Request is persisted,
+            so a rejected supersede never leaves an orphaned request
+            record on disk.
 
     Returns:
         The full new Revision Request record, including its generated "id".
 
     Raises:
         ValueError: If subject_type/requested_by is not one of the
-            allowed values, or instructions is empty/missing.
+            allowed values, instructions is empty/missing, supersedes is
+            given but doesn't resolve to an existing Slide or Visual
+            Module, or that record cannot legally transition to
+            "superseded" from its current status.
         DeckNotFoundError: If subject_type is "plan"/"deck" and
             subject_id doesn't exist.
         SlideNotFoundError: If subject_type is "slide" and subject_id
@@ -708,6 +717,26 @@ def create_revision_request(
     else:
         if subject_id not in load_visual_modules(project_root):
             raise VisualModuleNotFoundError(f"Unknown module_id: {subject_id}")
+
+    supersede_kind: Optional[str] = None
+    if supersedes:
+        slides = load_slides(project_root)
+        modules = load_visual_modules(project_root)
+        if supersedes in slides:
+            supersede_kind = "slide"
+            current_status = slides[supersedes]["status"]
+        elif supersedes in modules:
+            supersede_kind = "module"
+            current_status = modules[supersedes]["status"]
+        else:
+            raise ValueError(f"Unknown supersedes id: {supersedes}")
+        if "superseded" not in _PRODUCTION_UNIT_TRANSITIONS[current_status]:
+            raise ValueError(
+                f"Cannot supersede {supersedes!r}: illegal transition "
+                f"{current_status!r} -> 'superseded' "
+                f"(allowed from {current_status!r}: {sorted(_PRODUCTION_UNIT_TRANSITIONS[current_status])})"
+            )
+
     path = project_root / REVISION_REQUESTS_RELATIVE_PATH
     with _locked_file(project_root, path):
         requests = _load_yaml_map(path, "revision_requests")
@@ -719,11 +748,11 @@ def create_revision_request(
         }
         requests[request_id] = record
         _save_yaml_map(path, "revision_requests", requests)
-    if supersedes:
-        if subject_type == "slide" and supersedes in load_slides(project_root):
-            set_slide_status(project_root, supersedes, "superseded")
-        elif subject_type == "module" and supersedes in load_visual_modules(project_root):
-            set_module_status(project_root, supersedes, "superseded")
+
+    if supersede_kind == "slide":
+        set_slide_status(project_root, supersedes, "superseded")
+    elif supersede_kind == "module":
+        set_module_status(project_root, supersedes, "superseded")
     return record
 
 
