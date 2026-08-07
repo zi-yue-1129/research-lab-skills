@@ -31,7 +31,7 @@ def test_research_narrative_planner_agent_names_stage_and_boundary() -> None:
         assert field in text, f"missing contract field: {field}"
 
 
-def test_content_reviewer_agent_names_stage_and_finding_kinds():
+def test_content_reviewer_agent_names_stage_and_finding_kinds() -> None:
     text = _read("content_reviewer_agent.md")
     assert "name: content_reviewer_agent" in text
     assert "Stage 4" in text
