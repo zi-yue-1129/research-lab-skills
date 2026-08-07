@@ -40,9 +40,12 @@ findings:
   - kind: other
     description: <string, specific and falsifiable, e.g. "chart shows 45% but source data says 38%">
     source: svg-preview | pptx-render
+    artifact_path: <path to the rendered svg/png this finding refers to>
     scope: {slide: <slide_id>, region: <region_id or module_id>}
     disposition: open
 ```
+
+**Note:** `artifact_path` is required by the validator for every non-plan_review finding — do not omit it.
 
 ## Before Returning
 
