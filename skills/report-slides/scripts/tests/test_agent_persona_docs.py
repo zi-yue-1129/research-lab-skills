@@ -43,3 +43,18 @@ def test_content_reviewer_agent_names_stage_and_finding_kinds() -> None:
     ):
         assert kind in text, f"missing finding kind: {kind}"
     assert "plan_review" in text
+
+
+def test_slide_architect_agent_names_stages_and_complexity_signals() -> None:
+    text = _read("slide_architect_agent.md")
+    assert "name: slide_architect_agent" in text
+    assert "Stage 6" in text and "Stage 7" in text
+    assert "Stage Boundary" in text
+    assert "change an approved takeaway" in text or "an approved evidence reference" in text
+    for field in (
+        "information_hierarchy", "reading_order", "layout_regions", "text_to_visual_ratio",
+        "visual_emphasis", "expected_complexity", "reusable_components", "requires_complex_workflow",
+        "region_count", "route_count", "multi_stage", "mixed_technique",
+        "heavy_cross_region_connections", "expected_reuse", "not_atomic",
+    ):
+        assert field in text, f"missing contract field: {field}"
