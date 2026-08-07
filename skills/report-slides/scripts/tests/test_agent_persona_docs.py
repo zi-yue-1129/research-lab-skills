@@ -72,3 +72,12 @@ def test_complex_visual_decomposer_agent_names_stage_and_module_fields() -> None
         "dependencies", "style_tokens_ref", "editability", "reuse_of",
     ):
         assert field in text, f"missing contract field: {field}"
+
+
+def test_data_visualization_worker_agent_names_stage_and_route() -> None:
+    text = _read("data_visualization_worker_agent.md")
+    assert "name: data_visualization_worker_agent" in text
+    assert "Stage 9" in text
+    assert "Stage Boundary" in text
+    assert "Modify scientific content" in text or "modify scientific content" in text
+    assert "data" in text and "route" in text
