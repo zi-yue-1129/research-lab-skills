@@ -44,7 +44,7 @@ Begin by analyzing the Slide Specification's `complexity_signals` and `layout_re
    - `input_anchors`: Named connection points where other modules feed data or content into this module (e.g., `["data-input", "reference-link"]`).
    - `output_anchors`: Named connection points where this module's output connects to others (e.g., `["chart-output", "legend-key"]`).
 
-5. **Identify Dependencies** — List module ids (from the same spec) that this module depends on. For example, if module B's data input comes from module A's output, then module B has `dependencies: [A]`. The validator enforces referential integrity: every module id in `dependencies` must be declared in `modules`.
+5. **Identify Dependencies** — List module ids (from the same spec) that this module depends on. For example, if module B's data input comes from module A's output, then module B has `dependencies: [A]`. **Important:** The validator only type-checks `dependencies` as a list; it does NOT validate whether the ids you list actually exist in `modules`. You are responsible for ensuring that every module id in `dependencies` is a declared module in the same specification—a dangling or fabricated dependency id will not be caught automatically.
 
 6. **Set Reuse Identity** — If a module is identical to one already produced elsewhere in the deck, find its `reuse_id` via manifest search and set `reuse_of: <reuse_id>`. Otherwise, set `reuse_of: null`. Follow the manifest reuse-identity discipline established in this skill.
 
@@ -92,19 +92,21 @@ Validate your output before returning to the orchestrator. Run:
 python3 "$(find ~/.claude -path "*/report-slides/scripts/validate_visual_module.py" | head -1)" --spec <path> --json
 ```
 
-Fix any reported errors in your output before returning. Do not return an invalid specification for the orchestrator or Stage 9 workers to catch—your responsibility is to ensure correctness. The validator checks:
+Fix any reported errors in your output before returning. Do not return an invalid specification for the orchestrator or Stage 9 workers to catch—your responsibility is to ensure correctness. The validator automatically checks:
 
-- **Referential integrity:** Every module id in `connections[].from`/`.to` must exist in `modules`.
-- **No self-dependencies:** No module may reference itself in `dependencies`.
+- **Referential integrity on connections:** Every module id in `connections[].from`/`.to` must exist in `modules`.
 - **Non-empty strings:** `visual_id`, `message`, and all `purpose` fields must be non-empty.
 - **Valid enums:** All `route` and `module_type` values must match the specified enums.
 
+**Note:** The validator does NOT check `dependencies` referential integrity or detect self-dependencies—you must verify these yourself before returning.
+
 ## Quality Criteria
 
-Every module in your specification must satisfy these criteria:
+Every module in your specification must satisfy these criteria. **Note:** Some criteria are not automatically validated by `validate_visual_module.py --spec`; you are responsible for verifying them manually before returning:
 
-- **No self-dependencies:** No module may list itself in its own `dependencies`.
-- **Referential integrity:** Every module referenced in `connections` must exist in `modules`.
+- **No self-dependencies:** No module may list itself in its own `dependencies`. **(Manual check—not validated by script.)**
+- **Dependencies referential integrity:** Every module id listed in a module's `dependencies` must be a declared module id in the same specification. **(Manual check—not validated by script.)**
+- **Connections referential integrity:** Every module referenced in `connections` must exist in `modules`. **(Automatically validated by script.)**
 - **Reuse identity validity:** When `reuse_of` is set (not null), it must name a module id that exists in the project's manifests—not a fabricated id.
 - **Anchor naming consistency:** `input_anchors` and `output_anchors` should use consistent, descriptive naming (e.g., `"data-in"`, `"chart-out"`) to make connections readable.
 - **Message clarity:** The `message` field must concisely state the single most important thing this visual communicates; avoid vague or compound messages.
