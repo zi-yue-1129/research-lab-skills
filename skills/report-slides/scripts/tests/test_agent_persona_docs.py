@@ -126,3 +126,16 @@ def test_scientific_visual_reviewer_agent_names_stage_and_boundary() -> None:
     assert "Stage Boundary" in text
     assert "aesthetic" in text.lower()
     assert "reviewer_role: scientific" in text or "reviewer_role" in text and "scientific" in text
+
+
+def test_visual_quality_reviewer_agent_names_stage_and_finding_kinds() -> None:
+    text = _read("visual_quality_reviewer_agent.md")
+    assert "name: visual_quality_reviewer_agent" in text
+    assert "Stage 12" in text
+    assert "Stage Boundary" in text
+    assert "scientific" in text.lower() and "semantic" in text.lower()
+    for kind in (
+        "clipping", "overlap", "text-reflow", "connector-drift", "crop",
+        "unreadably-small-text", "missing-image", "z-order", "alignment",
+    ):
+        assert kind in text, f"missing finding kind: {kind}"
