@@ -99,3 +99,12 @@ def test_conceptual_illustration_worker_agent_names_stage_and_route() -> None:
     assert "Stage Boundary" in text
     assert "modify scientific content" in text.lower()
     assert "generative" in text
+
+
+def test_annotation_worker_agent_names_stage_and_route() -> None:
+    text = _read("annotation_worker_agent.md")
+    assert "name: annotation_worker_agent" in text
+    assert "Stage 9" in text
+    assert "Stage Boundary" in text
+    assert "modify scientific content" in text.lower()
+    assert "hybrid" in text
