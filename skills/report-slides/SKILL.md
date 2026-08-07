@@ -133,21 +133,46 @@ To **create a custom style**: make `$SLIDES_DIR/styles/<name>.md` using the sche
 
 ## Workflow
 
-### 1. Show available logs
+This is a 15-stage, approval-gated, multi-agent pipeline. `presentation_state.py`
+is the state machine of record: every stage transition below is a call into it,
+not a prose convention. Nothing that is not deterministic orchestrator logic is
+performed by the orchestrator itself — planning, review, and visual authoring
+are always dispatched to a named agent via the Task tool, and the orchestrator's
+job is to create records, validate agent output, and gate transitions.
+
+### 1. Create the Deck
+
+Orchestrator. After Setup, before asking the user anything, create the Deck
+record so every later stage has a `$DECK_ID` to attach state to:
+
+```bash
+PSTATE="$(find ~/.claude -path "*/report-slides/scripts/presentation_state.py" | head -1)"
+DECK_JSON=$(python3 "$PSTATE" --create-deck --title "<deck working title>" --json)
+DECK_ID=$(echo "$DECK_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['id'])")
+```
+
+`deck.status` starts at `planning`. Enforcement Mechanism (the exact rule from
+the design spec): no SVG, PNG, PPTX, or manifest is ever written before
+`deck.status` reaches `approved`, and this is enforced by
+`--check-production-allowed` (Stage 14), not by prose discipline — a
+production call against an unapproved deck fails closed.
+
+### 2. Ask (one message)
+
+Before asking, show the user what already exists to select from — reuse the
+existing log-discovery step:
 
 ```bash
 cat "$RESEARCH_LOG_DIR/INDEX.md" 2>/dev/null \
   || find "$RESEARCH_LOG_DIR" -maxdepth 1 -name "*.md" ! -name "INDEX.md" | sort -r | head -20
 ```
 
-Show the user which entries exist and which have already been made into slide decks.
-If no log files exist, tell the user to run `/research-log add` first and stop.
+Show the user which entries exist and which have already been made into slide
+decks. If no log files exist, tell the user to run `/research-log add` first
+and stop.
 
----
-
-### 1b. Academic data source (optional)
-
-When the user passes `--source academic` or selects "academic pipeline" as source:
+**Academic data source (optional).** When the user passes `--source academic`
+or selects "academic pipeline" as source in the question below:
 
 1. Check for a passport YAML file (default: `docs/passport.yaml`; override with `--passport <path>`)
 2. Run the bridge script to extract stage data:
@@ -155,13 +180,12 @@ When the user passes `--source academic` or selects "academic pipeline" as sourc
    BRIDGE="$(find ~/.claude -path "*/research-lab-skills/bridge/scripts/passport_to_log.py" 2>/dev/null | head -1)"
    python3 "$BRIDGE" --passport docs/passport.yaml
    ```
-3. Use the extracted stage records as input for slide generation instead of research-log entries
+3. Use the extracted stage records as input for slide generation instead of research-log entries.
 
 If no passport file exists, fall back to research-log source and notify the user.
 
----
-
-### 2. Ask (one message)
+This is the existing questionnaire — copy it verbatim from the current file,
+unchanged; it still runs before any planning:
 
 1. Source? (`research-log` = experiment logs (default) / `academic` = pipeline passport data)
    If research-log: which logs? (`all` / `recent-N` / by name / date range)
@@ -172,15 +196,54 @@ If no passport file exists, fall back to research-log source and notify the user
 5. Emphasis? (progression / final results / failure analysis / let Claude decide)
 6. Style? (skip = use `$SLIDES_DIR/_style.md` if present / name a built-in / `custom` to create one)
 
----
+Read the selected log files (or the academic bridge output) and any
+`CLAUDE.md` for project context and baselines. This resolved log/passport
+content is exactly what Stage 3 receives.
 
-### 3. Read logs and propose outline
+### 3. Narrative planning
 
-Read the selected log files and any `CLAUDE.md` for project context and baselines.
+Dispatch `research_narrative_planner_agent` (Task tool) with: the resolved
+log/passport content from Stage 2, `$DECK_ID`, and instructions to write
+`.research/presentations/decks/$DECK_ID/plan.yaml` (a Deck Plan document per
+the design spec §3 contract table) and return its path. Orchestrator then
+runs:
 
-Analyze: `follows:` chains for progression, key results, failures, narrative arc.
+```bash
+DDP="$(find ~/.claude -path "*/report-slides/scripts/validate_deck_plan.py" | head -1)"
+python3 "$DDP" --plan ".research/presentations/decks/$DECK_ID/plan.yaml" --json
+```
 
-**Propose the outline — wait for confirmation before generating:**
+A non-`valid` result is a bug in the agent's output, not a workflow state —
+re-dispatch the same agent with the validator's errors, do not proceed. Once
+valid, `deck.status: planning -> content_review`.
+
+### 4. Content review
+
+Dispatch `content_reviewer_agent` with the Deck Plan path. The agent returns a
+Review Result (`subject_type: plan`, `subject_id: $DECK_ID`); orchestrator
+writes it and validates:
+
+```bash
+python3 "$PSTATE" --record-review --subject-type plan --subject-id "$DECK_ID" \
+    --reviewer-role content_reviewer --status <passed|failed> \
+    --findings-json "$(cat review_result_findings.json)" --round 1 --json
+VVR="$(find ~/.claude -path "*/report-slides/scripts/validate_visual_review.py" | head -1)"
+python3 "$VVR" --review-result review_result.json --json
+```
+
+If `status: failed`, `deck.status` stays `content_review`; feed the findings
+back into the Research Narrative Planner (Stage 3) as a Revision Request
+(`--create-revision-request --subject-type plan --subject-id "$DECK_ID"
+--requested-by reviewer --instructions "<findings summary>"`) and re-run
+Stage 3-4 against a new `plan_version`. If `status: passed`, `deck.status:
+content_review -> awaiting_approval`.
+
+### 5. Approval gate
+
+Orchestrator, interactive by default. Present the approved-by-content-review
+Deck Plan to the user in the same style as the current outline-confirmation
+prompt — a numbered slide list, one line per slide: title plus intended
+visual type tag:
 
 ```
 Proposed slide structure (N slides):
@@ -199,7 +262,105 @@ Proposed slide structure (N slides):
 Confirm? (say "ok" to proceed, or specify changes)
 ```
 
-### 3.1 Mandatory visual-authoring gate
+Wait for one of: `approve`, or a revision instruction (`revise a slide`, `add
+a slide`, `remove a slide`, `reorder`, `change emphasis`, `change audience`,
+`change duration`). A revision instruction becomes a Revision Request fed
+back to Stage 3 exactly as in Stage 4's revise path (`deck.status:
+awaiting_approval -> planning`), and the plan re-enters Stage 3-5. On
+`approve`:
+
+```bash
+python3 "$PSTATE" --set-deck-status --deck-id "$DECK_ID" --status approved --json
+```
+
+Write `.research/presentations/decks/$DECK_ID/approval.yaml` (Deck Approval
+document: `decision: approve`, `approved_by`, `approved_at`).
+
+#### Non-interactive escape hatch (applies to Stages 1-5 as a whole)
+
+If invoked with `--yes`, skip the interactive wait in Stage 5 only — Stages
+3-4 (planning and content review) still run and must still pass — and
+auto-approve with `approved_by: "auto (--yes)"`. If invoked with
+`--approved-plan-file PATH`, skip Stages 3-4-5 entirely: validate the given
+file with `validate_deck_plan.py --plan`, copy it to
+`.research/presentations/decks/$DECK_ID/plan.yaml`, and go directly to
+`deck.status: planning -> approved` with `approved_by: "pre-approved
+(--approved-plan-file)"`. Without either flag, legacy single-message
+invocation (today's default) still creates a Deck and passes through
+`content_review -> awaiting_approval` and stops for the interactive gate —
+this is the concrete mechanism satisfying "Legacy invocation must now enter
+the approval workflow unless an explicit non-interactive option is
+provided."
+
+### 6. Slide specification
+
+For each `SlidePlanEntry` in the approved plan:
+`python3 "$PSTATE" --create-slide --deck-id "$DECK_ID" --plan-slide-id
+<slide-01> --title "<title>" --json`, then dispatch `slide_architect_agent`
+with that slide's plan entry, returning a Slide Specification written to
+`.research/presentations/decks/$DECK_ID/slides/<plan_slide_id>/spec.yaml`,
+including the `complexity_signals` object (`region_count`, `route_count`,
+`multi_stage`, `mixed_technique`, `heavy_cross_region_connections`,
+`expected_reuse`, `not_atomic`). `slide.status: planned -> ready`.
+
+### 7. Complexity detection
+
+Orchestrator, deterministic, per slide:
+
+```bash
+CVD="$(find ~/.claude -path "*/report-slides/scripts/complex_visual_detector.py" | head -1)"
+python3 "$CVD" --signals ".../spec.yaml#complexity_signals-as-json" --json
+```
+
+(Extract `complexity_signals` from the Slide Specification into a small JSON
+file first — `complex_visual_detector.py` takes `--signals PATH` pointing at
+a signals-only document, not the full spec.) The result's
+`requires_complex_workflow` decides the branch: `false` → skip to Stage 9
+using exactly today's `generate_slides.py`/agent-authored-SVG path for this
+slide (Compatibility Criterion 2 — no module is created, the slide moves
+`ready -> producing -> review_required -> passed` directly against its own
+single visual). `true` → continue to Stage 8.
+
+### 8. Complex visual decomposition
+
+Only for slides where Stage 7 returned `true`. Dispatch
+`complex_visual_decomposer_agent` with the Slide Specification; it returns a
+Complex Visual Specification (written to
+`.research/presentations/decks/$DECK_ID/slides/<plan_slide_id>/visual_spec.yaml`).
+Validate:
+
+```bash
+DVM="$(find ~/.claude -path "*/report-slides/scripts/validate_visual_module.py" | head -1)"
+python3 "$DVM" --spec ".../visual_spec.yaml" --json
+```
+
+Then create one Visual Module record per `ModuleSpec`:
+
+```bash
+python3 "$PSTATE" --create-visual-module --slide-id "$SLIDE_ID" --module-key <module-id> \
+    --module-type <data_visualization|architecture|conceptual|annotation> \
+    --dependencies $(python3 -c "import json; print(' '.join(json.load(open('deps.json'))))") --json
+```
+
+### 9. Module production
+
+For each Visual Module whose dependencies are all `passed` (query with
+`--query --deck-id "$DECK_ID" --json` and inspect `visual_modules`),
+transition it to `producing` (`--set-module-status --module-id "$MODULE_ID"
+--status producing --json` — this call itself fails if a dependency is not
+yet `passed`, so it doubles as the readiness check) and dispatch the matching
+worker agent by `module_type`: `data_visualization_worker_agent`,
+`architecture_diagram_worker_agent`, `conceptual_illustration_worker_agent`,
+or `annotation_worker_agent`. Independent modules (no shared dependency) may
+be dispatched in the same turn since each is a separate Task-tool call; a
+module with an unresolved dependency stays `ready`/`blocked` until its
+dependency reaches `passed`. Each worker writes its module's own manifest via
+the mandatory visual-authoring gate below (§9.1-9.4) — reused unchanged from
+the pre-redesign workflow per §5 of the design spec, since each module is its
+own `diagram_id`-equivalent asset — and returns; orchestrator sets
+`--status review_required`.
+
+#### 9.1 Mandatory visual-authoring gate
 
 Immediately after outline confirmation, before drawing or generating any visual,
 run this ordered gate for every non-trivial visual, including charts and
@@ -254,7 +415,7 @@ conceptual illustrations:
 Missing rendering or model-vision review is a hard blocker: retain the failing
 artifact, record the blocker, and do not mark the visual or deck complete.
 
-### 3.2 Visual routes and references
+#### 9.2 Visual routes and references
 
 In `diagram-plan.yaml`, set the validator-facing `route` field. In
 `manifest.yaml`, set the validator-facing `authoring_route` field. Both fields
@@ -281,7 +442,7 @@ Read only the references needed for the selected route and gate:
 - [generative-visuals.md](references/generative-visuals.md) — runtime generation and reference edits.
 - [visual-review.md](references/visual-review.md) — pixel rendering, vision review, and blockers.
 
-### 3.3 Generation, reuse, and reporting contract
+#### 9.3 Generation, reuse, and reporting contract
 
 - `[V:AI]` and `[V:HYBRID]` require runtime image generation for creation or
   editing. For an edit, provide the earlier asset to the image-generation
@@ -311,7 +472,7 @@ Read only the references needed for the selected route and gate:
   `source-pixel` otherwise) and `overall.completion_allowed`; an open finding
   or an incomplete direct-inspection set keeps `completion_allowed` `false`.
 
-### 3.4 Response-facing contract
+#### 9.4 Response-facing contract
 
 Fresh plans and completion responses must expose these required fields and
 claims:
@@ -359,7 +520,7 @@ claims:
   form, `change`, and `reason`), and
   `delivery_summary`.
 
-#### Reuse/change response template
+##### Reuse/change response template
 
 Every fresh execution answer must be a filled concrete record, not
 instructions. Begin by stating the `manifest/asset-library search` result,
@@ -401,9 +562,61 @@ delivery_summary: "Modified slide 4 from git:4b29f2a; changed two regions and pr
 - Failure slide: only if logs have content under `## Failures`
 - Fewer slides (4–5) for single-entry logs; more for conference talks
 
----
+### 10. Visual integration
 
-### 3.5 Resolve style
+Once every module for a slide is `review_required` or later, dispatch
+`visual_integration_agent` with all of that slide's module manifests and the
+Complex Visual Specification's `connections`/`layout`. It assembles the
+integrated SVG and writes the integration manifest (`modules_ref` pointing at
+the Complex Visual Specification, per §5 of the design spec).
+
+### 11. Scientific review
+
+Dispatch `scientific_visual_reviewer_agent` per slide (simple or integrated)
+with the rendered visual and its manifest. Record the result:
+`--record-review --subject-type slide --subject-id "$SLIDE_ID"
+--reviewer-role scientific --status <passed|failed> ...`. `failed` → every
+module still `producing`/`review_required` for that slide (or the simple
+slide itself) moves to `revision_required`, a new Revision Request is created
+(`--requested-by reviewer`), and only the affected module(s) re-enter
+`producing` (Stage 9) — siblings stay `passed`, satisfying the
+partial-regeneration requirement.
+
+### 12. Visual quality review
+
+Dispatch `visual_quality_reviewer_agent`, same mechanics as Stage 11 but
+`--reviewer-role visual_quality`, and explicitly independent of Stage 11 — a
+slide only reaches `passed` when both reviews pass; either one failing alone
+triggers the same `revision_required` path scoped to that reviewer's
+findings.
+
+### 13. Draft review gate
+
+Orchestrator, interactive. Once every slide/module for the deck is `passed`,
+`deck.status: producing -> draft_review`. Present the draft to the user (list
+every slide, its route tag, and its review outcomes). The user may approve
+(`deck.status: draft_review -> validating`, continue to Stage 14) or request
+targeted regeneration of specific slides (`deck.status: draft_review ->
+producing`, only the named slides'/modules' status is reset to `producing`,
+re-entering Stage 9-12 — everything else keeps its `passed` status and its
+existing artifacts untouched, satisfying the partial-slide-regeneration
+acceptance criterion).
+
+### 14. Export and production
+
+Orchestrator, deterministic — this is the existing "4. Generate slides" and
+"PPTX export" sections of the pre-redesign `SKILL.md`, unchanged in mechanics
+but now preceded by the gate:
+
+```bash
+python3 "$PSTATE" --check-production-allowed --deck-id "$DECK_ID" --json
+```
+
+which fails closed (nonzero exit, no file written) if `deck.status` is
+somehow earlier than `approved`. The generation mechanics that follow are
+unchanged from before this redesign:
+
+#### 14.1 Resolve style
 
 Before generating, determine which style file to use and export `STYLE_FILE`:
 
@@ -412,22 +625,18 @@ STYLE_FILE=""
 [ -f "$SLIDES_DIR/_style.md" ] && STYLE_FILE="$SLIDES_DIR/_style.md"
 ```
 
-If the user named a style in Q6, search in order:
+If the user named a style in Stage 2's Q6, search in order:
 1. `$SLIDES_DIR/styles/<name>.md` (project-local)
 2. Skill bundle `styles/<name>.md` (built-in)
 
 Set `STYLE_FILE` to whichever path exists. If the user chose `custom`, read `references/styles/STYLES.md`
 and ask for the required frontmatter values, then write `$SLIDES_DIR/styles/<name>.md`.
 
----
-
-### 4. Generate slides
+#### 14.2 Generate slides
 
 Output directory: `$SLIDES_DIR/reports/YYYY-MM-DD_<name>/`
 
----
-
-#### [A] Python renderer — usually [V:DATA]
+##### [A] Python renderer — usually [V:DATA]
 
 **Supported types:** `title` `bullet_list` `bar_chart` `table` `metric_cards` `two_column` `timeline` `conclusion` `score_trajectory` `pipeline_status`
 
@@ -511,9 +720,7 @@ python3 scripts/generate_slides.py --data <dir>/slide_data.json --out <dir>/ --s
 
 Only include [A] slides in `slide_data.json`.
 
----
-
-#### [B] Mermaid (optional source for [V:NATIVE])
+##### [B] Mermaid (optional source for [V:NATIVE])
 
 Write a `.mmd` file then convert:
 ```bash
@@ -533,9 +740,7 @@ embedded or raster result, disclose the editability loss instead of calling it
 
 Prefer `flowchart LR` for pipelines, `flowchart TD` for training stages, `stateDiagram-v2` for state machines.
 
----
-
-#### [C] Claude SVG — [V:NATIVE], [V:AI], or [V:HYBRID] source
+##### [C] Claude SVG — [V:NATIVE], [V:AI], or [V:HYBRID] source
 
 Write SVG directly. If `STYLE_FILE` is set, read it and load `references/styles/STYLES.md` for the full
 role descriptions; otherwise use the defaults in the table below.
@@ -556,19 +761,39 @@ role descriptions; otherwise use the defaults in the table below.
 
 Rules for `[V:NATIVE]`: no `<image>` tags; escape `&` `<` `>` in text; split long text with `<tspan dy="...">`. `[V:AI]` keeps the generated PNG/JPG as a separate raster base. `[V:HYBRID]` composes that raster base with an editable SVG overlay in the same `1200x675` coordinate system. For `[V:AI]` and `[V:HYBRID]`, do not put factual labels, legends, or values in generated pixels. Native PPTX exports overlay elements as separate shapes when supported, while embed/fallback output must disclose remaining raster layers and editability loss.
 
----
-
-#### Charts
+##### Charts
 
 **list:** Collect chart paths from `## Charts` sections in the selected log files. Write `chart_list.md` grouped by slide.
 
 **embed:** Base64-encode each PNG and insert as `<image>` in the relevant SVG.
 
----
+### 15. PPTX structural validation and completion
 
-### 5. Update logs and rebuild index
+Orchestrator. Extends the existing visual-review gate (kept verbatim above in
+§9.1, and in `references/visual-review.md` — this is what
+`test_visual_review_docs.py` checks) with the new structural validator as an
+additional, real check before `statuses.pptx_structure` is recorded:
 
-Add the deck path to `slide_decks:` in each included log file's frontmatter. Rebuild INDEX.md.
+```bash
+VPS="$(find ~/.claude -path "*/report-slides/scripts/validate_pptx_structure.py" | head -1)"
+python3 "$VPS" --pptx "$SLIDES_DIR/reports/.../deck.pptx" --expected-slides <N> \
+    --declared-editability declared_editability.json --json
+```
+
+Map its `{status, relationship_violations, editability_mismatches}` output
+into the review record's `statuses.pptx_structure` object (this mapping —
+supplying `round`/`reviewed_by`/`inspected_paths`/`revision_required`/
+`started_at`/`completed_at`/`findings` around the validator's raw facts — is
+exactly the "Phase B entry criterion" the design spec §5b flags; implement it
+here as a small deterministic mapping, not a new script). `deck.status:
+validating -> completed` only when `validate_visual_review.py --record` (the
+full completion gate, unchanged from before this redesign) passes; a failure
+moves `deck.status: validating -> revising` and creates a Revision Request
+against the failing slide(s).
+
+Once the deck reaches `completed`, close out the bookkeeping from the
+pre-redesign workflow: add the deck path to `slide_decks:` in each included
+log file's frontmatter and rebuild `INDEX.md`.
 
 ---
 
