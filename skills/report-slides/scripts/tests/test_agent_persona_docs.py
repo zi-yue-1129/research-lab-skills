@@ -29,3 +29,17 @@ def test_research_narrative_planner_agent_names_stage_and_boundary() -> None:
         "visual_rationale", "speaker_message", "dependencies", "open_questions",
     ):
         assert field in text, f"missing contract field: {field}"
+
+
+def test_content_reviewer_agent_names_stage_and_finding_kinds():
+    text = _read("content_reviewer_agent.md")
+    assert "name: content_reviewer_agent" in text
+    assert "Stage 4" in text
+    assert "Stage Boundary" in text
+    assert "approve a plan it authored" in text or "approve a plan it reviewed" in text
+    for kind in (
+        "unsupported-claim", "duplicated-content", "missing-limitation",
+        "excessive-background", "unnecessary-visual", "weak-continuity",
+    ):
+        assert kind in text, f"missing finding kind: {kind}"
+    assert "plan_review" in text
