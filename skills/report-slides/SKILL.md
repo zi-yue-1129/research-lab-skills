@@ -228,7 +228,7 @@ python3 "$PSTATE" --record-review --subject-type plan --subject-id "$DECK_ID" \
     --reviewer-role content_reviewer --status <passed|failed> \
     --findings-json "$(cat review_result_findings.json)" --round 1 --json
 VVR="$(find ~/.claude -path "*/report-slides/scripts/validate_visual_review.py" | head -1)"
-python3 "$VVR" --review-result review_result.json --json
+python3 "$VVR" --review-result review_result.json
 ```
 
 If `status: failed`, `deck.status` stays `content_review`; feed the findings
