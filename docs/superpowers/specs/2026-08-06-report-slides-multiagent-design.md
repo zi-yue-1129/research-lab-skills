@@ -23,6 +23,13 @@ Four architectural forks were presented for confirmation; all four are reflected
 3. **Orchestrator execution model** — `SKILL.md` itself is the orchestrator (matching the existing `deep-research`/`academic-pipeline` precedent in this repo); no separate `presentation_orchestrator_agent.md` persona file.
 4. **Delivery** — phased: **Phase A** (state store + all contract validators + the deterministic approval/production gate + their tests) → **Phase B** (`SKILL.md` rewrite + all 11 agent persona files) → **Phase C** (worked example + reference docs). Each phase gets its own plan and full subagent-driven-development review cycle before the next begins.
 
+## 0b. Decisions confirmed before Phase B implementation
+
+Two Phase-B-scoped forks, confirmed before writing the Phase B plan:
+
+5. **Plan-level findings validation gap (§3 "Phase A status of the findings reuse")** — resolved by adding a plan-level `source` value (`plan_review`) to `validate_visual_review.py`'s finding schema, under which `artifact_path`/`scope` become optional (they only apply to the three existing visual-inspection sources: `svg_preview`, `pptx_structure`, `pptx_render`). No new validator file. This is a same-file, additive extension to `_validate_findings`, consistent with how Phase A already extended `_ALLOWED_FINDING_KINDS` in the same function.
+6. **`references/contracts.md` (full field-level schema reference for the 9 contracts)** — deferred to Phase C, per the original Phase A/B/C split (Phase B = SKILL.md rewrite + 11 agent persona files only; Phase C = worked example + reference docs). Phase B does **not** add `references/contracts.md` or `references/agent-roles.md`.
+
 ## 1. Agent Roster
 
 One orchestrator + ten specialized agents, following this repo's existing `deep-research`/`academic-pipeline` convention exactly: each agent is a Markdown persona file under `skills/report-slides/agents/*.md` (frontmatter `name`/`description`, a Phase/Stage Boundary block stating what it MUST NOT do, an Output Format section), dispatched via the Task tool by whichever Claude session is running `report-slides`. There is no separate always-running orchestrator *process* — matching how `deep-research`/`academic-pipeline` already work in this repo, the **orchestrator role is `report-slides/SKILL.md` itself**: the calling session reads it, and at each stage either does deterministic work itself (calling the state/validator CLIs below) or dispatches one agent persona via the Task tool. This keeps the design consistent with the only precedent that exists in this codebase, rather than inventing a new "orchestrator" execution model.
