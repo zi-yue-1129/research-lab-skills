@@ -81,3 +81,12 @@ def test_data_visualization_worker_agent_names_stage_and_route() -> None:
     assert "Stage Boundary" in text
     assert "Modify scientific content" in text or "modify scientific content" in text
     assert "data" in text and "route" in text
+
+
+def test_architecture_diagram_worker_agent_names_stage_and_route() -> None:
+    text = _read("architecture_diagram_worker_agent.md")
+    assert "name: architecture_diagram_worker_agent" in text
+    assert "Stage 9" in text
+    assert "Stage Boundary" in text
+    assert "modify scientific content" in text.lower()
+    assert "native" in text
