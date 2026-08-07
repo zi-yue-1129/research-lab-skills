@@ -117,3 +117,12 @@ def test_visual_integration_agent_names_stage_and_modules_ref() -> None:
     assert "Stage Boundary" in text
     assert "Redraw a validated module without cause" in text or "redraw a validated module" in text.lower()
     assert "modules_ref" in text
+
+
+def test_scientific_visual_reviewer_agent_names_stage_and_boundary() -> None:
+    text = _read("scientific_visual_reviewer_agent.md")
+    assert "name: scientific_visual_reviewer_agent" in text
+    assert "Stage 11" in text
+    assert "Stage Boundary" in text
+    assert "aesthetic" in text.lower()
+    assert "reviewer_role: scientific" in text or "reviewer_role" in text and "scientific" in text
