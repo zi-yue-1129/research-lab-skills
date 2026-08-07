@@ -58,3 +58,17 @@ def test_slide_architect_agent_names_stages_and_complexity_signals() -> None:
         "heavy_cross_region_connections", "expected_reuse", "not_atomic",
     ):
         assert field in text, f"missing contract field: {field}"
+
+
+def test_complex_visual_decomposer_agent_names_stage_and_module_fields() -> None:
+    text = _read("complex_visual_decomposer_agent.md")
+    assert "name: complex_visual_decomposer_agent" in text
+    assert "Stage 8" in text
+    assert "Stage Boundary" in text
+    assert "author any visual asset itself" in text
+    for field in (
+        "visual_id", "message", "modules", "connections", "layout",
+        "route", "module_type", "input_anchors", "output_anchors",
+        "dependencies", "style_tokens_ref", "editability", "reuse_of",
+    ):
+        assert field in text, f"missing contract field: {field}"
