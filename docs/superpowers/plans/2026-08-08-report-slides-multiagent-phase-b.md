@@ -1154,8 +1154,10 @@ findings:
     description: <string, specific and falsifiable, e.g. "chart shows 45% but source data says 38%">
     source: svg-preview | pptx-render
     scope: {slide: <slide_id>, region: <region_id or module_id>}
+    artifact_path: <path to the rendered svg/png this finding refers to>
     disposition: open
 ```
+`artifact_path` is required by `validate_visual_review.py`'s `_validate_finding_entry` for every finding whose `source` is not `plan_review` (i.e. every finding this agent produces) — do not omit it, an example/template without it produces a document that fails its own validator.
 5. `## Quality Criteria` — every `failed` status has at least one `open` finding with a falsifiable, checkable description (not "seems off").
 
 - [ ] **Step 4: Run the doc test to verify it passes.**
@@ -1224,8 +1226,10 @@ findings:
     description: <string>
     source: svg-preview | pptx-render
     scope: {slide: <slide_id>, region: <region_id or module_id>}
+    artifact_path: <path to the rendered svg/png this finding refers to>
     disposition: open
 ```
+`artifact_path` is required by `validate_visual_review.py`'s `_validate_finding_entry` for every finding whose `source` is not `plan_review` (i.e. every finding this agent produces) — do not omit it, an example/template without it produces a document that fails its own validator. Self-validate the output with `validate_visual_review.py --review-result <path>` (Task 1's mode — NOT `--record`/`--root`, which validates a different, deck-level PPTX visual-review record with an incompatible required-field set; `--review-result` is the correct, already-precedented mechanism for a single `record_review()`-shaped document, used identically by `content_reviewer_agent.md` and `scientific_visual_reviewer_agent.md`).
 5. `## Quality Criteria` — every finding names a specific `region`/module within `scope`, not "the slide" generically; `status: passed` requires zero `open` findings.
 
 - [ ] **Step 4: Run the doc test to verify it passes.**
