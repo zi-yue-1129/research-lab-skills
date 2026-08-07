@@ -51,7 +51,12 @@ _ALLOWED_FINDING_SOURCES: Tuple[str, ...] = (
     "svg-preview",
     "pptx-structure",
     "pptx-render",
+    # Plan-level review source (Content Reviewer, Stage 4) -- findings from
+    # this source describe the Deck Plan itself, not a rendered artifact, so
+    # `scope`/`artifact_path` are optional rather than required for them.
+    "plan_review",
 )
+_PLAN_LEVEL_FINDING_SOURCE = "plan_review"
 _ALLOWED_FINDING_DISPOSITIONS: Tuple[str, ...] = ("open", "fixed", "rechecked")
 
 
@@ -144,6 +149,62 @@ def _check_artifact_paths(
     return issues
 
 
+def _validate_finding_entry(
+    finding_path: str,
+    finding: Any,
+    artifact_root: Optional[Path],
+) -> List[ValidationIssue]:
+    """Validate one finding entry, shared by gate-level and plan-level review.
+
+    Args:
+        finding_path: Dotted path to this finding, for error messages.
+        finding: The parsed finding mapping.
+        artifact_root: Artifact root for `artifact_path` resolution, or
+            ``None`` when the caller has no artifact root (plan-level
+            review results, which have no rendered artifact).
+
+    Returns:
+        A list of validation issues; empty if the finding is valid.
+    """
+    issues: List[ValidationIssue] = []
+    if not isinstance(finding, Mapping):
+        return [ValidationIssue(finding_path, "must be a mapping")]
+    kind = finding.get("kind")
+    if kind not in _ALLOWED_FINDING_KINDS:
+        issues.append(ValidationIssue(f"{finding_path}.kind", f"unknown finding kind: {kind!r}"))
+    source = finding.get("source")
+    if source not in _ALLOWED_FINDING_SOURCES:
+        issues.append(
+            ValidationIssue(f"{finding_path}.source", f"unknown finding source: {source!r}")
+        )
+    is_plan_level = source == _PLAN_LEVEL_FINDING_SOURCE
+    if not is_plan_level:
+        if not isinstance(finding.get("scope"), Mapping):
+            issues.append(ValidationIssue(f"{finding_path}.scope", "must be a mapping"))
+        artifact_path = finding.get("artifact_path")
+        issues.extend(
+            _check_artifact_path(f"{finding_path}.artifact_path", artifact_path, artifact_root)
+        )
+    else:
+        if "scope" in finding and not isinstance(finding["scope"], Mapping):
+            issues.append(ValidationIssue(f"{finding_path}.scope", "must be a mapping if present"))
+        if "artifact_path" in finding and finding["artifact_path"] is not None:
+            issues.extend(
+                _check_artifact_path(
+                    f"{finding_path}.artifact_path", finding["artifact_path"], artifact_root
+                )
+            )
+    description = finding.get("description")
+    if not isinstance(description, str) or not description.strip():
+        issues.append(ValidationIssue(f"{finding_path}.description", "must be a non-empty string"))
+    disposition = finding.get("disposition")
+    if disposition not in _ALLOWED_FINDING_DISPOSITIONS:
+        issues.append(
+            ValidationIssue(f"{finding_path}.disposition", f"unknown disposition: {disposition!r}")
+        )
+    return issues
+
+
 def _validate_findings(
     gate_path: str,
     status: Mapping[str, Any],
@@ -159,38 +220,8 @@ def _validate_findings(
     has_open_finding = False
     for index, finding in enumerate(findings):
         finding_path = f"{findings_path}[{index}]"
-        if not isinstance(finding, Mapping):
-            issues.append(ValidationIssue(finding_path, "must be a mapping"))
-            continue
-        kind = finding.get("kind")
-        if kind not in _ALLOWED_FINDING_KINDS:
-            issues.append(
-                ValidationIssue(f"{finding_path}.kind", f"unknown finding kind: {kind!r}")
-            )
-        if not isinstance(finding.get("scope"), Mapping):
-            issues.append(ValidationIssue(f"{finding_path}.scope", "must be a mapping"))
-        artifact_path = finding.get("artifact_path")
-        issues.extend(
-            _check_artifact_path(f"{finding_path}.artifact_path", artifact_path, artifact_root)
-        )
-        description = finding.get("description")
-        if not isinstance(description, str) or not description.strip():
-            issues.append(
-                ValidationIssue(f"{finding_path}.description", "must be a non-empty string")
-            )
-        source = finding.get("source")
-        if source not in _ALLOWED_FINDING_SOURCES:
-            issues.append(
-                ValidationIssue(f"{finding_path}.source", f"unknown finding source: {source!r}")
-            )
-        disposition = finding.get("disposition")
-        if disposition not in _ALLOWED_FINDING_DISPOSITIONS:
-            issues.append(
-                ValidationIssue(
-                    f"{finding_path}.disposition", f"unknown disposition: {disposition!r}"
-                )
-            )
-        if disposition == "open":
+        issues.extend(_validate_finding_entry(finding_path, finding, artifact_root))
+        if isinstance(finding, Mapping) and finding.get("disposition") == "open":
             has_open_finding = True
 
     status_value = status.get("status")
@@ -575,31 +606,128 @@ def validate_review_record(
     return sorted(issues, key=lambda issue: issue.path)
 
 
-def main(arguments: Optional[Sequence[str]] = None) -> int:
-    """Validate a review record from the command line.
+def validate_review_result_findings(
+    findings: Any,
+    artifact_root: Optional[Path] = None,
+) -> List[ValidationIssue]:
+    """Validate the findings list of a standalone Review Result document.
 
-    This doubles as a completion gate: it exits non-zero both when the
-    record is structurally invalid and when it is well-formed but does not
-    (yet) permit a completion claim, so callers can use the exit code alone
-    to decide whether a deck may be reported done.
+    Used for Review Result records that are not one of the three PPTX
+    visual-inspection gates (svg_preview/pptx_structure/pptx_render) --
+    currently, the Content Reviewer's plan-level review at Stage 4.
+
+    Args:
+        findings: The parsed `findings` list.
+        artifact_root: Optional artifact root for `artifact_path`
+            resolution; plan-level findings normally omit `artifact_path`
+            entirely, so this is usually ``None``.
+
+    Returns:
+        A list of validation issues; empty if every finding is valid.
+    """
+    if not isinstance(findings, list):
+        return [ValidationIssue("findings", "must be a list (use [] for a clean pass)")]
+    issues: List[ValidationIssue] = []
+    for index, finding in enumerate(findings):
+        issues.extend(_validate_finding_entry(f"findings[{index}]", finding, artifact_root))
+    return issues
+
+
+_REVIEW_RESULT_SUBJECT_TYPES = frozenset({"plan", "module", "slide", "deck"})
+
+
+def validate_review_result(
+    doc: Mapping[str, Any],
+    artifact_root: Optional[Path] = None,
+) -> List[ValidationIssue]:
+    """Validate a standalone Review Result document.
+
+    Args:
+        doc: The parsed Review Result mapping (`presentation_state.py`'s
+            `record_review` contract: `subject_type`, `subject_id`,
+            `reviewer_role`, `status`, `findings`, `round`).
+        artifact_root: Passed through to `validate_review_result_findings`.
+
+    Returns:
+        A list of validation issues; empty if the document is valid.
+    """
+    issues: List[ValidationIssue] = []
+    if not isinstance(doc, Mapping):
+        return [ValidationIssue("<root>", "must be a mapping")]
+    subject_type = doc.get("subject_type")
+    if subject_type not in _REVIEW_RESULT_SUBJECT_TYPES:
+        issues.append(
+            ValidationIssue(
+                "subject_type",
+                f"must be one of {sorted(_REVIEW_RESULT_SUBJECT_TYPES)}, got {subject_type!r}",
+            )
+        )
+    for field in ("subject_id", "reviewer_role"):
+        value = doc.get(field)
+        if not isinstance(value, str) or not value.strip():
+            issues.append(ValidationIssue(field, "required non-empty string"))
+    status = doc.get("status")
+    if status not in VALID_STATUSES:
+        issues.append(ValidationIssue("status", f"must be one of {sorted(VALID_STATUSES)}, got {status!r}"))
+    round_number = doc.get("round")
+    if not isinstance(round_number, int) or isinstance(round_number, bool):
+        issues.append(ValidationIssue("round", "required int"))
+    issues.extend(validate_review_result_findings(doc.get("findings"), artifact_root))
+    return issues
+
+
+def main(arguments: Optional[Sequence[str]] = None) -> int:
+    """Validate a review record or standalone Review Result from the command line.
+
+    For PPTX visual review records (--record), this doubles as a completion
+    gate: it exits non-zero both when the record is structurally invalid and
+    when it is well-formed but does not (yet) permit a completion claim.
+
+    For standalone Review Result documents (--review-result), this is a pure
+    validation gate: it exits non-zero only when the document is structurally
+    invalid.
 
     Args:
         arguments: Command-line arguments, excluding the program name.
             Defaults to ``sys.argv[1:]`` when ``None``.
 
     Returns:
-        ``0`` only when the record has no structural issues and its derived
-        ``completion_allowed`` is ``True``; ``1`` otherwise.
+        ``0`` only when the input has no structural issues (and, for
+        --record, its derived ``completion_allowed`` is ``True``);
+        ``1`` otherwise.
     """
-    parser = argparse.ArgumentParser(description="Validate a report-slides PPTX visual review record.")
-    parser.add_argument("--record", required=True, type=Path, help="Path to the review.json record.")
+    parser = argparse.ArgumentParser(description="Validate a report-slides PPTX visual review record or standalone Review Result.")
+    parser.add_argument(
+        "--record", type=Path, help="Path to a PPTX visual-review.json record."
+    )
+    parser.add_argument(
+        "--review-result", type=Path, help="Path to a standalone Review Result JSON document."
+    )
     parser.add_argument(
         "--root",
-        required=True,
         type=Path,
-        help="Artifact root that relative paths in the record are resolved against.",
+        help="Artifact root for relative paths in --record. Ignored for --review-result.",
     )
     parsed = parser.parse_args(arguments)
+
+    if bool(parsed.record) == bool(parsed.review_result):
+        parser.error("exactly one of --record or --review-result is required")
+    if parsed.record and not parsed.root:
+        parser.error("--root is required with --record")
+
+    if parsed.review_result:
+        try:
+            text = parsed.review_result.read_text(encoding="utf-8")
+            doc = json.loads(text)
+        except (OSError, json.JSONDecodeError) as error:
+            print(f"ERROR {parsed.review_result}: {error}")
+            return 1
+        issues = validate_review_result(doc)
+        if issues:
+            for issue in issues:
+                print(f"ERROR {issue.path}: {issue.message}")
+            return 1
+        return 0
 
     issues = validate_review_record(parsed.record, parsed.root)
     if issues:

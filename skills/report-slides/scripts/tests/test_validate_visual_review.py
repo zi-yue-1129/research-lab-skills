@@ -12,6 +12,8 @@ from validate_visual_review import (
     _ALLOWED_FINDING_KINDS,
     derive_overall_status,
     validate_review_record,
+    validate_review_result,
+    validate_review_result_findings,
 )
 
 
@@ -505,3 +507,80 @@ def test_all_new_plan_level_finding_kinds_are_allowed() -> None:
         "excessive-background", "unnecessary-visual", "weak-continuity",
     ):
         assert kind in _ALLOWED_FINDING_KINDS
+
+
+def test_plan_review_finding_does_not_require_scope_or_artifact_path():
+    """Validate plan-level findings without scope or artifact_path."""
+    findings = [
+        {
+            "kind": "unsupported-claim",
+            "description": "Slide 3 claims a 40% speedup with no cited benchmark.",
+            "source": "plan_review",
+            "disposition": "open",
+        }
+    ]
+    issues = validate_review_result_findings(findings)
+    assert issues == []
+
+
+def test_plan_review_finding_rejects_unknown_kind():
+    """Reject plan-level findings with unknown kinds."""
+    findings = [
+        {
+            "kind": "not-a-real-kind",
+            "description": "x",
+            "source": "plan_review",
+            "disposition": "open",
+        }
+    ]
+    issues = validate_review_result_findings(findings)
+    assert any(issue.path.endswith(".kind") for issue in issues)
+
+
+def test_visual_gate_finding_still_requires_scope_and_artifact_path():
+    """Require scope and artifact_path for visual-gate findings."""
+    findings = [
+        {
+            "kind": "clipping",
+            "description": "Text clipped in the top-right region.",
+            "source": "svg-preview",
+            "disposition": "open",
+        }
+    ]
+    issues = validate_review_result_findings(findings)
+    paths = {issue.path for issue in issues}
+    assert any(p.endswith(".scope") for p in paths)
+
+
+def test_validate_review_result_accepts_a_well_formed_plan_review():
+    """Accept well-formed plan-level review documents."""
+    doc = {
+        "subject_type": "plan",
+        "subject_id": "deck_20260808_ab12cd",
+        "reviewer_role": "content_reviewer",
+        "status": "failed",
+        "round": 1,
+        "findings": [
+            {
+                "kind": "duplicated-content",
+                "description": "Slides 5 and 7 both restate the same limitation.",
+                "source": "plan_review",
+                "disposition": "open",
+            }
+        ],
+    }
+    assert validate_review_result(doc) == []
+
+
+def test_validate_review_result_rejects_bad_subject_type():
+    """Reject review results with invalid subject_type."""
+    doc = {
+        "subject_type": "not-a-type",
+        "subject_id": "x",
+        "reviewer_role": "content_reviewer",
+        "status": "failed",
+        "round": 1,
+        "findings": [],
+    }
+    issues = validate_review_result(doc)
+    assert any(issue.path == "subject_type" for issue in issues)
