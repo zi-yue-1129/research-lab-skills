@@ -108,3 +108,12 @@ def test_annotation_worker_agent_names_stage_and_route() -> None:
     assert "Stage Boundary" in text
     assert "modify scientific content" in text.lower()
     assert "hybrid" in text
+
+
+def test_visual_integration_agent_names_stage_and_modules_ref() -> None:
+    text = _read("visual_integration_agent.md")
+    assert "name: visual_integration_agent" in text
+    assert "Stage 10" in text
+    assert "Stage Boundary" in text
+    assert "Redraw a validated module without cause" in text or "redraw a validated module" in text.lower()
+    assert "modules_ref" in text
