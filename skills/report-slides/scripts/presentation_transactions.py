@@ -72,9 +72,14 @@ def _open_sidecar(path: Path) -> int:
         An open descriptor for the sidecar lock file.
 
     Raises:
-        TransactionError: If the sidecar is a symlink or unsafe file type.
+        TransactionError: If the sidecar is a symlink or unsafe file type, or
+            the platform does not provide ``os.O_NOFOLLOW``.
     """
     lock_path = _sidecar(path)
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise TransactionError(
+            f"sidecar locking requires os.O_NOFOLLOW; refusing unsafe lock: {lock_path}"
+        )
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     try:
         existing = os.lstat(lock_path)
@@ -82,7 +87,7 @@ def _open_sidecar(path: Path) -> int:
         existing = None
     if existing is not None and not stat.S_ISREG(existing.st_mode):
         raise TransactionError(f"sidecar lock must be a regular file, not symlink or special type: {lock_path}")
-    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+    flags = os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW
     try:
         descriptor = os.open(str(lock_path), flags, 0o666)
     except OSError as exc:

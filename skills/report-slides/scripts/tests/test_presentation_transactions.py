@@ -232,6 +232,58 @@ def test_event_append_rejects_sidecar_symlink_without_touching_outside_sentinel(
     assert not target.exists()
 
 
+def test_state_write_fails_closed_when_no_follow_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A state writer refuses mutation when the platform lacks ``O_NOFOLLOW``."""
+    project = tmp_path / "state-no-follow-project"
+    project.mkdir()
+    (project / ".git").mkdir()
+    deck = create_deck(project, "No-follow guard")
+    target = project / ".research/presentations/state/decks.yaml"
+    sidecar = target.with_suffix(target.suffix + ".lock")
+    outside = tmp_path / "outside-state-no-follow-sentinel"
+    outside.write_bytes(b"outside-state-sentinel")
+    before_target = _sentinel_snapshot(target)
+    before_sidecar = _sentinel_snapshot(sidecar)
+    before_outside = _sentinel_snapshot(outside)
+
+    monkeypatch.delattr(os, "O_NOFOLLOW", raising=False)
+    with pytest.raises(TransactionError, match="O_NOFOLLOW"):
+        set_deck_status(project, deck["id"], "content_review")
+
+    assert _sentinel_snapshot(target) == before_target
+    assert _sentinel_snapshot(sidecar) == before_sidecar
+    assert _sentinel_snapshot(outside) == before_outside
+
+
+def test_event_append_fails_closed_when_no_follow_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An event writer refuses mutation when the platform lacks ``O_NOFOLLOW``."""
+    project = tmp_path / "event-no-follow-project"
+    project.mkdir()
+    (project / ".git").mkdir()
+    target = events_shard_path(project)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(b'{"event":"before"}\n')
+    sidecar = target.with_suffix(target.suffix + ".lock")
+    sidecar.touch()
+    outside = tmp_path / "outside-event-no-follow-sentinel"
+    outside.write_bytes(b"outside-event-sentinel")
+    before_target = _sentinel_snapshot(target)
+    before_sidecar = _sentinel_snapshot(sidecar)
+    before_outside = _sentinel_snapshot(outside)
+
+    monkeypatch.delattr(os, "O_NOFOLLOW", raising=False)
+    with pytest.raises(TransactionError, match="O_NOFOLLOW"):
+        append_event(project, {"event": "guarded", "id": "guarded"})
+
+    assert _sentinel_snapshot(target) == before_target
+    assert _sentinel_snapshot(sidecar) == before_sidecar
+    assert _sentinel_snapshot(outside) == before_outside
+
+
 def test_state_write_rechecks_journal_after_lock_acquisition(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
