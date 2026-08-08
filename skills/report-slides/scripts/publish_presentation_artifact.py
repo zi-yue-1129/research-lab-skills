@@ -15,7 +15,7 @@ import os
 import tempfile
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
-from typing import Any, Iterator, Mapping
+from typing import Any, Iterator, Mapping, MutableMapping
 
 import yaml
 
@@ -463,7 +463,7 @@ def _validate_slide_plan_binding(
     deck_id: str,
     slide: Mapping[str, Any],
     contract: Mapping[str, Any],
-) -> dict[str, str]:
+) -> None:
     """Require protected slide values to match the currently approved plan."""
     deck = load_decks(project_root).get(deck_id)
     plan_id = deck.get("current_plan_id") if isinstance(deck, Mapping) else None
@@ -503,7 +503,7 @@ def _validate_slide_producer(
     deck_id: str,
     slide: Mapping[str, Any],
     producer_id: str,
-) -> None:
+) -> dict[str, str]:
     """Require producer identity from persisted slide ownership or assignment."""
     identities: list[tuple[str, str]] = []
     for field in ("producer_id", "owner_id", "assigned_to", "worker_id", "producer"):
@@ -652,10 +652,10 @@ def _compare_module_spec_to_record(
 
 def _state_paths(project_root: Path, include_modules: bool) -> tuple[Path, ...]:
     """Return affected state files in deterministic lock order."""
-    paths = [project_root / ARTIFACTS_RELATIVE_PATH]
+    artifacts_path = project_root / ARTIFACTS_RELATIVE_PATH
     if include_modules:
-        paths.append(project_root / ".research/presentations/state/visual_modules.yaml")
-    return tuple(sorted(paths, key=lambda path: str(path)))
+        return (project_root / ".research/presentations/state/visual_modules.yaml", artifacts_path)
+    return (artifacts_path,)
 
 
 @contextmanager
@@ -669,29 +669,19 @@ def _state_locks(project_root: Path, paths: tuple[Path, ...]) -> Iterator[None]:
 
 def _stage_state_files(
     project_root: Path,
-    artifact: Mapping[str, Any],
+    artifact: MutableMapping[str, Any],
     snapshots: Mapping[Path, tuple[bytes | None, int | None]],
     module_id: str | None,
 ) -> dict[Path, Path]:
     """Build and fsync complete state files before destination replacement."""
     artifacts_path = project_root / ARTIFACTS_RELATIVE_PATH
     records = _events._load_yaml_map(artifacts_path, "artifacts")
-    slide_ref, module_ref = _events._references(
-        project_root, str(artifact["deck_id"]), artifact.get("slide_id"), module_id
-    )
+    slide_ref, module_ref = _events._references(project_root, str(artifact["deck_id"]), artifact.get("slide_id"), module_id)
     record = dict(artifact)
-    record.update({
-        "id": _events._generate_id("art"),
-        "slide_id": slide_ref,
-        "module_id": module_ref,
-        "created_at": _events._utc_now_iso(),
-    })
+    record.update({"id": _events._generate_id("art"), "slide_id": slide_ref, "module_id": module_ref, "created_at": _events._utc_now_iso()})
     records[record["id"]] = record
     staged: dict[Path, Path] = {}
     try:
-        staged[artifacts_path] = _stage_yaml_map(
-            artifacts_path, "artifacts", records, snapshots[artifacts_path][1], str(artifact["deck_id"])
-        )
         if module_id is not None:
             modules_path = project_root / ".research/presentations/state/visual_modules.yaml"
             modules = _events._load_yaml_map(modules_path, "visual_modules")
@@ -699,9 +689,8 @@ def _stage_state_files(
                 _fail(str(artifact["deck_id"]), [{"reason": "unknown_module"}])
             modules[module_id]["artifact_manifest_path"] = record["relative_path"]
             modules[module_id]["updated_at"] = _events._utc_now_iso()
-            staged[modules_path] = _stage_yaml_map(
-                modules_path, "visual_modules", modules, snapshots[modules_path][1], str(artifact["deck_id"])
-            )
+            staged[modules_path] = _stage_yaml_map(modules_path, "visual_modules", modules, snapshots[modules_path][1], str(artifact["deck_id"]))
+        staged[artifacts_path] = _stage_yaml_map(artifacts_path, "artifacts", records, snapshots[artifacts_path][1], str(artifact["deck_id"]))
     except Exception as exc:  # noqa: BLE001 - staged siblings must never leak
         cleanup_failures = _cleanup_paths(list(staged.values()), str(artifact["deck_id"]))
         if cleanup_failures:
@@ -725,12 +714,8 @@ def _stage_yaml_map(
 ) -> Path:
     """Write, fsync, and verify one complete state snapshot sibling."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = yaml.safe_dump(
-        {"version": 1, top_key: dict(records)}, sort_keys=True, allow_unicode=True
-    ).encode("utf-8")
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{path.name}.stage.", suffix=".tmp", dir=str(path.parent)
-    )
+    payload = yaml.safe_dump({"version": 1, top_key: dict(records)}, sort_keys=True, allow_unicode=True).encode("utf-8")
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.stage.", suffix=".tmp", dir=str(path.parent))
     temporary = Path(temporary_name)
     try:
         with os.fdopen(descriptor, "wb") as handle:
@@ -760,8 +745,8 @@ def _stage_yaml_map(
 
 def _commit_state_files(staged: Mapping[Path, Path]) -> None:
     """Atomically replace each pre-staged state file and sync its directory."""
-    for path in sorted(staged, key=lambda candidate: str(candidate)):
-        os.replace(staged[path], path)
+    for path, temporary in staged.items():
+        os.replace(temporary, path)
         _fsync_directory(path.parent)
 
 
@@ -879,10 +864,7 @@ def _snapshot_state(
     project_root: Path, include_modules: bool
 ) -> dict[Path, tuple[bytes | None, int | None]]:
     """Capture every mutable state file touched by artifact registration."""
-    return {
-        path: _snapshot_path(path)
-        for path in _state_paths(project_root, include_modules)
-    }
+    return {path: _snapshot_path(path) for path in _state_paths(project_root, include_modules)}
 
 
 def _rollback_publication(
@@ -897,18 +879,20 @@ def _rollback_publication(
     for path, snapshot in state_snapshots.items():
         try:
             _restore_path_atomic(path, snapshot)
+        except PublicationGateError as exc:
+            failures.extend(exc.blockers)
         except Exception as exc:  # noqa: BLE001 - recovery must remain explicit
             failures.append({"reason": "rollback_failed", "scope": "state", "path": str(path), "message": str(exc)})
     try:
         _restore_path_atomic(destination, destination_snapshot)
+    except PublicationGateError as exc:
+        failures.extend(exc.blockers)
     except Exception as exc:  # noqa: BLE001 - recovery must remain explicit
         failures.append({"reason": "rollback_failed", "scope": "destination", "path": str(destination), "message": str(exc)})
     return failures
 
 
-def _restore_path_atomic(
-    path: Path, snapshot: tuple[bytes | None, int | None]
-) -> None:
+def _restore_path_atomic(path: Path, snapshot: tuple[bytes | None, int | None]) -> None:
     """Restore one path atomically, preserving bytes, existence, and mode."""
     payload, mode = snapshot
     if payload is None:
@@ -917,10 +901,9 @@ def _restore_path_atomic(
             _fsync_directory(path.parent)
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{path.name}.rollback.", suffix=".tmp", dir=str(path.parent)
-    )
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.rollback.", suffix=".tmp", dir=str(path.parent))
     temporary = Path(temporary_name)
+    failure: Exception | None = None
     try:
         with os.fdopen(descriptor, "wb") as handle:
             written = _write_payload(handle, payload)
@@ -934,9 +917,21 @@ def _restore_path_atomic(
         os.replace(temporary, path)
         temporary = None
         _fsync_directory(path.parent)
-    finally:
-        if temporary is not None:
+    except Exception as exc:  # noqa: BLE001 - preserve the operation failure
+        failure = exc
+    cleanup_failure: Exception | None = None
+    if temporary is not None:
+        try:
             temporary.unlink(missing_ok=True)
+        except Exception as exc:  # noqa: BLE001 - report cleanup with operation failure
+            cleanup_failure = exc
+    if failure is not None and cleanup_failure is not None:
+        blockers = [{"reason": "rollback_failed", "scope": "rollback_temp", "message": str(failure)}, {"reason": "rollback_cleanup_failed", "scope": "rollback_temp", "message": str(cleanup_failure)}]
+        raise PublicationGateError("artifact_publishable", "<unknown>", blockers, f"artifact_publishable rollback recovery failed: {failure}; {cleanup_failure}") from failure
+    if failure is not None:
+        raise failure
+    if cleanup_failure is not None:
+        raise cleanup_failure
 
 
 def _cleanup_paths(paths: list[Path | None], deck_id: str) -> list[dict[str, Any]]:

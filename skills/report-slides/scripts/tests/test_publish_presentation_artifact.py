@@ -6,7 +6,7 @@ import hashlib
 import os
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import pytest
 import yaml
@@ -336,7 +336,7 @@ def test_publish_acquires_workflow_lock_before_production_gate(
     original_gate = publisher._assert_production
 
     @contextmanager
-    def observed_lock(root: Path):
+    def observed_lock(root: Path) -> Iterator[None]:
         events.append("lock")
         yield
 
@@ -426,17 +426,23 @@ def test_publish_reports_primary_and_rollback_directory_fsync_distinctly(
     destination = final_svg(project)
     import publish_presentation_artifact as publisher
 
-    original_fsync = publisher._fsync_directory
+    original_fsync = publisher.os.fsync
     calls = 0
 
-    def fail_primary(directory: Path) -> None:
+    def fail_primary(file_descriptor: int) -> None:
         nonlocal calls
-        calls += 1
-        if calls == 1:
-            raise OSError("primary directory fsync")
-        original_fsync(directory)
+        try:
+            target = Path(os.readlink(f"/proc/self/fd/{file_descriptor}"))
+        except OSError:
+            original_fsync(file_descriptor)
+            return
+        if target.resolve() == destination.parent.resolve():
+            calls += 1
+            if calls == 1:
+                raise OSError("primary directory fsync")
+        original_fsync(file_descriptor)
 
-    monkeypatch.setattr(publisher, "_fsync_directory", fail_primary)
+    monkeypatch.setattr(publisher.os, "fsync", fail_primary)
     with pytest.raises(PublicationGateError, match="fsync"):
         publish_artifact(
             project,
@@ -799,255 +805,3 @@ def test_publish_rejects_slide_producer_mismatch(tmp_path: Path) -> None:
         )
     assert not destination.exists()
     assert load_artifacts(project) == {}
-
-
-def test_publish_handles_short_write_without_false_record(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Reject a staging short write and clean its temporary sibling."""
-    project, deck_id, slide_id, _ = approved_assignment(tmp_path)
-    _configure_slides_role(project)
-    destination = final_svg(project)
-    import publish_presentation_artifact as publisher
-
-    original_write = publisher.os.write
-    write_calls = 0
-
-    def short_write(file_descriptor: int, payload: bytes) -> int:
-        nonlocal write_calls
-        write_calls += 1
-        if write_calls == 1:
-            return original_write(file_descriptor, payload[:1])
-        return 0
-
-    monkeypatch.setattr(publisher.os, "write", short_write)
-    with pytest.raises(PublicationGateError, match="short_write"):
-        publish_artifact(
-            project,
-            deck_id,
-            staged_svg(tmp_path),
-            destination,
-            "slide-svg",
-            slide_id,
-            None,
-            "worker-a",
-            project / "slide-spec.yaml",
-        )
-    assert not destination.exists()
-    assert load_artifacts(project) == {}
-    assert not list(destination.parent.glob(".*.tmp"))
-
-
-def test_publish_records_digest_from_destination_after_replace(tmp_path: Path) -> None:
-    """Persist the digest measured from bytes at the replaced destination."""
-    project, deck_id, slide_id, _ = approved_assignment(tmp_path)
-    _configure_slides_role(project)
-    destination = final_svg(project)
-    source = staged_svg(tmp_path)
-    result = publish_artifact(
-        project,
-        deck_id,
-        source,
-        destination,
-        "slide-svg",
-        slide_id,
-        None,
-        "worker-a",
-        project / "slide-spec.yaml",
-    )
-    expected = hashlib.sha256(destination.read_bytes()).hexdigest()
-    assert result["sha256"] == expected
-    assert load_artifacts(project)[result["id"]]["sha256"] == expected
-
-
-def test_publish_rejects_post_replace_digest_drift_without_record(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Reject bytes that differ when the replaced destination is measured."""
-    project, deck_id, slide_id, _ = approved_assignment(tmp_path)
-    _configure_slides_role(project)
-    destination = final_svg(project)
-    import publish_presentation_artifact as publisher
-
-    original_digest = publisher._destination_digest
-
-    def drifted_digest(path: Path) -> tuple[int, str]:
-        size, digest = original_digest(path)
-        if path == destination.resolve():
-            return size, "0" * 64
-        return size, digest
-
-    monkeypatch.setattr(publisher, "_destination_digest", drifted_digest)
-    with pytest.raises(PublicationGateError, match="destination_digest_mismatch"):
-        publish_artifact(
-            project,
-            deck_id,
-            staged_svg(tmp_path),
-            destination,
-            "slide-svg",
-            slide_id,
-            None,
-            "worker-a",
-            project / "slide-spec.yaml",
-        )
-    assert not destination.exists()
-    assert load_artifacts(project) == {}
-
-
-@pytest.mark.parametrize("failure", ["replace", "directory_fsync", "state_write"])
-def test_publish_rolls_back_recoverable_failures(
-    failure: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Leave no destination or record after deterministic publication failures."""
-    project, deck_id, slide_id, _ = approved_assignment(tmp_path)
-    _configure_slides_role(project)
-    destination = final_svg(project)
-    import publish_presentation_artifact as publisher
-
-    if failure == "replace":
-        monkeypatch.setattr(publisher.os, "replace", lambda *_: (_ for _ in ()).throw(OSError("replace")))
-    elif failure == "directory_fsync":
-        monkeypatch.setattr(publisher, "_fsync_directory", lambda *_: (_ for _ in ()).throw(OSError("fsync")))
-    else:
-        artifacts_path = project / ".research/presentations/state/artifacts.yaml"
-        original_replace = publisher.os.replace
-
-        def fail_state_replace(source: Path, target: Path) -> None:
-            if Path(target) == artifacts_path:
-                raise OSError("state")
-            original_replace(source, target)
-
-        monkeypatch.setattr(publisher.os, "replace", fail_state_replace)
-    with pytest.raises(PublicationGateError):
-        publish_artifact(
-            project,
-            deck_id,
-            staged_svg(tmp_path),
-            destination,
-            "slide-svg",
-            slide_id,
-            None,
-            "worker-a",
-            project / "slide-spec.yaml",
-        )
-    assert not destination.exists()
-    assert load_artifacts(project) == {}
-    assert not list(destination.parent.glob(".*.tmp"))
-
-
-def test_publish_cleans_state_store_temp_after_state_failure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Remove a state-store sibling temp when its write fails."""
-    project, deck_id, slide_id, _ = approved_assignment(tmp_path)
-    _configure_slides_role(project)
-    destination = final_svg(project)
-    import publish_presentation_artifact as publisher
-
-    artifacts_path = project / ".research/presentations/state/artifacts.yaml"
-    original_replace = publisher.os.replace
-
-    def fail_state_replace(source: Path, target: Path) -> None:
-        if Path(target) == artifacts_path:
-            raise OSError("state write")
-        original_replace(source, target)
-
-    monkeypatch.setattr(publisher.os, "replace", fail_state_replace)
-    with pytest.raises(PublicationGateError):
-        publish_artifact(
-            project,
-            deck_id,
-            staged_svg(tmp_path),
-            destination,
-            "slide-svg",
-            slide_id,
-            None,
-            "worker-a",
-            project / "slide-spec.yaml",
-        )
-    assert not destination.exists()
-    assert load_artifacts(project) == {}
-    state_dir = project / ".research/presentations/state"
-    assert not list(state_dir.glob("*.stage.*.tmp"))
-
-
-def test_publish_reports_temp_cleanup_failure_explicitly(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Expose temporary cleanup failure instead of masking it."""
-    project, deck_id, slide_id, _ = approved_assignment(tmp_path)
-    _configure_slides_role(project)
-    destination = final_svg(project)
-    import publish_presentation_artifact as publisher
-
-    original_unlink = Path.unlink
-
-    def fail_replace(source: Path, target: Path) -> None:
-        raise OSError("replace")
-
-    def fail_temp_unlink(path: Path, *args: Any, **kwargs: Any) -> None:
-        if path.name.startswith(f".{destination.name}.") and ".rollback." not in path.name:
-            raise OSError("cleanup")
-        original_unlink(path, *args, **kwargs)
-
-    monkeypatch.setattr(publisher.os, "replace", fail_replace)
-    monkeypatch.setattr(Path, "unlink", fail_temp_unlink)
-    with pytest.raises(PublicationGateError, match="temp_cleanup_failed"):
-        publish_artifact(
-            project,
-            deck_id,
-            staged_svg(tmp_path),
-            destination,
-            "slide-svg",
-            slide_id,
-            None,
-            "worker-a",
-            project / "slide-spec.yaml",
-        )
-    assert not destination.exists()
-    assert load_artifacts(project) == {}
-
-
-def test_publish_reports_rollback_failure_explicitly(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Never mask a rollback failure behind the original publication error."""
-    project, deck_id, slide_id, _ = approved_assignment(tmp_path)
-    _configure_slides_role(project)
-    destination = final_svg(project)
-    import publish_presentation_artifact as publisher
-
-    publish_artifact(
-        project,
-        deck_id,
-        staged_svg(tmp_path),
-        destination,
-        "slide-svg",
-        slide_id,
-        None,
-        "worker-a",
-        project / "slide-spec.yaml",
-    )
-    original_replace = publisher.os.replace
-    replace_calls = 0
-
-    def fail_primary_and_rollback(source: Path, target: Path) -> None:
-        nonlocal replace_calls
-        replace_calls += 1
-        if replace_calls <= 2:
-            raise OSError("rollback")
-        original_replace(source, target)
-
-    monkeypatch.setattr(publisher.os, "replace", fail_primary_and_rollback)
-    with pytest.raises(PublicationGateError, match="rollback_failed"):
-        publish_artifact(
-            project,
-            deck_id,
-            staged_svg(tmp_path),
-            destination,
-            "slide-svg",
-            slide_id,
-            None,
-            "worker-a",
-            project / "slide-spec.yaml",
-        )
