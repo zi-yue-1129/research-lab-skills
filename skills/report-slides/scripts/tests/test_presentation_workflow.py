@@ -11,7 +11,8 @@ import pytest
 import yaml
 
 from presentation_contracts import contract_sha256
-from presentation_events import create_artifact_record, load_revision_requests
+from presentation_events import create_artifact_record, load_events, load_revision_requests
+from presentation_events import create_assignment_record
 from presentation_state import create_deck, create_slide, create_visual_module, load_decks, load_slides, load_visual_modules, record_review, set_module_status, set_slide_status
 from presentation_workflow import (
     ApprovalGateError,
@@ -124,29 +125,18 @@ def _write_draft_preview(
         and record.get("plan_slide_id") == "slide-01"
         and record.get("status") != "superseded"
     )
-    create_artifact_record(
-        project, deck_id, "rendered_slide", slide_relative, slide_digest, "renderer",
-        slide_id=slide_record["id"],
-    )
-    create_artifact_record(project, deck_id, "contact_sheet", contact_relative, contact_digest, "renderer")
-    artifacts_path = project / ".research/presentations/state/artifacts.yaml"
-    artifacts_document = yaml.safe_load(artifacts_path.read_text(encoding="utf-8"))
     source_sha256 = _canonical_source_digest([slide_relative], [slide_digest])
-    for artifact in artifacts_document["artifacts"].values():
-        if artifact.get("path") not in {slide_relative, contact_relative}:
-            continue
-        artifact.update({
-            "plan_version": plan["plan_version"],
-            "plan_sha256": contract_sha256(plan),
-        })
-        if artifact["path"] == slide_relative:
-            artifact.update({
-                "slide_record_id": slide_record["id"],
-                "attempt": int(slide_record.get("attempt", 1)),
-            })
-        else:
-            artifact.update({"source_paths": [slide_relative], "source_sha256": source_sha256})
-    artifacts_path.write_text(yaml.safe_dump(artifacts_document), encoding="utf-8")
+    create_artifact_record(
+        project, deck_id, "slide-png", slide_relative, slide_digest, "renderer",
+        slide_id=slide_record["id"], plan_version=plan["plan_version"],
+        plan_sha256=contract_sha256(plan), slide_record_id=slide_record["id"],
+        attempt=int(slide_record.get("attempt", 1)),
+    )
+    create_artifact_record(
+        project, deck_id, "review-sheet", contact_relative, contact_digest, "renderer",
+        plan_version=plan["plan_version"], plan_sha256=contract_sha256(plan),
+        source_paths=[slide_relative], source_sha256=source_sha256,
+    )
     document = {
         "schema_version": 1,
         "deck_id": deck_id,
@@ -599,13 +589,6 @@ def test_targeted_revision_invalidates_draft_and_requires_replacement_preview_an
     decks_path.write_text(yaml.safe_dump(decks), encoding="utf-8")
     for artifact in (original_slide, original_contact):
         artifact.unlink()
-    artifacts_path = project / ".research/presentations/state/artifacts.yaml"
-    artifacts = yaml.safe_load(artifacts_path.read_text(encoding="utf-8"))
-    artifacts["artifacts"] = {
-        key: value for key, value in artifacts["artifacts"].items()
-        if value.get("path") not in {"renders/original.png", "renders/original-contact.png"}
-    }
-    artifacts_path.write_text(yaml.safe_dump(artifacts), encoding="utf-8")
     replacement_slide = project / "renders/replacement.png"
     replacement_contact = project / "renders/replacement-contact.png"
     Image.new("RGB", (20, 20), (9, 8, 7)).save(replacement_slide)
@@ -710,3 +693,100 @@ def test_targeted_revision_supersedes_passed_module_without_restarting_it(tmp_pa
     records = load_visual_modules(project)
     assert records[module["id"]]["status"] == "superseded"
     assert records[result["replacement"]["id"]]["status"] == "planned"
+
+
+def _file_preimage(path: Path) -> tuple[bool, bytes, int]:
+    """Capture exact file existence, bytes, and mode for rollback assertions."""
+    if not path.exists():
+        return False, b"", 0
+    return True, path.read_bytes(), path.stat().st_mode & 0o777
+
+
+@pytest.mark.parametrize("fail_at", [1, 2, 3])
+def test_slide_revision_failure_restores_every_staged_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fail_at: int
+) -> None:
+    """Every slide-revision commit position restores exact state preimages."""
+    project, deck_id, _ = _approved_project(tmp_path)
+    slide = create_slide(project, deck_id, "slide-01", "Evidence changes decisions")
+    for status in ("ready", "assigned", "producing", "review_required"):
+        set_slide_status(project, slide["id"], status)
+    record_review(project, "slide", slide["id"], "scientific-reviewer", "scientific", "passed")
+    record_review(project, "slide", slide["id"], "visual-reviewer", "visual_quality", "passed")
+    set_slide_status(project, slide["id"], "passed")
+    state_dir = project / ".research/presentations/state"
+    tracked = [state_dir / name for name in ("decks.yaml", "slides.yaml", "revision_requests.yaml")]
+    before = {path: _file_preimage(path) for path in tracked}
+    before_events = load_events(project)
+    revision = project / "revision.yaml"
+    revision.write_text(yaml.safe_dump({
+        "deck_id": deck_id,
+        "subject_type": "slide",
+        "subject_id": slide["id"],
+        "requested_by": "reviewer",
+        "instructions": "Refresh the evidence framing.",
+        "revision_kind": "slide_retry",
+    }), encoding="utf-8")
+    monkeypatch.setenv("PRESENTATION_TRANSACTION_FAIL_AT", str(fail_at))
+
+    with pytest.raises(RuntimeError, match="injected transaction commit failure"):
+        request_targeted_revision(project, revision)
+
+    assert {path: _file_preimage(path) for path in tracked} == before
+    assert load_events(project) == before_events
+    assert load_revision_requests(project) == {}
+    assert set(load_slides(project)) == {slide["id"]}
+
+
+@pytest.mark.parametrize("fail_at", [1, 2, 3, 4])
+def test_module_revision_failure_restores_assignment_and_all_state_preimages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fail_at: int
+) -> None:
+    """Module retries restore decks, slides, modules, assignments, and requests."""
+    project, deck_id, _ = _approved_project(tmp_path)
+    slide = create_slide(project, deck_id, "slide-01", "Evidence changes decisions")
+    module = create_visual_module(project, slide["id"], "module-a", "architecture")
+    dependent = create_visual_module(
+        project, slide["id"], "module-b", "architecture", dependencies=[module["id"]]
+    )
+    create_assignment_record(
+        project,
+        deck_id,
+        module_id=dependent["id"],
+        assignment_path="assignments/module-b.yaml",
+        worker_id="worker-a",
+        worker_type="architecture",
+        spec_sha256="a" * 64,
+        dependencies=[module["id"]],
+        slide_id=slide["id"],
+    )
+    for status in ("ready", "assigned", "producing", "review_required"):
+        set_module_status(project, module["id"], status)
+    record_review(project, "module", module["id"], "scientific-reviewer", "scientific", "passed")
+    record_review(project, "module", module["id"], "visual-reviewer", "visual_quality", "passed")
+    set_module_status(project, module["id"], "passed")
+    state_dir = project / ".research/presentations/state"
+    tracked = [
+        state_dir / name
+        for name in ("decks.yaml", "slides.yaml", "visual_modules.yaml", "assignments.yaml", "revision_requests.yaml")
+    ]
+    before = {path: _file_preimage(path) for path in tracked}
+    before_events = load_events(project)
+    revision = project / "module-revision.yaml"
+    revision.write_text(yaml.safe_dump({
+        "deck_id": deck_id,
+        "subject_type": "module",
+        "subject_id": module["id"],
+        "requested_by": "reviewer",
+        "instructions": "Retry the visual module.",
+        "revision_kind": "module_retry",
+    }), encoding="utf-8")
+    monkeypatch.setenv("PRESENTATION_TRANSACTION_FAIL_AT", str(fail_at))
+
+    with pytest.raises(RuntimeError, match="injected transaction commit failure"):
+        request_targeted_revision(project, revision)
+
+    assert {path: _file_preimage(path) for path in tracked} == before
+    assert load_events(project) == before_events
+    assert load_revision_requests(project) == {}
+    assert set(load_visual_modules(project)) == {module["id"], dependent["id"]}

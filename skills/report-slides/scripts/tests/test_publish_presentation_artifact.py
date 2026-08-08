@@ -10,15 +10,19 @@ from typing import Any, Iterator
 
 import pytest
 import yaml
+from PIL import Image
 
 from presentation_contracts import contract_sha256
 from presentation_events import create_assignment_record, load_artifacts, register_plan_record
 from presentation_gates import PublicationGateError
-from presentation_state import create_deck, create_slide, set_deck_status
-from presentation_state import set_module_status
+from presentation_state import create_deck, create_slide, record_review, set_deck_status
+from presentation_state import set_module_status, set_slide_status, load_slides
 from test_presentation_gates import _approved_module_project
 
 from publish_presentation_artifact import publish_artifact
+from presentation_workflow import register_draft_preview
+from render_plan_preview import _canonical_source_digest
+from render_review_sheet import compose_review_sheet
 
 
 def _project(tmp_path: Path) -> Path:
@@ -805,3 +809,88 @@ def test_publish_rejects_slide_producer_mismatch(tmp_path: Path) -> None:
         )
     assert not destination.exists()
     assert load_artifacts(project) == {}
+
+
+def test_publisher_provenance_registers_current_slide_and_contact_preview(
+    tmp_path: Path,
+) -> None:
+    """Published PNG and review-sheet records feed the strict draft gate."""
+    project, deck_id, slide_id, _ = approved_assignment(tmp_path)
+    _configure_slides_role(project)
+    for status in ("ready", "assigned", "producing", "review_required"):
+        set_slide_status(project, slide_id, status)
+    record_review(project, "slide", slide_id, "scientific-reviewer", "scientific", "passed")
+    record_review(project, "slide", slide_id, "visual-reviewer", "visual_quality", "passed")
+    set_slide_status(project, slide_id, "passed")
+    set_deck_status(project, deck_id, "producing")
+    set_deck_status(project, deck_id, "draft_review")
+
+    staged_slide = tmp_path / "staged-slide.png"
+    Image.new("RGB", (40, 20), (10, 40, 90)).save(staged_slide)
+    slide_destination = project / "docs/slides/rendered/slide-01.png"
+    slide_record = load_slides(project)[slide_id]
+    slide_artifact = publish_artifact(
+        project,
+        deck_id,
+        staged_slide,
+        slide_destination,
+        "slide-png",
+        slide_id,
+        None,
+        "worker-a",
+        project / "slide-spec.yaml",
+    )
+
+    staged_contact = tmp_path / "staged-contact.png"
+    compose_review_sheet([slide_destination], staged_contact, columns=1, cell_width=40, cell_height=20)
+    contact_destination = project / "docs/slides/rendered/contact-sheet.png"
+    contact_artifact = publish_artifact(
+        project,
+        deck_id,
+        staged_contact,
+        contact_destination,
+        "review-sheet",
+        None,
+        None,
+        "renderer",
+        project / "plan.yaml",
+    )
+
+    plan = yaml.safe_load((project / "plan.yaml").read_text(encoding="utf-8"))
+    slide_relative = slide_destination.relative_to(project).as_posix()
+    contact_relative = contact_destination.relative_to(project).as_posix()
+    slide_digest = hashlib.sha256(slide_destination.read_bytes()).hexdigest()
+    contact_digest = hashlib.sha256(contact_destination.read_bytes()).hexdigest()
+    source_digest = _canonical_source_digest([slide_relative], [slide_digest])
+    preview = project / "preview.yaml"
+    preview.write_text(yaml.safe_dump({
+        "schema_version": 1,
+        "deck_id": deck_id,
+        "plan_version": plan["plan_version"],
+        "plan_sha256": contract_sha256(plan),
+        "rendered_slide_paths": [{
+            "slide_id": "slide-01", "path": slide_relative,
+            "slide_record_id": slide_record["id"], "attempt": int(slide_record.get("attempt", 1)),
+        }],
+        "contact_sheet_path": contact_relative,
+        "slides": [{"slide_id": "slide-01", "title": plan["slides"][0]["title"], "key_takeaway": plan["slides"][0]["key_takeaway"]}],
+        "artifact_digests": {slide_relative: slide_digest, contact_relative: contact_digest},
+        "artifact_bindings": {
+            slide_relative: {
+                "kind": "rendered_slide", "deck_id": deck_id, "slide_id": "slide-01",
+                "plan_version": plan["plan_version"], "plan_sha256": contract_sha256(plan),
+                "producer_id": slide_artifact["producer_id"], "slide_record_id": slide_record["id"],
+                "attempt": int(slide_record.get("attempt", 1)),
+            },
+            contact_relative: {
+                "kind": "contact_sheet", "deck_id": deck_id,
+                "plan_version": plan["plan_version"], "plan_sha256": contract_sha256(plan),
+                "producer_id": contact_artifact["producer_id"], "source_paths": [slide_relative],
+                "source_sha256": source_digest,
+            },
+        },
+    }), encoding="utf-8")
+
+    registered = register_draft_preview(project, preview)
+    assert registered["preview"]["deck_id"] == deck_id
+    assert contact_artifact["artifact_kind"] == "review-sheet"

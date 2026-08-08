@@ -12,6 +12,7 @@ import yaml
 
 from presentation_contracts import contract_sha256
 from render_review_sheet import _parse_arguments, compose_review_sheet, contact_sheet_source_digest
+from render_plan_preview import _canonical_source_digest
 from test_artifact_entrypoint_gates import deck_awaiting_approval
 
 
@@ -104,6 +105,20 @@ def test_contact_sheet_source_digest_binds_ordered_input_bytes(
     assert forward != reverse
     first.write_bytes(b"changed")
     assert contact_sheet_source_digest([first, second]) != forward
+
+
+def test_contact_sheet_source_digest_uses_preview_canonical_helper(
+    source_images: Tuple[Path, Path],
+) -> None:
+    """Renderer and preview gate derive identical ordered source digests."""
+    first, second = source_images
+    paths = [first.name, second.name]
+    digests = [
+        __import__("hashlib").sha256(first.read_bytes()).hexdigest(),
+        __import__("hashlib").sha256(second.read_bytes()).hexdigest(),
+    ]
+
+    assert contact_sheet_source_digest([first, second]) == _canonical_source_digest(paths, digests)
 
 
 def test_compose_review_sheet_rejects_duplicate_or_overwritten_inputs(

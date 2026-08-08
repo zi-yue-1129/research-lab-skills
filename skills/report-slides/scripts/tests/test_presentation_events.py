@@ -92,6 +92,91 @@ def test_assignment_and_artifact_paths_are_canonical_and_referential(tmp_path: P
     assert artifact["id"] in load_artifacts(project)
 
 
+def test_slide_png_artifact_requires_complete_typed_provenance(tmp_path: Path) -> None:
+    """Slide PNG records require exact plan, generated-slide, and attempt bindings."""
+    project = make_project(tmp_path)
+    deck = create_deck(project, "Evidence")
+    slide = create_slide(project, deck["id"], "slide-01", "Takeaway")
+
+    with pytest.raises((TypeError, ValueError), match="provenance|plan_version|slide_record_id"):
+        create_artifact_record(
+            project,
+            deck["id"],
+            "slide-png",
+            "renders/slide-01.png",
+            "d" * 64,
+            "renderer",
+            slide_id=slide["id"],
+            plan_version=1,
+        )
+
+
+def test_artifact_provenance_rejects_boolean_versions_and_forbidden_subjects(
+    tmp_path: Path,
+) -> None:
+    """Kind-specific provenance rejects bool versions and slide subjects on sheets."""
+    project = make_project(tmp_path)
+    deck = create_deck(project, "Evidence")
+    slide = create_slide(project, deck["id"], "slide-01", "Takeaway")
+
+    with pytest.raises((TypeError, ValueError), match="plan_version"):
+        create_artifact_record(
+            project,
+            deck["id"],
+            "slide-png",
+            "renders/slide-01.png",
+            "d" * 64,
+            "renderer",
+            slide_id=slide["id"],
+            plan_version=True,
+            plan_sha256="a" * 64,
+            slide_record_id=slide["id"],
+            attempt=1,
+        )
+
+    with pytest.raises((TypeError, ValueError), match="review-sheet|slide_id"):
+        create_artifact_record(
+            project,
+            deck["id"],
+            "review-sheet",
+            "renders/contact-sheet.png",
+            "e" * 64,
+            "renderer",
+            slide_id=slide["id"],
+            plan_version=1,
+            plan_sha256="a" * 64,
+            source_paths=["renders/slide-01.png"],
+            source_sha256="s" * 64,
+        )
+
+
+def test_typed_artifact_provenance_is_persisted_without_aliases(tmp_path: Path) -> None:
+    """Valid typed provenance persists canonical fields exactly once."""
+    project = make_project(tmp_path)
+    deck = create_deck(project, "Evidence")
+    slide = create_slide(project, deck["id"], "slide-01", "Takeaway")
+    record = create_artifact_record(
+        project,
+        deck["id"],
+        "slide-png",
+        "renders/slide-01.png",
+        "d" * 64,
+        "renderer",
+        slide_id=slide["id"],
+        plan_version=1,
+        plan_sha256="a" * 64,
+        slide_record_id=slide["id"],
+        attempt=1,
+    )
+
+    persisted = load_artifacts(project)[record["id"]]
+    assert persisted["artifact_kind"] == "slide-png"
+    assert persisted["plan_version"] == 1
+    assert persisted["slide_record_id"] == slide["id"]
+    assert persisted["attempt"] == 1
+    assert "producer" not in persisted
+
+
 def test_load_review_results_preserves_legacy_event_shape(tmp_path: Path) -> None:
     """Legacy events remain unmodified instead of gaining invented identity."""
     project = make_project(tmp_path)

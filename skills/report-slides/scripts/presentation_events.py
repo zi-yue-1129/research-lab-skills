@@ -19,11 +19,12 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterator, Sequence
 
 import yaml
 
 from presentation_contracts import contract_sha256, load_contract
+from presentation_artifact_provenance import validate_artifact_provenance
 from presentation_transactions import _open_sidecar, require_transaction_recovery
 
 
@@ -636,14 +637,55 @@ def create_artifact_record(
     producer_id: str,
     slide_id: str | None = None,
     module_id: str | None = None,
+    plan_version: int | None = None,
+    plan_sha256: str | None = None,
+    slide_record_id: str | None = None,
+    attempt: int | None = None,
+    source_paths: Sequence[str] | None = None,
+    source_sha256: str | None = None,
 ) -> dict[str, Any]:
-    """Persist one artifact digest with canonical path and references."""
+    """Persist one artifact digest with canonical path and typed provenance.
+
+    Args:
+        project_root: Project root containing presentation state.
+        deck_id: Owning deck identifier.
+        artifact_kind: Canonical artifact kind.
+        artifact_path: Project-relative artifact path.
+        sha256: Artifact SHA-256 digest.
+        producer_id: Trimmed producer identity.
+        slide_id: Optional generated slide record identifier.
+        module_id: Optional generated visual-module identifier.
+        plan_version: Positive approved plan version for typed artifacts.
+        plan_sha256: Approved plan digest for typed artifacts.
+        slide_record_id: Current generated slide record identifier.
+        attempt: Current generated slide attempt number.
+        source_paths: Ordered source paths for a review sheet.
+        source_sha256: Canonical ordered source digest for a review sheet.
+
+    Returns:
+        The persisted canonical artifact record.
+
+    Raises:
+        ValueError: If kind-specific provenance is incomplete or malformed.
+    """
     state = _state_module()
     _deck(project_root, deck_id)
     if not isinstance(artifact_kind, str) or not artifact_kind.strip():
         raise ValueError("artifact_kind is required")
     if not isinstance(producer_id, str) or not producer_id.strip():
         raise ValueError("producer_id is required")
+    provenance = validate_artifact_provenance(
+        artifact_kind,
+        deck_id=deck_id,
+        slide_id=slide_id,
+        module_id=module_id,
+        plan_version=plan_version,
+        plan_sha256=plan_sha256,
+        slide_record_id=slide_record_id,
+        attempt=attempt,
+        source_paths=source_paths,
+        source_sha256=source_sha256,
+    )
     slide_id, module_id = _references(project_root, deck_id, slide_id, module_id)
     relative_path = canonical_relative_path(artifact_path)
     digest = _digest(sha256, "sha256")
@@ -655,6 +697,7 @@ def create_artifact_record(
         "producer_id": producer_id, "produced_by": producer_id,
         "created_at": _utc_now_iso(),
     }
+    record.update(provenance)
     if module_id is not None:
         modules_path = project_root / state.VISUAL_MODULES_RELATIVE_PATH
         with state._locked_file(project_root, modules_path):

@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import sys
 from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
@@ -11,6 +12,7 @@ from typing import List, Optional, Sequence, Tuple
 from PIL import Image, ImageDraw, ImageOps
 
 from presentation_gates import ProductionGateError, assert_production_allowed
+from presentation_artifact_provenance import canonical_source_digest
 from presentation_state import find_project_root
 
 
@@ -39,22 +41,20 @@ def contact_sheet_source_digest(input_paths: Sequence[Path]) -> str:
         raise ValueError("at least one input image is required")
     if len(set(paths)) != len(paths):
         raise ValueError("input image paths must be unique")
-    labels: list[str] = []
+    raw_labels = [path.as_posix() for path in paths]
+    if all(path.is_absolute() for path in paths):
+        common_parent = Path(os.path.commonpath([str(path.parent) for path in paths]))
+        labels = [path.relative_to(common_parent).as_posix() for path in paths]
+    else:
+        labels = raw_labels
     digests: list[str] = []
     for path in paths:
         if not path.is_file():
             raise FileNotFoundError(f"input image not found: {path}")
         if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
             raise ValueError(f"unsupported input extension for {path}: expected PNG or JPEG")
-        labels.append(path.as_posix())
         digests.append(hashlib.sha256(path.read_bytes()).hexdigest())
-    canonical = json.dumps(
-        {"paths": labels, "digests": digests},
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-    ).encode("utf-8")
-    return hashlib.sha256(canonical).hexdigest()
+    return canonical_source_digest(labels, digests)
 
 
 def compose_review_sheet(

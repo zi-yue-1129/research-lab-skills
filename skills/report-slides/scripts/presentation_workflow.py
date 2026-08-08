@@ -63,6 +63,13 @@ _USER_PLAN_REVISION_KINDS = frozenset({
     "revise_slide", "add_slide", "remove_slide", "reorder_slides",
     "change_emphasis", "change_audience", "change_duration",
 })
+_DRAFT_DECISION_FIELDS = frozenset({
+    "schema_version", "deck_id", "preview_id", "preview_sha256", "decision",
+    "approval_mode", "approved_by", "identity_verifiable", "yes_draft",
+})
+_RESERVED_REVIEWER_IDENTITIES = frozenset({
+    "auto", "system", "agent", "unknown", "--yes-draft", "workflow",
+})
 
 
 def translate_cli_gate_error(args: Any, error: BaseException) -> BaseException:
@@ -899,6 +906,23 @@ def approve_draft(
                     [{"reason": "schema_version_required"}],
                     f"draft_approvable blocked for deck {deck_id}: schema_version_required",
                 )
+            unexpected = sorted(set(decision) - _DRAFT_DECISION_FIELDS)
+            if unexpected:
+                raise DraftGateError(
+                    "draft_approvable", deck_id,
+                    [{"reason": "unexpected_decision_field", "field": field} for field in unexpected],
+                    f"draft_approvable blocked for deck {deck_id}: unexpected decision field",
+                )
+            if "yes_draft" in decision and type(decision.get("yes_draft")) is not bool:
+                raise DraftGateError(
+                    "draft_approvable", deck_id,
+                    [{"reason": "yes_draft must be a boolean"}],
+                )
+            if decision.get("identity_verifiable") not in {None, True}:
+                raise DraftGateError(
+                    "draft_approvable", deck_id,
+                    [{"reason": "identity_verifiable must be true"}],
+                )
             preview_id = decision.get("preview_id")
             if not isinstance(preview_id, str) or not preview_id:
                 raise DraftGateError("draft_approvable", deck_id, [{"reason": "preview_id_required"}])
@@ -924,6 +948,8 @@ def approve_draft(
                     blockers.append({"reason": "approved_by_required"})
                 else:
                     approved_by = approved_by.strip()
+                    if approved_by.casefold() in _RESERVED_REVIEWER_IDENTITIES:
+                        blockers.append({"reason": "approved_by must identify a real reviewer"})
             elif not yes_draft:
                 blockers.append({"reason": "explicit --yes-draft is required"})
             if blockers:

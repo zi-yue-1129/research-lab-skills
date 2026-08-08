@@ -114,7 +114,13 @@ def _approved_project(tmp_path: Path) -> tuple[Path, str, dict[str, Any]]:
     return project, deck["id"], plan
 
 
-def _preview(project: Path, deck_id: str, plan: dict[str, Any]) -> tuple[Path, dict[str, Any]]:
+def _preview(
+    project: Path,
+    deck_id: str,
+    plan: dict[str, Any],
+    *,
+    persist_contact: bool = True,
+) -> tuple[Path, dict[str, Any]]:
     """Create a current slide PNG/contact sheet and matching preview contract."""
     render_dir = project / "renders"
     render_dir.mkdir(parents=True, exist_ok=True)
@@ -132,27 +138,16 @@ def _preview(project: Path, deck_id: str, plan: dict[str, Any]) -> tuple[Path, d
         and record.get("status") != "superseded"
     )
     create_artifact_record(
-        project, deck_id, "rendered_slide", "renders/slide-01.png", slide_digest, "renderer",
-        slide_id=slide_record["id"],
+        project, deck_id, "slide-png", "renders/slide-01.png", slide_digest, "renderer",
+        slide_id=slide_record["id"], plan_version=1, plan_sha256=contract_sha256(plan),
+        slide_record_id=slide_record["id"], attempt=int(slide_record.get("attempt", 1)),
     )
-    create_artifact_record(
-        project, deck_id, "contact_sheet", "renders/contact-sheet.png", contact_digest, "renderer",
-    )
-    artifacts_path = project / ".research/presentations/state/artifacts.yaml"
-    artifacts_document = yaml.safe_load(artifacts_path.read_text(encoding="utf-8"))
-    for artifact in artifacts_document["artifacts"].values():
-        artifact.update({"plan_version": 1, "plan_sha256": contract_sha256(plan)})
-        if artifact["path"] == "renders/slide-01.png":
-            artifact.update({
-                "slide_record_id": slide_record["id"],
-                "attempt": int(slide_record.get("attempt", 1)),
-            })
-        else:
-            artifact.update({
-                "source_paths": ["renders/slide-01.png"],
-                "source_sha256": source_sha256,
-            })
-    artifacts_path.write_text(yaml.safe_dump(artifacts_document), encoding="utf-8")
+    if persist_contact:
+        create_artifact_record(
+            project, deck_id, "review-sheet", "renders/contact-sheet.png", contact_digest, "renderer",
+            plan_version=1, plan_sha256=contract_sha256(plan),
+            source_paths=["renders/slide-01.png"], source_sha256=source_sha256,
+        )
     preview: dict[str, Any] = {
         "schema_version": 1,
         "deck_id": deck_id,
@@ -427,6 +422,30 @@ def test_preview_requires_mapping_rendered_paths_without_aliases(tmp_path: Path)
         register_draft_preview(project, preview_path)
 
 
+def test_preview_requires_rendered_entries_in_current_plan_order(tmp_path: Path) -> None:
+    """Rendered metadata order must equal the current approved slide order."""
+    from render_plan_preview import _normalize_rendered_paths
+
+    project = _project(tmp_path)
+    render_dir = project / "renders"
+    render_dir.mkdir()
+    for name in ("slide-01.png", "slide-02.png"):
+        Image.new("RGB", (10, 10), (1, 2, 3)).save(render_dir / name)
+    blockers: list[dict[str, Any]] = []
+    _normalize_rendered_paths(
+        project,
+        [
+            {"slide_id": "slide-02", "path": "renders/slide-02.png", "slide_record_id": "sld-2", "attempt": 1},
+            {"slide_id": "slide-01", "path": "renders/slide-01.png", "slide_record_id": "sld-1", "attempt": 1},
+        ],
+        ["slide-01", "slide-02"],
+        {},
+        blockers,
+    )
+
+    assert any(blocker["reason"] == "rendered slide set order mismatch" for blocker in blockers)
+
+
 def test_preview_rejects_legacy_aliases_and_ambiguous_metadata(tmp_path: Path) -> None:
     """Legacy field aliases cannot be upgraded into approval-grade evidence."""
     project, deck_id, plan = _approved_project(tmp_path)
@@ -474,14 +493,7 @@ def test_preview_rejects_symlink_escape(tmp_path: Path) -> None:
 def test_preview_requires_exactly_one_current_persisted_artifact_record(tmp_path: Path) -> None:
     """Every current slide and contact sheet must have one matching record."""
     project, deck_id, plan = _approved_project(tmp_path)
-    preview_path, _ = _preview(project, deck_id, plan)
-    artifacts_path = project / ".research/presentations/state/artifacts.yaml"
-    document = yaml.safe_load(artifacts_path.read_text(encoding="utf-8"))
-    document["artifacts"] = {
-        key: value for key, value in document["artifacts"].items()
-        if value.get("path") != "renders/contact-sheet.png"
-    }
-    artifacts_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+    preview_path, _ = _preview(project, deck_id, plan, persist_contact=False)
 
     with pytest.raises(DraftGateError, match="persisted_artifact"):
         register_draft_preview(project, preview_path)
@@ -491,15 +503,141 @@ def test_preview_rejects_ambiguous_persisted_artifact_records(tmp_path: Path) ->
     """Duplicate current artifact records fail closed rather than selecting one."""
     project, deck_id, plan = _approved_project(tmp_path)
     preview_path, _ = _preview(project, deck_id, plan)
-    artifacts_path = project / ".research/presentations/state/artifacts.yaml"
-    document = yaml.safe_load(artifacts_path.read_text(encoding="utf-8"))
-    original = next(value for value in document["artifacts"].values() if value["path"] == "renders/slide-01.png")
-    duplicate = dict(original, id="art_duplicate")
-    document["artifacts"][duplicate["id"]] = duplicate
-    artifacts_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+    slide_record = next(
+        record for record in load_slides(project).values()
+        if record.get("deck_id") == deck_id and record.get("plan_slide_id") == "slide-01"
+        and record.get("status") != "superseded"
+    )
+    slide_digest = hashlib.sha256((project / "renders/slide-01.png").read_bytes()).hexdigest()
+    contact_digest = hashlib.sha256((project / "renders/contact-sheet.png").read_bytes()).hexdigest()
+    create_artifact_record(
+        project, deck_id, "slide-png", "renders/slide-01.png", slide_digest, "renderer",
+        slide_id=slide_record["id"], plan_version=1, plan_sha256=contract_sha256(plan),
+        slide_record_id=slide_record["id"], attempt=int(slide_record.get("attempt", 1)),
+    )
+    create_artifact_record(
+        project, deck_id, "review-sheet", "renders/contact-sheet.png", contact_digest, "renderer",
+        plan_version=1, plan_sha256=contract_sha256(plan),
+        source_paths=["renders/slide-01.png"],
+        source_sha256=_canonical_source_digest(["renders/slide-01.png"], [slide_digest]),
+    )
 
     with pytest.raises(DraftGateError, match="ambiguous_persisted_artifact"):
         register_draft_preview(project, preview_path)
+
+
+def test_preview_rejects_boolean_plan_version(tmp_path: Path) -> None:
+    """Preview plan versions require an exact positive integer."""
+    project, deck_id, plan = _approved_project(tmp_path)
+    preview_path, preview = _preview(project, deck_id, plan)
+    preview["plan_version"] = True
+    preview_path.write_text(yaml.safe_dump(preview), encoding="utf-8")
+
+    with pytest.raises(DraftGateError, match="plan_version"):
+        register_draft_preview(project, preview_path)
+
+
+def test_preview_rejects_extra_slide_metadata_fields(tmp_path: Path) -> None:
+    """Slide metadata uses an exact canonical nested key set."""
+    project, deck_id, plan = _approved_project(tmp_path)
+    preview_path, preview = _preview(project, deck_id, plan)
+    preview["slides"][0]["legacy_takeaway"] = preview["slides"][0]["key_takeaway"]
+    preview_path.write_text(yaml.safe_dump(preview), encoding="utf-8")
+
+    with pytest.raises(DraftGateError, match="slide metadata"):
+        register_draft_preview(project, preview_path)
+
+
+def test_preview_rejects_extra_artifact_binding_fields(tmp_path: Path) -> None:
+    """Artifact bindings use exact canonical fields without legacy aliases."""
+    project, deck_id, plan = _approved_project(tmp_path)
+    preview_path, preview = _preview(project, deck_id, plan)
+    preview["artifact_bindings"]["renders/slide-01.png"]["producer"] = "renderer"
+    preview_path.write_text(yaml.safe_dump(preview), encoding="utf-8")
+
+    with pytest.raises(DraftGateError, match="artifact binding"):
+        register_draft_preview(project, preview_path)
+
+
+@pytest.mark.parametrize("identity", ["auto", "system", "agent", "unknown", "--yes-draft", "  "])
+def test_interactive_draft_rejects_reserved_identity_placeholders(
+    tmp_path: Path, identity: str
+) -> None:
+    """Interactive approvals require a real human reviewer identity."""
+    project, deck_id, plan = _approved_project(tmp_path)
+    preview_path, _ = _preview(project, deck_id, plan)
+    registered = register_draft_preview(project, preview_path)
+    decision_path = project / "decision.yaml"
+    decision_path.write_text(yaml.safe_dump({
+        "schema_version": 1,
+        "deck_id": deck_id,
+        "preview_id": registered["preview"]["id"],
+        "preview_sha256": registered["preview"]["preview_sha256"],
+        "decision": "approve",
+        "approval_mode": "interactive",
+        "approved_by": identity,
+    }), encoding="utf-8")
+
+    with pytest.raises(DraftGateError, match="approved_by"):
+        approve_draft(project, decision_path)
+
+
+def test_draft_decision_rejects_unverifiable_identity_and_unknown_fields(tmp_path: Path) -> None:
+    """Decision contracts reject unverifiable identities and ambiguous fields."""
+    project, deck_id, plan = _approved_project(tmp_path)
+    preview_path, _ = _preview(project, deck_id, plan)
+    registered = register_draft_preview(project, preview_path)
+    decision_path = project / "decision.yaml"
+    decision_path.write_text(yaml.safe_dump({
+        "schema_version": 1,
+        "deck_id": deck_id,
+        "preview_id": registered["preview"]["id"],
+        "preview_sha256": registered["preview"]["preview_sha256"],
+        "decision": "approve",
+        "approval_mode": "interactive",
+        "approved_by": "reviewer",
+        "identity_verifiable": False,
+        "unexpected": "legacy",
+    }), encoding="utf-8")
+
+    with pytest.raises(DraftGateError, match="identity_verifiable|unexpected"):
+        approve_draft(project, decision_path)
+
+
+def test_invalid_contact_path_fails_before_recursive_extra_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Invalid contact paths must not trigger recursive scans or outside reads."""
+    project, deck_id, plan = _approved_project(tmp_path)
+    preview_path, preview = _preview(project, deck_id, plan)
+    preview["contact_sheet_path"] = str(tmp_path / "outside" / "sentinel.png")
+    preview_path.write_text(yaml.safe_dump(preview), encoding="utf-8")
+    import render_plan_preview as module
+
+    scanned: list[bool] = []
+    monkeypatch.setattr(module, "_check_extra_pngs", lambda *args: scanned.append(True))
+
+    with pytest.raises(DraftGateError):
+        register_draft_preview(project, preview_path)
+    assert scanned == []
+
+
+def test_invalid_rendered_path_fails_before_recursive_extra_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Invalid rendered paths must fail before any directory traversal."""
+    project, deck_id, plan = _approved_project(tmp_path)
+    preview_path, preview = _preview(project, deck_id, plan)
+    preview["rendered_slide_paths"][0]["path"] = str(tmp_path / "outside" / "sentinel.png")
+    preview_path.write_text(yaml.safe_dump(preview), encoding="utf-8")
+    import render_plan_preview as module
+
+    scanned: list[bool] = []
+    monkeypatch.setattr(module, "_check_extra_pngs", lambda *args: scanned.append(True))
+
+    with pytest.raises(DraftGateError):
+        register_draft_preview(project, preview_path)
+    assert scanned == []
 
 
 @pytest.mark.parametrize("fail_at", [1, 2])
