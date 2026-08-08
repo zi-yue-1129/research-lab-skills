@@ -408,7 +408,8 @@ def test_record_review_unknown_subject_id_errors(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     data = json.loads(result.stdout)
-    assert data["error"] == "SlideNotFoundError"
+    assert data["error"] == "ReviewGateError"
+    assert set(data) == {"error", "predicate", "deck_id", "blockers"}
 
 
 def test_create_revision_request_returns_new_record(tmp_path: Path) -> None:
@@ -524,7 +525,8 @@ def test_check_production_allowed_unknown_deck_id_errors(tmp_path: Path) -> None
 
     assert result.returncode == 1
     data = json.loads(result.stdout)
-    assert data["error"] == "DeckNotFoundError"
+    assert data["error"] == "ProductionGateError"
+    assert set(data) == {"error", "predicate", "deck_id", "blockers"}
 
 
 def test_query_returns_deck_with_slides_modules_and_revisions(tmp_path: Path) -> None:
@@ -579,22 +581,8 @@ def test_query_includes_review_history_and_next_actions(tmp_path: Path) -> None:
     project = _make_project(tmp_path)
     deck_id, slide_id = _make_deck_and_slide(project)
 
-    review = _run(
-        project,
-        "--record-review",
-        "--subject-type",
-        "slide",
-        "--subject-id",
-        slide_id,
-        "--reviewer-id",
-        "scientific-reviewer",
-        "--reviewer-role",
-        "scientific",
-        "--status",
-        "passed",
-        "--json",
-    )
-    assert review.returncode == 0, review.stderr
+    from presentation_state import record_review
+    record_review(project, "slide", slide_id, "scientific-reviewer", "scientific", "passed")
 
     resumed = json.loads(_run(project, "--query", "--deck-id", deck_id, "--json").stdout)
     assert resumed["review_results"][0]["reviewer_role"] == "scientific"
@@ -689,42 +677,9 @@ def test_latest_review_round_controls_effective_next_action(tmp_path: Path) -> N
     """A later failed role review supersedes an earlier passing round."""
     project = _make_project(tmp_path)
     deck_id, slide_id = _make_deck_and_slide(project)
-    first = _run(
-        project,
-        "--record-review",
-        "--subject-type",
-        "slide",
-        "--subject-id",
-        slide_id,
-        "--reviewer-id",
-        "scientific-a",
-        "--reviewer-role",
-        "scientific",
-        "--status",
-        "passed",
-        "--round",
-        "1",
-        "--json",
-    )
-    assert first.returncode == 0, first.stderr
-    second = _run(
-        project,
-        "--record-review",
-        "--subject-type",
-        "slide",
-        "--subject-id",
-        slide_id,
-        "--reviewer-id",
-        "scientific-a",
-        "--reviewer-role",
-        "scientific",
-        "--status",
-        "failed",
-        "--round",
-        "2",
-        "--json",
-    )
-    assert second.returncode == 0, second.stderr
+    from presentation_state import record_review
+    record_review(project, "slide", slide_id, "scientific-a", "scientific", "passed", round_number=1)
+    record_review(project, "slide", slide_id, "scientific-a", "scientific", "failed", round_number=2)
 
     snapshot = json.loads(_run(project, "--query", "--deck-id", deck_id, "--json").stdout)
 

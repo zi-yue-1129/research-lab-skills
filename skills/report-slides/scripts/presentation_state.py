@@ -1,13 +1,8 @@
 #!/usr/bin/env python3
-"""presentation_state.py -- Deck/Slide/VisualModule state store, Review
-Result event log, and Revision Request store for the report-slides
-multi-agent workflow.
-Independent implementation (no import from skills/agent-state/) that
-follows the same proven pattern: sidecar-lock-file writes, atomic YAML
-replace, id-keyed maps for mutable records, append-only JSONL for
-immutable facts, and write-time referential-integrity checks. Bootstraps
-its own .research/presentations/.gitignore rather than touching
-.research/.gitignore, since agent-state may independently manage that
+"""presentation_state.py -- Deck/Slide/VisualModule state store, Review Result event log, and Revision Request store for the report-slides multi-agent workflow.
+Independent implementation (no import from skills/agent-state/) that follows the same proven pattern: sidecar-lock-file writes, atomic YAML
+replace, id-keyed maps for mutable records, append-only JSONL for immutable facts, and write-time referential-integrity checks. Bootstraps
+its own .research/presentations/.gitignore rather than touching .research/.gitignore, since agent-state may independently manage that
 file in the same project.
 Usage:
     python presentation_state.py --create-deck --title "..." [--skill NAME] [--json]
@@ -903,8 +898,11 @@ def _dispatch(args: argparse.Namespace, project_root: Path) -> Dict[str, Any]:
             if args.review_path is not None or args.generic_path is not None:
                 from presentation_workflow import record_production_review
                 return record_production_review(project_root, args.review_path or args.generic_path)
-            from presentation_gates import assert_slide_passable
-            assert_slide_passable(project_root, args.slide_id)
+            from presentation_gates import ReviewGateError
+            slides = load_slides(project_root)
+            if args.slide_id not in slides:
+                raise SlideNotFoundError(f"Unknown slide_id: {args.slide_id}")
+            raise ReviewGateError("slide_passable", str(slides[args.slide_id].get("deck_id", "<unknown>")), [{"reason": "production review evidence document is required"}])
         return set_slide_status(project_root, args.slide_id, args.status)
     if args.create_visual_module:
         return create_visual_module(
@@ -925,6 +923,12 @@ def _dispatch(args: argparse.Namespace, project_root: Path) -> Dict[str, Any]:
             return record_production_review(project_root, args.review_path or args.generic_path)
         return set_module_status(project_root, args.module_id, args.status)
     if args.record_review:
+        if args.status == "passed" and args.subject_type in {"slide", "module"}:
+            from presentation_gates import ReviewGateError
+            records = load_slides(project_root) if args.subject_type == "slide" else load_visual_modules(project_root)
+            target = records.get(args.subject_id, {})
+            slide = load_slides(project_root).get(target.get("slide_id"), {}) if args.subject_type == "module" else target
+            raise ReviewGateError("slide_passable", str(slide.get("deck_id", "<unknown>")), [{"reason": "use --record-production-review with an evidence document"}])
         findings = json.loads(args.findings_json) if args.findings_json else None
         return record_review(
             project_root, args.subject_type, args.subject_id,
@@ -981,17 +985,13 @@ def main() -> None:
         SlideNotFoundError, VisualModuleNotFoundError, ProductionNotAllowedError,
         LockTimeoutError, ValueError,
     ) as exc:
-        error = {"error": type(exc).__name__, "message": str(exc)}
-        for field in ("predicate", "deck_id", "blockers"):
-            if hasattr(exc, field):
-                error[field] = getattr(exc, field)
+        from presentation_workflow import translate_cli_gate_error
+        exc = translate_cli_gate_error(args, exc)
+        error = ({"error": type(exc).__name__, "predicate": getattr(exc, "predicate"), "deck_id": getattr(exc, "deck_id"), "blockers": getattr(exc, "blockers")} if all(hasattr(exc, field) for field in ("predicate", "deck_id", "blockers")) else {"error": type(exc).__name__, "message": str(exc)})
         print(json.dumps(error) if args.json else f"Error: {exc}")
         sys.exit(1)
     except Exception as exc:  # noqa: BLE001 -- stdout must always stay parseable
-        error = {"error": type(exc).__name__, "message": str(exc)}
-        for field in ("predicate", "deck_id", "blockers"):
-            if hasattr(exc, field):
-                error[field] = getattr(exc, field)
+        error = ({"error": type(exc).__name__, "predicate": getattr(exc, "predicate"), "deck_id": getattr(exc, "deck_id"), "blockers": getattr(exc, "blockers")} if all(hasattr(exc, field) for field in ("predicate", "deck_id", "blockers")) else {"error": type(exc).__name__, "message": str(exc)})
         print(json.dumps(error) if args.json else f"Error: {exc}")
         sys.exit(1)
     print(json.dumps(result) if args.json else json.dumps(result, indent=2))

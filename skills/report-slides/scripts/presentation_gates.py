@@ -8,6 +8,8 @@ atomic state transition.  A predicate never infers missing evidence.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from pathlib import Path
 from typing import Any, Mapping
@@ -15,6 +17,7 @@ from typing import Any, Mapping
 from presentation_contracts import contract_sha256, load_contract
 from presentation_events import effective_review_results, load_events, load_plans, load_review_results
 from validate_deck_plan import validate_deck_approval, validate_deck_plan
+from validate_visual_review import derive_overall_status, validate_review_record
 from validate_visual_module import validate_complex_visual_spec, validate_worker_assignment
 
 
@@ -110,12 +113,13 @@ def _plan_for_deck(project_root: Path, deck: dict[str, Any]) -> tuple[dict[str, 
     """Load the current plan record and contract without inventing one."""
     records = load_plans(project_root)
     plan_id = deck.get("current_plan_id")
-    if not isinstance(plan_id, str) or plan_id not in records:
-        candidates = [record for record in records.values() if record.get("deck_id") == deck.get("id")]
-        candidates.sort(key=lambda record: (int(record.get("version", 0)), str(record.get("created_at", ""))))
-        record = candidates[-1] if candidates else None
-    else:
-        record = records[plan_id]
+    if not isinstance(plan_id, str) or not plan_id:
+        return None, None, [{"reason": "missing_current_plan_id"}]
+    record = records.get(plan_id)
+    if record is None:
+        return None, None, [{"reason": "invalid_current_plan_id", "plan_id": plan_id}]
+    if record.get("deck_id") != deck.get("id"):
+        return record, None, [{"reason": "current_plan_deck_mismatch", "plan_id": plan_id}]
     if record is None:
         return None, None, [{"reason": "missing_plan"}]
     raw_path = record.get("plan_path", record.get("path"))
@@ -188,7 +192,10 @@ def assert_plan_reviewable(project_root: Path, deck_id: str) -> dict[str, Any]:
     Raises:
         PlanGateError: If plan evidence is missing or invalid.
     """
-    deck = _deck(project_root, deck_id)
+    try:
+        deck = _deck(project_root, deck_id)
+    except Exception as exc:  # noqa: BLE001 - gated not-found becomes structured evidence
+        _fail(PlanGateError, "plan_reviewable", deck_id, [{"reason": "unknown_deck", "message": str(exc)}])
     _, document, blockers = _plan_blockers(project_root, deck)
     if deck.get("status") not in {"planning", "content_review", "awaiting_approval"}:
         blockers.append({"reason": f"status:{deck.get('status')}"})
@@ -219,7 +226,10 @@ def assert_plan_approvable(project_root: Path, approval: dict[str, Any]) -> dict
         blockers.append({"reason": "approval must be a mapping"})
         _fail(ApprovalGateError, "plan_approvable", deck_id, blockers)
     blockers.extend({"reason": error} for error in validate_deck_approval(approval))
-    deck = _deck(project_root, deck_id)
+    try:
+        deck = _deck(project_root, deck_id)
+    except Exception as exc:  # noqa: BLE001 - gated not-found becomes structured evidence
+        _fail(ApprovalGateError, "plan_approvable", deck_id, [{"reason": "unknown_deck", "message": str(exc)}])
     record, plan, plan_blockers = _plan_blockers(project_root, deck)
     blockers.extend(plan_blockers)
     if plan is not None and record is not None:
@@ -237,6 +247,27 @@ def assert_plan_approvable(project_root: Path, approval: dict[str, Any]) -> dict
         and review.get("subject_id") == deck_id
         and review.get("reviewer_role") in _CONTENT_ROLES
     ]
+    current_plan_id = record.get("id") if isinstance(record, Mapping) else None
+    current_plan_version = record.get("version") if isinstance(record, Mapping) else None
+    current_plan_sha256 = contract_sha256(plan) if isinstance(plan, Mapping) else None
+    bound_content = []
+    for review in content:
+        findings = review.get("findings", [])
+        if "unsupported-claim" in _finding_codes(findings):
+            blockers.append({"reason": "unsupported-claim", "findings": findings})
+        if not _review_identity(review):
+            blockers.append({"reason": "reviewer_identity_unverifiable"})
+        if authored_by and review.get("reviewer_id") == authored_by:
+            blockers.append({"reason": "reviewer must differ from plan author"})
+        if (
+            review.get("current_plan_id") != current_plan_id
+            or review.get("current_plan_version") != current_plan_version
+            or review.get("current_plan_sha256") != current_plan_sha256
+        ):
+            blockers.append({"reason": "content_review_plan_binding_mismatch", "review_id": review.get("id")})
+            continue
+        bound_content.append(review)
+    content = bound_content
     if not content:
         blockers.append({"reason": "missing_content_review"})
     for review in content:
@@ -272,7 +303,10 @@ def assert_production_allowed(project_root: Path, deck_id: str) -> dict[str, Any
     Raises:
         ProductionGateError: If approval is absent or the deck is too early.
     """
-    deck = _deck(project_root, deck_id)
+    try:
+        deck = _deck(project_root, deck_id)
+    except Exception as exc:  # noqa: BLE001 - gated not-found becomes structured evidence
+        _fail(ProductionGateError, "production_allowed", deck_id, [{"reason": "unknown_deck", "message": str(exc)}])
     blockers: list[dict[str, Any]] = []
     if deck.get("status") not in _APPROVED_STATUSES:
         blockers.append({"reason": f"status:{deck.get('status')}"})
@@ -318,7 +352,10 @@ def assert_module_assignable(project_root: Path, module_id: str, assignment: dic
     Raises:
         AssignmentGateError: If assignment evidence is missing or inconsistent.
     """
-    module, slide, deck_id = _module_context(project_root, module_id)
+    try:
+        module, slide, deck_id = _module_context(project_root, module_id)
+    except Exception as exc:  # noqa: BLE001 - gated not-found becomes structured evidence
+        _fail(AssignmentGateError, "module_assignable", "<unknown>", [{"reason": "unknown_module", "message": str(exc)}])
     blockers: list[dict[str, Any]] = []
     try:
         deck = assert_production_allowed(project_root, deck_id)
@@ -332,6 +369,15 @@ def assert_module_assignable(project_root: Path, module_id: str, assignment: dic
             blockers.append({"reason": "module_id_mismatch"})
         if assignment.get("inputs_resolved") is not True:
             blockers.append({"reason": "inputs_unresolved"})
+        if assignment.get("worker_type") != module.get("module_type"):
+            blockers.append({"reason": "worker_type_mismatch", "expected": module.get("module_type")})
+        expected_dependencies = list(module.get("dependencies") or [])
+        if assignment.get("dependencies") != expected_dependencies:
+            blockers.append({
+                "reason": "dependency_ids_mismatch",
+                "expected": expected_dependencies,
+                "actual": assignment.get("dependencies"),
+            })
     if module.get("status") not in {"planned", "ready"}:
         blockers.append({"reason": f"status:{module.get('status')}"})
     dependencies = module.get("dependencies", [])
@@ -339,7 +385,9 @@ def assert_module_assignable(project_root: Path, module_id: str, assignment: dic
     unresolved = [dependency for dependency in dependencies if modules.get(dependency, {}).get("status") != "passed"]
     if unresolved:
         blockers.append({"reason": "unresolved_dependencies", "dependencies": unresolved})
-    if module.get("module_type") in {"architecture", "data_visualization", "conceptual"}:
+    spec_document: dict[str, Any] | None = None
+    spec_digest: str | None = None
+    if module.get("module_type") in {"architecture", "data_visualization", "conceptual", "annotation"}:
         spec_path = module.get("visual_spec_path")
         if not isinstance(spec_path, str) or not (project_root / spec_path).is_file():
             blockers.append({"reason": "missing_visual_spec"})
@@ -347,6 +395,36 @@ def assert_module_assignable(project_root: Path, module_id: str, assignment: dic
             try:
                 spec_document = load_contract(project_root / spec_path)
                 blockers.extend({"reason": error} for error in validate_complex_visual_spec(spec_document))
+                spec_digest = contract_sha256(spec_document)
+                persisted_spec_digest = module.get("visual_spec_sha256", module.get("spec_sha256"))
+                if not isinstance(persisted_spec_digest, str):
+                    blockers.append({"reason": "missing_persisted_spec_digest"})
+                elif persisted_spec_digest != spec_digest:
+                    blockers.append({"reason": "persisted_spec_digest_mismatch"})
+                if isinstance(assignment, dict) and assignment.get("spec_sha256") != spec_digest:
+                    blockers.append({"reason": "spec_digest_mismatch", "expected": spec_digest})
+                if isinstance(spec_document, Mapping):
+                    spec_modules = spec_document.get("modules", [])
+                    spec_module = next(
+                        (entry for entry in spec_modules if isinstance(entry, Mapping) and entry.get("id") == module.get("module_key")),
+                        None,
+                    )
+                    if spec_module is None:
+                        blockers.append({"reason": "module_key_missing_from_spec"})
+                    else:
+                        spec_dependencies = list(spec_module.get("dependencies") or [])
+                        module_by_key = {
+                            item.get("module_key"): item.get("id")
+                            for item in _state().load_visual_modules(project_root).values()
+                            if isinstance(item, Mapping)
+                        }
+                        resolved_spec_dependencies = [module_by_key.get(dep, dep) for dep in spec_dependencies]
+                        if resolved_spec_dependencies != list(module.get("dependencies") or []):
+                            blockers.append({
+                                "reason": "spec_dependency_ids_mismatch",
+                                "expected": list(module.get("dependencies") or []),
+                                "actual": resolved_spec_dependencies,
+                            })
             except (OSError, ValueError) as exc:
                 blockers.append({"reason": "invalid_visual_spec", "message": str(exc)})
     if blockers:
@@ -368,7 +446,10 @@ def assert_module_publishable(project_root: Path, module_id: str, artifact: dict
     Raises:
         PublicationGateError: If artifact evidence does not match assignment.
     """
-    module, slide, deck_id = _module_context(project_root, module_id)
+    try:
+        module, slide, deck_id = _module_context(project_root, module_id)
+    except Exception as exc:  # noqa: BLE001 - gated not-found becomes structured evidence
+        _fail(PublicationGateError, "module_publishable", "<unknown>", [{"reason": "unknown_module", "message": str(exc)}])
     try:
         deck = assert_production_allowed(project_root, deck_id)
     except ProductionGateError as exc:
@@ -379,6 +460,8 @@ def assert_module_publishable(project_root: Path, module_id: str, artifact: dict
     assignment = assignments[-1] if assignments else None
     if assignment is None:
         blockers.append({"reason": "missing_assignment"})
+    elif module.get("assignment_path") != assignment.get("assignment_path", assignment.get("path")):
+        blockers.append({"reason": "assignment_binding_mismatch"})
     if module.get("status") not in {"assigned", "producing", "review_required"}:
         blockers.append({"reason": f"status:{module.get('status')}"})
     if not isinstance(artifact, dict):
@@ -394,8 +477,19 @@ def assert_module_publishable(project_root: Path, module_id: str, artifact: dict
             blockers.append({"reason": "invalid_artifact_path"})
         if assignment is not None and artifact.get("producer_id", artifact.get("produced_by")) != assignment.get("worker_id", assignment.get("worker")):
             blockers.append({"reason": "producer_mismatch"})
-        if assignment is not None and artifact.get("spec_sha256") is not None and artifact.get("spec_sha256") != assignment.get("spec_sha256"):
-            blockers.append({"reason": "spec_digest_mismatch"})
+        if assignment is not None:
+            if artifact.get("assignment_id") != assignment.get("id"):
+                blockers.append({"reason": "assignment_binding_required"})
+            if artifact.get("spec_sha256") != assignment.get("spec_sha256"):
+                blockers.append({"reason": "spec_digest_mismatch"})
+            if isinstance(path, str) and _SHA256.fullmatch(str(artifact.get("sha256", "")) or ""):
+                resolved = project_root / path
+                if not resolved.is_file():
+                    blockers.append({"reason": "missing_artifact", "path": path})
+                else:
+                    actual_digest = hashlib.sha256(resolved.read_bytes()).hexdigest()
+                    if actual_digest != artifact.get("sha256"):
+                        blockers.append({"reason": "artifact_digest_mismatch", "expected": artifact.get("sha256"), "actual": actual_digest})
     if blockers:
         _fail(PublicationGateError, "module_publishable", deck_id, blockers)
     return {"deck": deck, "slide": slide, "module": module, "assignment": assignment, "artifact": artifact}
@@ -422,7 +516,7 @@ def assert_slide_passable(project_root: Path, slide_id: str) -> dict[str, Any]:
     state = _state()
     slides = state.load_slides(project_root)
     if slide_id not in slides:
-        raise state.SlideNotFoundError(f"Unknown slide_id: {slide_id}")
+        _fail(ReviewGateError, "slide_passable", "<unknown>", [{"reason": "unknown_slide", "slide_id": slide_id}])
     slide = slides[slide_id]
     deck_id = str(slide.get("deck_id"))
     blockers: list[dict[str, Any]] = []
@@ -457,7 +551,10 @@ def assert_draft_reviewable(project_root: Path, deck_id: str, preview: dict[str,
     Raises:
         DraftGateError: If any slide or contact-sheet evidence is missing.
     """
-    deck = _deck(project_root, deck_id)
+    try:
+        deck = _deck(project_root, deck_id)
+    except Exception as exc:  # noqa: BLE001 - gated not-found becomes structured evidence
+        _fail(DraftGateError, "draft_reviewable", deck_id, [{"reason": "unknown_deck", "message": str(exc)}])
     blockers: list[dict[str, Any]] = []
     try:
         assert_production_allowed(project_root, deck_id)
@@ -474,7 +571,10 @@ def assert_draft_reviewable(project_root: Path, deck_id: str, preview: dict[str,
     if not isinstance(rendered, list) or not rendered:
         blockers.append({"reason": "rendered slide set"})
     else:
-        slides = [slide for slide in _state().load_slides(project_root).values() if slide.get("deck_id") == deck_id]
+        slides = [
+            slide for slide in _state().load_slides(project_root).values()
+            if slide.get("deck_id") == deck_id and slide.get("status") != "superseded"
+        ]
         for slide in slides:
             if slide.get("status") != "passed":
                 blockers.append({"reason": f"slide:{slide.get('id')}:not_passed"})
@@ -534,12 +634,128 @@ def assert_draft_reviewable(project_root: Path, deck_id: str, preview: dict[str,
                 blockers.append({"reason": "invalid_preview_artifact_digest", "path": artifact_path})
     if blockers:
         _fail(DraftGateError, "draft_reviewable", deck_id, blockers)
-    return {"deck": deck, "preview": preview, "slides": [slide for slide in _state().load_slides(project_root).values() if slide.get("deck_id") == deck_id]}
+    return {
+        "deck": deck,
+        "preview": preview,
+        "slides": [
+            slide for slide in _state().load_slides(project_root).values()
+            if slide.get("deck_id") == deck_id and slide.get("status") != "superseded"
+        ],
+    }
 
 
-def _result_status(value: Any) -> Any:
-    """Extract a status from either a scalar or result mapping."""
-    return value.get("status") if isinstance(value, Mapping) else value
+def _current_records(records: Mapping[str, Any], deck_id: str) -> list[dict[str, Any]]:
+    """Return only non-superseded records belonging to one deck."""
+    return [
+        dict(record)
+        for record in records.values()
+        if isinstance(record, Mapping)
+        and record.get("deck_id") == deck_id
+        and record.get("status") != "superseded"
+    ]
+
+
+def _verify_artifact_digests(
+    project_root: Path, digests: Any, blockers: list[dict[str, Any]], reason_prefix: str
+) -> None:
+    """Verify caller-declared artifact digests against bytes on disk."""
+    if digests is None:
+        return
+    if not isinstance(digests, Mapping):
+        blockers.append({"reason": f"{reason_prefix}_digests_must_be_mapping"})
+        return
+    for raw_path, digest in digests.items():
+        if not isinstance(raw_path, str) or Path(raw_path).is_absolute() or ".." in Path(raw_path).parts:
+            blockers.append({"reason": f"{reason_prefix}_digest_path_invalid", "path": raw_path})
+            continue
+        if not isinstance(digest, str) or _SHA256.fullmatch(digest) is None:
+            blockers.append({"reason": f"{reason_prefix}_digest_invalid", "path": raw_path})
+            continue
+        path = project_root / raw_path
+        if not path.is_file():
+            blockers.append({"reason": f"{reason_prefix}_digest_file_missing", "path": raw_path})
+            continue
+        actual = hashlib.sha256(path.read_bytes()).hexdigest()
+        if actual != digest:
+            blockers.append({"reason": f"{reason_prefix}_digest_mismatch", "path": raw_path, "actual": actual})
+
+
+def _final_visual_review(
+    project_root: Path, deck_id: str, completion: Mapping[str, Any], blockers: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    """Validate the persisted visual-review JSON and all named final artifacts."""
+    raw_path = completion.get("visual_review_path", completion.get("review_record_path"))
+    if not isinstance(raw_path, str) or not raw_path:
+        blockers.append({"reason": "visual_review_path_required"})
+        return None
+    review_path = Path(raw_path)
+    if review_path.is_absolute():
+        resolved = review_path.resolve()
+        try:
+            resolved.relative_to(project_root.resolve())
+        except ValueError:
+            blockers.append({"reason": "visual_review_path_outside_project"})
+            return None
+    else:
+        if ".." in review_path.parts:
+            blockers.append({"reason": "visual_review_path_invalid"})
+            return None
+        resolved = (project_root / review_path).resolve()
+    if not resolved.is_file():
+        blockers.append({"reason": "missing_visual_review_record", "path": raw_path})
+        return None
+    artifact_root_raw = completion.get("artifact_root")
+    artifact_root = project_root
+    if isinstance(artifact_root_raw, str) and artifact_root_raw:
+        candidate = Path(artifact_root_raw)
+        if candidate.is_absolute():
+            artifact_root = candidate.resolve()
+        elif ".." in candidate.parts:
+            blockers.append({"reason": "artifact_root_invalid"})
+        else:
+            artifact_root = (project_root / candidate).resolve()
+    try:
+        issues = validate_review_record(resolved, artifact_root)
+        document = json.loads(resolved.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        blockers.append({"reason": "invalid_visual_review_record", "message": str(exc)})
+        return None
+    blockers.extend({"reason": f"visual_review:{issue.path}:{issue.message}"} for issue in issues)
+    if not isinstance(document, Mapping):
+        blockers.append({"reason": "visual_review_root_not_mapping"})
+        return None
+    if document.get("deck_id") != deck_id:
+        blockers.append({"reason": "visual_review_deck_id_mismatch"})
+    try:
+        derived = derive_overall_status(document)
+        if derived.status != "passed" or not derived.completion_allowed:
+            blockers.append({"reason": "visual_review_not_passing"})
+    except ValueError as exc:
+        blockers.append({"reason": "visual_review_overall_invalid", "message": str(exc)})
+    artifacts = document.get("artifacts", {})
+    digest_map = completion.get("artifact_digests", document.get("artifact_digests"))
+    if not isinstance(digest_map, Mapping):
+        blockers.append({"reason": "final_artifact_digests_required"})
+    if isinstance(artifacts, Mapping):
+        pptx_path = artifacts.get("pptx")
+        if not isinstance(pptx_path, str) or not pptx_path:
+            blockers.append({"reason": "final_pptx_artifact_required"})
+        else:
+            pptx_resolved = artifact_root / pptx_path
+            if not pptx_resolved.is_file():
+                blockers.append({"reason": "missing_final_pptx", "path": pptx_path})
+            elif not isinstance(digest_map, Mapping) or pptx_path not in digest_map:
+                blockers.append({"reason": "final_pptx_digest_required", "path": pptx_path})
+        declared_review = artifacts.get("review_record")
+        if isinstance(declared_review, str) and (artifact_root / declared_review).resolve() != resolved:
+            blockers.append({"reason": "visual_review_record_binding_mismatch"})
+    _verify_artifact_digests(
+        project_root,
+        digest_map,
+        blockers,
+        "completion_artifact",
+    )
+    return dict(document)
 
 
 def assert_deck_completable(project_root: Path, deck_id: str, completion: dict[str, Any]) -> dict[str, Any]:
@@ -559,7 +775,10 @@ def assert_deck_completable(project_root: Path, deck_id: str, completion: dict[s
     Raises:
         CompletionGateError: If any required evidence is missing or failing.
     """
-    deck = _deck(project_root, deck_id)
+    try:
+        deck = _deck(project_root, deck_id)
+    except Exception as exc:  # noqa: BLE001 - gated not-found becomes structured evidence
+        _fail(CompletionGateError, "deck_completable", deck_id, [{"reason": "unknown_deck", "message": str(exc)}])
     blockers: list[dict[str, Any]] = []
     try:
         assert_production_allowed(project_root, deck_id)
@@ -569,8 +788,13 @@ def assert_deck_completable(project_root: Path, deck_id: str, completion: dict[s
         blockers.append({"reason": f"status:{deck.get('status')}"})
     if not isinstance(completion, dict):
         blockers.append({"reason": "completion must be a mapping"})
-    slides = [slide for slide in _state().load_slides(project_root).values() if slide.get("deck_id") == deck_id]
-    modules = [module for module in _state().load_visual_modules(project_root).values() if any(slide.get("id") == module.get("slide_id") for slide in slides)]
+    slides = _current_records(_state().load_slides(project_root), deck_id)
+    slide_ids = {slide.get("id") for slide in slides}
+    modules = [
+        dict(module)
+        for module in _state().load_visual_modules(project_root).values()
+        if module.get("status") != "superseded" and module.get("slide_id") in slide_ids
+    ]
     if not slides:
         blockers.extend({"reason": role} for role in sorted(_REVIEW_ROLES))
     for slide in slides:
@@ -585,33 +809,21 @@ def assert_deck_completable(project_root: Path, deck_id: str, completion: dict[s
             blockers.append({"reason": f"module:{module.get('id')}:status:{module.get('status')}"})
     previews = [event for event in load_events(project_root, "draft_preview") if event.get("deck_id") == deck_id]
     decisions = [event for event in load_events(project_root, "draft_decision") if event.get("deck_id") == deck_id]
-    if not deck.get("draft_preview_id") or not any(event.get("id") == deck.get("draft_preview_id") for event in previews):
+    current_preview = next((event for event in previews if event.get("id") == deck.get("draft_preview_id")), None)
+    if current_preview is None:
         blockers.append({"reason": "missing_draft_preview"})
-    if not deck.get("draft_approval_id") or not any(
-        event.get("id") == deck.get("draft_approval_id") and event.get("decision", "approve") == "approve" for event in decisions
-    ):
+    current_decision = next((event for event in decisions if event.get("id") == deck.get("draft_approval_id")), None)
+    if current_decision is None:
         blockers.append({"reason": "missing_draft_approval"})
-    if isinstance(completion, dict):
-        statuses = completion.get("statuses", {})
-        if not isinstance(statuses, Mapping):
-            statuses = {}
-        structure = completion.get(
-            "pptx_structure",
-            completion.get("final_pptx_structure", statuses.get("pptx_structure")),
-        )
-        rendered = completion.get(
-            "pptx_render",
-            completion.get("final_pptx_render", statuses.get("pptx_render")),
-        )
-        if _result_status(structure) != "passed":
-            blockers.append({"reason": "pptx_structure"})
-        if _result_status(rendered) != "passed":
-            blockers.append({"reason": "pptx_render"})
-        if statuses and statuses.get("svg_preview") is None:
-            blockers.append({"reason": "svg_preview"})
-        overall = completion.get("overall", {})
-        if isinstance(overall, Mapping) and overall.get("completion_allowed") is False:
-            blockers.append({"reason": "completion_allowed:false"})
+    if current_preview is not None and current_decision is not None:
+        preview_digest = current_preview.get("preview_sha256")
+        if current_decision.get("decision") != "approve":
+            blockers.append({"reason": "draft_decision_not_approve"})
+        if current_decision.get("preview_id") != current_preview.get("id"):
+            blockers.append({"reason": "draft_decision_preview_id_mismatch"})
+        if current_decision.get("preview_sha256") != preview_digest:
+            blockers.append({"reason": "draft_decision_preview_digest_mismatch"})
+    visual_review = _final_visual_review(project_root, deck_id, completion, blockers) if isinstance(completion, Mapping) else None
     if blockers:
         _fail(CompletionGateError, "deck_completable", deck_id, blockers)
-    return {"deck": deck, "completion": completion, "slides": slides, "modules": modules}
+    return {"deck": deck, "completion": completion, "slides": slides, "modules": modules, "visual_review": visual_review}

@@ -59,6 +59,42 @@ _REVISION_KINDS = frozenset(
 )
 
 
+def translate_cli_gate_error(args: Any, error: BaseException) -> BaseException:
+    """Translate gated CLI not-found/parse errors into named gate errors.
+
+    Args:
+        args: Parsed presentation-state CLI arguments.
+        error: Original low-level exception.
+
+    Returns:
+        The original error when it is already structured, otherwise a named
+        gate error for a gated action.
+    """
+    if isinstance(error, GateError):
+        return error
+    names = (
+        "check_production_allowed", "register_plan", "record_content_review", "approve_deck",
+        "record_production_review", "request_targeted_revision", "register_draft_preview",
+        "approve_draft", "complete_deck",
+    )
+    selected = next((name for name in names if getattr(args, name, False)), None)
+    if selected is None:
+        return error
+    labels = {
+        "check_production_allowed": (ProductionGateError, "production_allowed"),
+        "register_plan": (PlanGateError, "plan_registerable"),
+        "record_content_review": (ReviewGateError, "content_review_recordable"),
+        "approve_deck": (ApprovalGateError, "plan_approvable"),
+        "record_production_review": (ReviewGateError, "production_review_recordable"),
+        "request_targeted_revision": (ReviewGateError, "revision_requestable"),
+        "register_draft_preview": (DraftGateError, "draft_reviewable"),
+        "approve_draft": (DraftGateError, "draft_approvable"),
+        "complete_deck": (CompletionGateError, "deck_completable"),
+    }
+    error_type, predicate = labels[selected]
+    return error_type(predicate, getattr(args, "deck_id", None) or "<unknown>", [{"reason": type(error).__name__, "message": str(error)}])
+
+
 def _state() -> Any:
     """Import presentation_state lazily to avoid its workflow import cycle."""
     import presentation_state
@@ -244,7 +280,7 @@ def record_content_review(
         ReviewGateError: If the review document is malformed.
     """
     with _workflow_lock(project_root):
-        assert_plan_reviewable(project_root, deck_id)
+        checked_plan = assert_plan_reviewable(project_root, deck_id)
         review = _action_document(review_path, ReviewGateError, "content_review_recordable", deck_id)
         blockers: list[dict[str, Any]] = []
         if review.get("deck_id", review.get("subject_id")) != deck_id:
@@ -257,13 +293,31 @@ def record_content_review(
             blockers.append({"reason": "invalid_review_status"})
         if blockers:
             raise ReviewGateError("content_review_recordable", deck_id, blockers)
-        event = _record_review_event(project_root, "deck", deck_id, review)
+        plan_record = checked_plan["plan_record"]
+        plan_document = checked_plan["plan"]
+        event = _record_review_event(
+            project_root,
+            "deck",
+            deck_id,
+            review,
+            {
+                "current_plan_id": plan_record["id"],
+                "current_plan_version": plan_record["version"],
+                "current_plan_sha256": contract_sha256(plan_document),
+            },
+        )
         status = "awaiting_approval" if review["status"] == "passed" else "content_review"
         _save_deck(project_root, deck_id, {"status": status})
         return event
 
 
-def _record_review_event(project_root: Path, subject_type: str, subject_id: str, review: Mapping[str, Any]) -> dict[str, Any]:
+def _record_review_event(
+    project_root: Path,
+    subject_type: str,
+    subject_id: str,
+    review: Mapping[str, Any],
+    extra: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     """Append one normalized Review Result event."""
     event = {
         "event": "review_result", "id": _id("rev"), "subject_type": subject_type,
@@ -273,6 +327,8 @@ def _record_review_event(project_root: Path, subject_type: str, subject_id: str,
         "findings": review.get("findings", []), "round": review.get("round", 1),
         "ts": review.get("reviewed_at", _now()),
     }
+    if extra:
+        event.update(dict(extra))
     append_event(project_root, event)
     return event
 
@@ -364,7 +420,29 @@ def record_production_review(project_root: Path, review_path: Path) -> dict[str,
             raise ReviewGateError("production_review_recordable", deck_id, [{"reason": "reviewer_id_required"}])
         if review.get("status") not in {"passed", "failed", "blocked"}:
             raise ReviewGateError("production_review_recordable", deck_id, [{"reason": "invalid_review_status"}])
-        event = _record_review_event(project_root, subject_type, subject_id, review)
+        revision_request: dict[str, Any] | None = None
+        if review["status"] in {"failed", "blocked"}:
+            try:
+                revision_request = create_revision_request(
+                    project_root,
+                    subject_type,
+                    subject_id,
+                    "reviewer",
+                    str(review.get("instructions") or "Address production review findings"),
+                )
+            except Exception as exc:  # noqa: BLE001 - expose typed gate evidence
+                raise ReviewGateError(
+                    "production_review_recordable",
+                    deck_id,
+                    [{"reason": "revision_request_creation_failed", "message": str(exc)}],
+                ) from exc
+        event = _record_review_event(
+            project_root,
+            subject_type,
+            subject_id,
+            review,
+            {"revision_request_id": revision_request["id"]} if revision_request else None,
+        )
         if review["status"] in {"failed", "blocked"}:
             _save_unit(project_root, subject_type, subject_id, {"status": "revision_required"})
         elif subject_type == "slide":
@@ -385,7 +463,11 @@ def record_production_review(project_root: Path, review_path: Path) -> dict[str,
             }
             if roles == {"scientific", "visual_quality"}:
                 _save_unit(project_root, "module", subject_id, {"status": "passed"})
-        return {"review": event, "target": _state().load_slides(project_root).get(subject_id) if subject_type == "slide" else _state().load_visual_modules(project_root).get(subject_id)}
+        return {
+            "review": event,
+            "revision_request": revision_request,
+            "target": _state().load_slides(project_root).get(subject_id) if subject_type == "slide" else _state().load_visual_modules(project_root).get(subject_id),
+        }
 
 
 def request_targeted_revision(project_root: Path, revision_path: Path) -> dict[str, Any]:
@@ -481,9 +563,14 @@ def register_draft_preview(project_root: Path, preview_path: Path) -> dict[str, 
             raise DraftGateError("draft_reviewable", "<unknown>", [{"reason": "deck_id_required"}])
         checked = assert_draft_reviewable(project_root, deck_id, preview)
         event = dict(preview)
-        event.update({"event": "draft_preview", "id": _id("draft"), "ts": _now()})
+        event.update({
+            "event": "draft_preview",
+            "id": _id("draft"),
+            "preview_sha256": contract_sha256(preview),
+            "ts": _now(),
+        })
         append_event(project_root, event)
-        deck = _save_deck(project_root, deck_id, {"draft_preview_id": event["id"]})
+        deck = _save_deck(project_root, deck_id, {"draft_preview_id": event["id"], "draft_approval_id": None})
         return {"deck": deck, "preview": event, "slides": checked["slides"]}
 
 
@@ -507,20 +594,29 @@ def approve_draft(project_root: Path, decision_path: Path) -> dict[str, Any]:
             raise DraftGateError("draft_approvable", "<unknown>", [{"reason": "deck_id_required"}])
         deck = _deck(project_root, deck_id)
         previews = [event for event in load_events(project_root, "draft_preview") if event.get("deck_id") == deck_id]
-        preview_id = decision.get("preview_id", deck.get("draft_preview_id"))
+        preview_id = decision.get("preview_id")
+        if not isinstance(preview_id, str) or not preview_id:
+            raise DraftGateError("draft_approvable", deck_id, [{"reason": "preview_id_required"}])
         preview = next((event for event in previews if event.get("id") == preview_id), None)
         if preview is None:
             raise DraftGateError("draft_approvable", deck_id, [{"reason": "missing_draft_preview"}])
         assert_draft_reviewable(project_root, deck_id, preview)
         blockers: list[dict[str, Any]] = []
-        if decision.get("decision", "approve") != "approve":
+        if decision.get("preview_id") != deck.get("draft_preview_id"):
+            blockers.append({"reason": "preview_id_not_current"})
+        if decision.get("preview_sha256") != preview.get("preview_sha256"):
+            blockers.append({"reason": "preview_digest_mismatch"})
+        if decision.get("decision") != "approve":
             blockers.append({"reason": "decision must be approve"})
         if not isinstance(decision.get("approved_by"), str) or not decision["approved_by"].strip():
             blockers.append({"reason": "approved_by_required"})
         if blockers:
             raise DraftGateError("draft_approvable", deck_id, blockers)
         event = dict(decision)
-        event.update({"event": "draft_decision", "id": _id("draft-approval"), "preview_id": preview_id, "ts": _now()})
+        event.update({
+            "event": "draft_decision", "id": _id("draft-approval"),
+            "preview_id": preview_id, "preview_sha256": preview["preview_sha256"], "ts": _now(),
+        })
         append_event(project_root, event)
         deck = _save_deck(project_root, deck_id, {"draft_approval_id": event["id"], "status": "validating"})
         return {"deck": deck, "decision": event, "preview": preview}

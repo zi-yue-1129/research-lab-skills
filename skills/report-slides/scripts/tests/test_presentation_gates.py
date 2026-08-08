@@ -12,12 +12,19 @@ import yaml
 
 from presentation_contracts import contract_sha256
 from presentation_gates import (
+    AssignmentGateError,
     ApprovalGateError,
     CompletionGateError,
+    PublicationGateError,
+    ProductionGateError,
+    assert_module_assignable,
+    assert_module_publishable,
     assert_deck_completable,
     assert_plan_approvable,
+    assert_production_allowed,
 )
-from presentation_state import create_deck, record_review, set_deck_status
+from presentation_state import create_deck, create_slide, create_visual_module, load_visual_modules, record_review, set_deck_status, set_module_status
+from presentation_events import create_assignment_record
 from presentation_events import register_plan_record
 
 
@@ -150,4 +157,111 @@ def test_generic_status_cli_cannot_bypass_approval_or_completion(tmp_path: Path)
     assert result.returncode == 1
     error = json.loads(result.stdout)
     assert error["error"] == "ApprovalGateError"
-    assert set(("error", "predicate", "deck_id", "blockers")) <= set(error)
+    assert set(error) == {"error", "predicate", "deck_id", "blockers"}
+
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPT), "--set-deck-status", "--deck-id", deck["id"],
+         "--status", "completed", "--json"],
+        cwd=project, capture_output=True, text=True, check=False,
+    )
+    assert completed.returncode == 1
+    completed_error = json.loads(completed.stdout)
+    assert completed_error["error"] == "CompletionGateError"
+    assert set(completed_error) == {"error", "predicate", "deck_id", "blockers"}
+
+
+def test_generic_record_review_cannot_bypass_atomic_production_review(tmp_path: Path) -> None:
+    """The legacy review CLI cannot create pass evidence outside workflow actions."""
+    project = _project(tmp_path)
+    deck = create_deck(project, "Test deck")
+    slide = create_slide(project, deck["id"], "slide-01", "Evidence")
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--record-review", "--subject-type", "slide",
+         "--subject-id", slide["id"], "--reviewer-id", "reviewer",
+         "--reviewer-role", "scientific", "--status", "passed", "--json"],
+        cwd=project, capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 1
+    error = json.loads(result.stdout)
+    assert error["error"] == "ReviewGateError"
+    assert set(error) == {"error", "predicate", "deck_id", "blockers"}
+
+
+def _approved_module_project(tmp_path: Path) -> tuple[Path, str, str, dict, dict]:
+    """Create an approved deck and one ready module with a persisted spec."""
+    project, deck_id, plan_path = _registered_plan(tmp_path)
+    deck_state = project / ".research/presentations/state/decks.yaml"
+    state = yaml.safe_load(deck_state.read_text(encoding="utf-8"))
+    state["decks"][deck_id].update({
+        "status": "approved", "approval_id": "approval-test", "approved_plan_version": 1,
+        "approved_plan_sha256": contract_sha256(yaml.safe_load(plan_path.read_text(encoding="utf-8"))),
+    })
+    deck_state.write_text(yaml.safe_dump(state), encoding="utf-8")
+    slide = create_slide(project, deck_id, "slide-01", "Evidence changes the decision")
+    module = create_visual_module(project, slide["id"], "module-a", "architecture")
+    spec = {
+        "schema_version": 1, "visual_id": "visual-a", "message": "Explain evidence",
+        "modules": [{
+            "id": "module-a", "purpose": "Show evidence", "semantic_responsibility": "Evidence",
+            "route": "native", "module_type": "architecture", "input_anchors": [],
+            "output_anchors": [], "dependencies": [], "dimensions": {"width": 4, "height": 3},
+            "style_tokens_ref": None, "editability": "native", "annotation_requirements": [], "reuse_of": None,
+        }],
+        "connections": [], "layout": {"direction": "TB", "hierarchy": ["module-a"]},
+    }
+    spec_path = project / "spec.yaml"
+    spec_path.write_text(yaml.safe_dump(spec), encoding="utf-8")
+    module_state = project / ".research/presentations/state/visual_modules.yaml"
+    modules = yaml.safe_load(module_state.read_text(encoding="utf-8"))
+    modules["visual_modules"][module["id"]].update({"visual_spec_path": "spec.yaml", "visual_spec_sha256": contract_sha256(spec)})
+    module_state.write_text(yaml.safe_dump(modules), encoding="utf-8")
+    set_module_status(project, module["id"], "ready")
+    return project, deck_id, module["id"], module, spec
+
+
+def test_production_gate_and_dependency_assignment_succeed_with_current_evidence(tmp_path: Path) -> None:
+    """An approved deck and exact dependency/spec assignment satisfy the gates."""
+    project, deck_id, module_id, module, spec = _approved_module_project(tmp_path)
+    assert assert_production_allowed(project, deck_id)["id"] == deck_id
+    assignment = {
+        "schema_version": 1, "module_id": module_id, "worker_type": "architecture",
+        "dependencies": [], "spec_sha256": contract_sha256(spec), "inputs_resolved": True,
+        "assigned_at": "2026-08-08T00:00:00Z", "blocker": None,
+    }
+    assert assert_module_assignable(project, module_id, assignment)["module"]["id"] == module_id
+
+
+def test_assignment_rejects_worker_dependency_and_spec_binding_mutations(tmp_path: Path) -> None:
+    """Assignment predicates reject worker, dependency, and spec digest drift."""
+    project, _, module_id, module, spec = _approved_module_project(tmp_path)
+    assignment = {
+        "schema_version": 1, "module_id": module_id, "worker_type": "conceptual",
+        "dependencies": ["mod_20260101_deadbe"], "spec_sha256": "0" * 64, "inputs_resolved": True,
+        "assigned_at": "2026-08-08T00:00:00Z", "blocker": None,
+    }
+    with pytest.raises(AssignmentGateError, match="worker_type_mismatch"):
+        assert_module_assignable(project, module_id, assignment)
+
+
+def test_publication_requires_existing_matching_artifact_and_assignment_binding(tmp_path: Path) -> None:
+    """Publication verifies assignment identity, path existence, and actual bytes."""
+    project, deck_id, module_id, module, spec = _approved_module_project(tmp_path)
+    assignment_path = project / "assignment.yaml"
+    assignment_path.write_text("assignment", encoding="utf-8")
+    assignment = create_assignment_record(
+        project, deck_id, module_id=module_id, assignment_path="assignment.yaml", worker_id="worker-a",
+        worker_type="architecture", spec_sha256=contract_sha256(spec), dependencies=[], inputs_resolved=True,
+        slide_id=module["slide_id"],
+    )
+    set_module_status(project, module_id, "assigned")
+    artifact = {"module_id": module_id, "assignment_id": assignment["id"], "producer_id": "worker-a", "spec_sha256": contract_sha256(spec), "path": "artifacts/module.svg", "sha256": "0" * 64}
+    with pytest.raises(PublicationGateError, match="missing_artifact"):
+        assert_module_publishable(project, module_id, artifact)
+    output = project / "artifacts/module.svg"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text("published", encoding="utf-8")
+    with pytest.raises(PublicationGateError, match="artifact_digest_mismatch"):
+        assert_module_publishable(project, module_id, artifact)
+    import hashlib
+    artifact["sha256"] = hashlib.sha256(output.read_bytes()).hexdigest()
+    assert assert_module_publishable(project, module_id, artifact)["artifact"]["module_id"] == module_id
