@@ -82,6 +82,28 @@ def test_valid_plan_passes(tmp_path: Path) -> None:
     assert json.loads(result.stdout) == {"valid": True, "errors": []}
 
 
+def test_plan_missing_purpose_fails(tmp_path: Path) -> None:
+    """Reject a plan that omits its audience-facing purpose."""
+    plan = valid_plan()
+    plan.pop("purpose")
+
+    result = run_validator(tmp_path, "--plan", plan)
+
+    assert result.returncode == 1
+    assert any("purpose" in error for error in json.loads(result.stdout)["errors"])
+
+
+def test_plan_empty_slides_list_fails(tmp_path: Path) -> None:
+    """Reject a plan that proposes no slides."""
+    plan = valid_plan()
+    plan["slides"] = []
+
+    result = run_validator(tmp_path, "--plan", plan)
+
+    assert result.returncode == 1
+    assert any("slides" in error for error in json.loads(result.stdout)["errors"])
+
+
 def test_plan_requires_complete_user_preview_fields(tmp_path: Path) -> None:
     """Reject a user-preview plan whenever a mandatory contract field is absent."""
     for field in (
@@ -102,10 +124,21 @@ def test_plan_requires_complete_user_preview_fields(tmp_path: Path) -> None:
         assert any(field in error for error in json.loads(result.stdout)["errors"])
 
 
-def test_plan_requires_reviewed_status(tmp_path: Path) -> None:
-    """Reject plans that have not completed content review."""
+def test_plan_accepts_planning_status_for_registration(tmp_path: Path) -> None:
+    """Accept planner output before the separate content-review gate."""
     plan = valid_plan()
     plan["status"] = "planning"
+
+    result = run_validator(tmp_path, "--plan", plan)
+
+    assert result.returncode == 0, result.stdout
+    assert json.loads(result.stdout) == {"valid": True, "errors": []}
+
+
+def test_plan_rejects_unknown_status(tmp_path: Path) -> None:
+    """Reject plan statuses outside the contract lifecycle."""
+    plan = valid_plan()
+    plan["status"] = "not-a-status"
 
     result = run_validator(tmp_path, "--plan", plan)
 
@@ -173,6 +206,17 @@ def test_plan_invalid_visual_type_fails(tmp_path: Path) -> None:
     assert any("intended_visual_type" in error for error in json.loads(result.stdout)["errors"])
 
 
+def test_plan_slide_missing_key_takeaway_fails(tmp_path: Path) -> None:
+    """Reject slides without a protected takeaway."""
+    plan = valid_plan()
+    plan["slides"][0].pop("key_takeaway")
+
+    result = run_validator(tmp_path, "--plan", plan)
+
+    assert result.returncode == 1
+    assert any("key_takeaway" in error for error in json.loads(result.stdout)["errors"])
+
+
 def test_valid_approval_approve_passes(tmp_path: Path) -> None:
     """Accept a complete interactive approval for a reviewed plan."""
     result = run_validator(tmp_path, "--approval", valid_approval())
@@ -218,6 +262,68 @@ def test_approval_rejects_invalid_provenance_values(tmp_path: Path) -> None:
 
         assert result.returncode == 1
         assert any(field in error for error in json.loads(result.stdout)["errors"])
+
+
+def test_approval_rejects_non_scalar_decision_and_mode(tmp_path: Path) -> None:
+    """Return structured errors when enum fields are YAML lists or mappings."""
+    invalid_values = {
+        "decision": ["approve"],
+        "approval_mode": {"mode": "interactive"},
+    }
+    for field, value in invalid_values.items():
+        approval = valid_approval()
+        approval[field] = value
+
+        result = run_validator(tmp_path, "--approval", approval)
+
+        assert result.returncode == 1
+        assert json.loads(result.stdout)["valid"] is False
+        assert any(field in error for error in json.loads(result.stdout)["errors"])
+
+
+def test_approval_revise_validates_each_revision_request(tmp_path: Path) -> None:
+    """Reject revision evidence that omits the retained request contract."""
+    approval = valid_approval()
+    approval["decision"] = "revise"
+    approval["revisions_requested"] = [{}]
+
+    result = run_validator(tmp_path, "--approval", approval)
+
+    assert result.returncode == 1
+    errors = json.loads(result.stdout)["errors"]
+    assert any("revisions_requested[0]" in error for error in errors)
+
+
+def test_valid_approval_revise_accepts_complete_revision_request(tmp_path: Path) -> None:
+    """Accept a revise decision with a complete retained Revision Request."""
+    approval = valid_approval()
+    approval["decision"] = "revise"
+    approval["revisions_requested"] = [
+        {
+            "subject_type": "plan",
+            "subject_id": "deck-q3-results",
+            "requested_by": "user",
+            "instructions": "Clarify the narrative emphasis.",
+            "superseded_subject_id": None,
+            "revision_kind": "change_emphasis",
+        }
+    ]
+
+    result = run_validator(tmp_path, "--approval", approval)
+
+    assert result.returncode == 0, result.stdout
+    assert json.loads(result.stdout) == {"valid": True, "errors": []}
+
+
+def test_approval_invalid_decision_fails(tmp_path: Path) -> None:
+    """Reject decisions outside approve/revise."""
+    approval = valid_approval()
+    approval["decision"] = "maybe"
+
+    result = run_validator(tmp_path, "--approval", approval)
+
+    assert result.returncode == 1
+    assert any("decision" in error for error in json.loads(result.stdout)["errors"])
 
 
 def test_valid_approval_revise_requires_revisions_requested(tmp_path: Path) -> None:

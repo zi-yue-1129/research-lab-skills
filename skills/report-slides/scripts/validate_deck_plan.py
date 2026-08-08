@@ -24,8 +24,25 @@ from presentation_contracts import (
 )
 
 _VISUAL_TYPES = frozenset({"native", "data", "generative", "hybrid", "none"})
+_PLAN_STATUSES = frozenset({"planning", "reviewed"})
 _DECK_APPROVAL_DECISIONS = frozenset({"approve", "revise"})
 _APPROVAL_MODES = frozenset({"interactive", "explicit_noninteractive", "preapproved"})
+_REVISION_SUBJECT_TYPES = frozenset({"plan", "deck", "slide", "module"})
+_REVISION_REQUESTERS = frozenset({"user", "reviewer"})
+_REVISION_KINDS = frozenset(
+    {
+        "revise_slide",
+        "add_slide",
+        "remove_slide",
+        "reorder_slides",
+        "change_emphasis",
+        "change_audience",
+        "change_duration",
+        "review_finding",
+        "module_retry",
+        "slide_retry",
+    }
+)
 _RFC3339_Z = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$"
 )
@@ -111,8 +128,8 @@ def validate_deck_plan(doc: Any) -> list[str]:
         errors.append("plan_version: required positive integer")
 
     status = doc.get("status")
-    if status != "reviewed":
-        errors.append(f"status: must be 'reviewed', got {status!r}")
+    if not isinstance(status, str) or status not in _PLAN_STATUSES:
+        errors.append(f"status: must be one of {sorted(_PLAN_STATUSES)}, got {status!r}")
 
     duration = doc.get("estimated_duration_minutes")
     if not isinstance(duration, (int, float)) or isinstance(duration, bool) or duration <= 0:
@@ -177,12 +194,15 @@ def validate_deck_approval(doc: Any) -> list[str]:
         errors.append("plan_sha256: required 64-character lowercase hexadecimal digest")
 
     decision = doc.get("decision")
-    if decision not in _DECK_APPROVAL_DECISIONS:
+    if not isinstance(decision, str) or decision not in _DECK_APPROVAL_DECISIONS:
         errors.append(f"decision: must be one of {sorted(_DECK_APPROVAL_DECISIONS)}, got {decision!r}")
     if decision == "revise":
         revisions = doc.get("revisions_requested")
         if not isinstance(revisions, list) or not revisions:
             errors.append("revisions_requested: required non-empty list when decision is 'revise'")
+        else:
+            for index, revision in enumerate(revisions):
+                errors.extend(_validate_revision_request(revision, index))
     elif decision == "approve" and doc.get("revisions_requested"):
         errors.append("revisions_requested: must be empty when decision is 'approve'")
 
@@ -191,9 +211,64 @@ def validate_deck_approval(doc: Any) -> list[str]:
         errors.append("approved_at: required RFC3339 timestamp ending in Z")
 
     approval_mode = doc.get("approval_mode")
-    if approval_mode not in _APPROVAL_MODES:
+    if not isinstance(approval_mode, str) or approval_mode not in _APPROVAL_MODES:
         errors.append(
             f"approval_mode: must be one of {sorted(_APPROVAL_MODES)}, got {approval_mode!r}"
+        )
+    return errors
+
+
+def _validate_revision_request(revision: Any, index: int) -> list[str]:
+    """Validate one retained Revision Request embedded in an approval.
+
+    Args:
+        revision: Parsed Revision Request value.
+        index: Position in ``revisions_requested`` for error context.
+
+    Returns:
+        Human-readable contract errors for the request.
+    """
+    prefix = f"revisions_requested[{index}]"
+    if not isinstance(revision, dict):
+        return [f"{prefix}: must be a mapping"]
+
+    errors: list[str] = []
+    subject_type = revision.get("subject_type")
+    if not isinstance(subject_type, str) or subject_type not in _REVISION_SUBJECT_TYPES:
+        errors.append(
+            f"{prefix}.subject_type: must be one of {sorted(_REVISION_SUBJECT_TYPES)}, "
+            f"got {subject_type!r}"
+        )
+
+    subject_id = revision.get("subject_id")
+    if not isinstance(subject_id, str) or not subject_id.strip():
+        errors.append(f"{prefix}.subject_id: required non-empty string")
+
+    requested_by = revision.get("requested_by")
+    if not isinstance(requested_by, str) or requested_by not in _REVISION_REQUESTERS:
+        errors.append(
+            f"{prefix}.requested_by: must be one of {sorted(_REVISION_REQUESTERS)}, "
+            f"got {requested_by!r}"
+        )
+
+    instructions = revision.get("instructions")
+    if not isinstance(instructions, str) or not instructions.strip():
+        errors.append(f"{prefix}.instructions: required non-empty string")
+
+    if "superseded_subject_id" not in revision:
+        errors.append(f"{prefix}.superseded_subject_id: required string or null")
+    else:
+        superseded_subject_id = revision["superseded_subject_id"]
+        if superseded_subject_id is not None and (
+            not isinstance(superseded_subject_id, str) or not superseded_subject_id.strip()
+        ):
+            errors.append(f"{prefix}.superseded_subject_id: required string or null")
+
+    revision_kind = revision.get("revision_kind")
+    if not isinstance(revision_kind, str) or revision_kind not in _REVISION_KINDS:
+        errors.append(
+            f"{prefix}.revision_kind: must be one of {sorted(_REVISION_KINDS)}, "
+            f"got {revision_kind!r}"
         )
     return errors
 
