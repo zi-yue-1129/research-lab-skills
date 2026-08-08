@@ -23,6 +23,7 @@ from typing import Any, Iterator, Mapping
 import yaml
 
 from presentation_contracts import contract_sha256, load_contract
+from presentation_artifact_provenance import mapping_key_blockers
 from presentation_events import (
     append_event,
     events_shard_path,
@@ -885,11 +886,20 @@ def approve_draft(
     """
     if type(yes_draft) is not bool:
         validate_draft_decision_flags({"yes_draft": yes_draft}, "<unknown>")
+    decision = _action_document(decision_path, DraftGateError, "draft_approvable", "<unknown>")
+    key_blockers = mapping_key_blockers(decision, "decision")
+    if key_blockers:
+        deck_hint = decision.get("deck_id") if isinstance(decision.get("deck_id"), str) else "<unknown>"
+        raise DraftGateError(
+            "draft_approvable",
+            deck_hint,
+            key_blockers,
+            f"draft_approvable blocked for deck {deck_hint}: mapping keys must be strings",
+        )
+    deck_id = decision.get("deck_id")
+    if not isinstance(deck_id, str) or not deck_id:
+        raise DraftGateError("draft_approvable", "<unknown>", [{"reason": "deck_id_required"}])
     with _workflow_lock(project_root):
-        decision = _action_document(decision_path, DraftGateError, "draft_approvable", "<unknown>")
-        deck_id = decision.get("deck_id")
-        if not isinstance(deck_id, str) or not deck_id:
-            raise DraftGateError("draft_approvable", "<unknown>", [{"reason": "deck_id_required"}])
         state = _state()
         decks_path = project_root / state.DECKS_RELATIVE_PATH
         event_path = events_shard_path(project_root)

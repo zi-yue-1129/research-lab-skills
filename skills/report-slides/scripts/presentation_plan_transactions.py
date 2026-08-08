@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import os
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -61,6 +62,82 @@ def _clear_plan_approval(deck: dict[str, Any]) -> None:
     })
 
 
+def _canonical_plan_destination(
+    project_root: Path,
+    deck_id: str,
+    next_version: int,
+    destination: Path,
+) -> tuple[Path, str]:
+    """Validate and normalize the one immutable destination for a plan.
+
+    Args:
+        project_root: Resolved project root.
+        deck_id: Existing safe deck identifier.
+        next_version: Exact next positive integer version.
+        destination: Caller-provided destination, relative or project-absolute.
+
+    Returns:
+        The canonical destination path and its project-relative POSIX spelling.
+
+    Raises:
+        ValueError: If any destination or version invariant is violated.
+    """
+    if not isinstance(deck_id, str) or not deck_id or deck_id != deck_id.strip():
+        raise ValueError("deck_id must be a non-empty trimmed string")
+    deck_parts = Path(deck_id).parts
+    if len(deck_parts) != 1 or deck_parts[0] in {".", ".."} or "/" in deck_id or "\\" in deck_id:
+        raise ValueError("deck_id must be one safe path component")
+    if type(next_version) is not int or next_version <= 0:
+        raise ValueError("next_version must be a positive integer")
+    expected_relative = Path("decks") / deck_id / "plans" / f"plan-v{next_version:04d}.yaml"
+    raw_destination = destination.as_posix() if isinstance(destination, Path) else str(destination)
+    if Path(raw_destination).is_absolute():
+        try:
+            supplied_relative = Path(raw_destination).relative_to(project_root)
+        except ValueError as exc:
+            raise ValueError("destination must be inside project root") from exc
+    else:
+        supplied_relative = Path(raw_destination)
+    if supplied_relative.as_posix() != expected_relative.as_posix():
+        raise ValueError(
+            "destination must equal canonical deck plan path "
+            f"{expected_relative.as_posix()}"
+        )
+    destination_path = project_root / expected_relative
+    cursor = project_root
+    for component in expected_relative.parts[:-1]:
+        cursor /= component
+        if cursor.is_symlink():
+            raise ValueError(f"destination parent must not be a symlink: {cursor}")
+    if os.path.lexists(destination_path):
+        raise ValueError(f"immutable plan destination already exists: {destination_path}")
+    return destination_path, expected_relative.as_posix()
+
+
+def _load_state_map(path: Path, top_key: str) -> dict[str, Any]:
+    """Read one unlocked state map for pre-lock input validation."""
+    if not path.exists():
+        return {}
+    try:
+        document = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, UnicodeError, yaml.YAMLError) as exc:
+        raise ValueError(f"invalid state YAML in {path}: {exc}") from exc
+    if not isinstance(document, dict) or document.get("version", 1) != 1:
+        raise ValueError(f"invalid state document in {path}")
+    records = document.get(top_key, {}) or {}
+    if not isinstance(records, dict) or any(not isinstance(record, dict) for record in records.values()):
+        raise ValueError(f"invalid {top_key} map in {path}")
+    return records
+
+
+def _validate_plan_versions(plans: Mapping[str, Any]) -> None:
+    """Require every stored plan version to be an exact positive integer."""
+    for plan_id, record in plans.items():
+        version = record.get("version") if isinstance(record, Mapping) else None
+        if type(version) is not int or version <= 0:
+            raise ValueError(f"stored plan {plan_id!r} version must be a positive integer")
+
+
 def register_plan_transaction(
     project_root: Path,
     deck_id: str,
@@ -86,85 +163,68 @@ def register_plan_transaction(
         RuntimeError: If the transaction commit fails and is rolled back.
         ValueError: If durable state does not contain the expected deck.
     """
-    state_dir = project_root / ".research/presentations/state"
+    root = project_root.resolve()
+    state_dir = root / ".research/presentations/state"
     decks_path = state_dir / "decks.yaml"
     plans_path = state_dir / "plans.yaml"
-    destination_path = project_root / destination
+    destination_path, relative_destination = _canonical_plan_destination(
+        root, deck_id, next_version, destination
+    )
+    initial_decks = _load_state_map(decks_path, "decks")
+    if deck_id not in initial_decks:
+        raise ValueError(f"Unknown deck_id: {deck_id}")
+    initial_plans = _load_state_map(plans_path, "plans")
+    _validate_plan_versions(initial_plans)
+    prior_initial = [
+        record for record in initial_plans.values()
+        if record.get("deck_id") == deck_id
+    ]
+    expected_initial = max((record["version"] for record in prior_initial), default=0) + 1
+    if expected_initial != next_version:
+        raise ValueError(
+            f"plan version changed during registration: expected {next_version}, "
+            f"current {expected_initial}"
+        )
     plan_digest = contract_sha256(document)
     paths = (decks_path, plans_path, destination_path)
-    destination_lock = destination_path.with_suffix(destination_path.suffix + ".lock")
-    destination_lock_existed = destination_lock.exists()
-    existing_directories: set[Path] = set()
-    directory = destination_path.parent
-    while directory != project_root and directory != project_root.parent:
-        if directory.exists():
-            existing_directories.add(directory.resolve())
-        directory = directory.parent
-    try:
-        with transaction(paths, project_root) as tx:
-            decks = tx.read_yaml(decks_path, "decks")
-            deck = decks.get(deck_id)
-            if not isinstance(deck, dict):
-                raise ValueError(f"Unknown deck_id: {deck_id}")
-            plans = tx.read_yaml(plans_path, "plans")
-            prior = sorted(
-                (record for record in plans.values() if record.get("deck_id") == deck_id),
-                key=lambda record: (int(record.get("version", 0)), str(record.get("created_at", ""))),
+    with transaction(paths, root) as tx:
+        decks = tx.read_yaml(decks_path, "decks")
+        deck = decks.get(deck_id)
+        if not isinstance(deck, dict):
+            raise ValueError(f"Unknown deck_id: {deck_id}")
+        plans = tx.read_yaml(plans_path, "plans")
+        _validate_plan_versions(plans)
+        prior = sorted(
+            (record for record in plans.values() if record.get("deck_id") == deck_id),
+            key=lambda record: (record["version"], str(record.get("created_at", ""))),
+        )
+        expected_version = (prior[-1]["version"] if prior else 0) + 1
+        if expected_version != next_version:
+            raise ValueError(
+                f"plan version changed during registration: expected {next_version}, "
+                f"current {expected_version}"
             )
-            expected_version = (int(prior[-1]["version"]) if prior else 0) + 1
-            if expected_version != next_version:
-                raise ValueError(
-                    f"plan version changed during registration: expected {next_version}, "
-                    f"current {expected_version}"
-                )
-            record = _plan_record(
-                deck_id,
-                next_version,
-                destination,
-                plan_digest,
-                authored_by,
-                prior[-1]["id"] if prior else None,
-            )
-            plans[record["id"]] = record
-            deck.update({
-                "plan_version": next_version,
-                "current_plan_id": record["id"],
-                "updated_at": _utc_now(),
-            })
-            if prior:
-                _clear_plan_approval(deck)
-            payload = yaml.safe_dump(
-                dict(document), sort_keys=True, allow_unicode=True
-            ).encode("utf-8")
-            tx.stage_bytes(destination_path, payload)
-            tx.stage_yaml(plans_path, "plans", plans)
-            tx.stage_yaml(decks_path, "decks", decks)
-            tx.commit()
-            return record
-    except Exception:
-        if not destination_lock_existed:
-            try:
-                destination_lock.unlink()
-            except FileNotFoundError:
-                pass
-        _remove_empty_plan_directories(destination_path, project_root, existing_directories)
-        raise
-
-
-def _remove_empty_plan_directories(
-    destination: Path, project_root: Path, preserved: set[Path]
-) -> None:
-    """Remove directories created solely for a rolled-back new plan."""
-    root = project_root.resolve()
-    current = destination.parent
-    while current != root and current != root.parent:
-        if current.resolve() in preserved:
-            break
-        try:
-            current.rmdir()
-        except FileNotFoundError:
-            current = current.parent
-            continue
-        except OSError:
-            break
-        current = current.parent
+        record = _plan_record(
+            deck_id,
+            next_version,
+            Path(relative_destination),
+            plan_digest,
+            authored_by,
+            prior[-1]["id"] if prior else None,
+        )
+        plans[record["id"]] = record
+        deck.update({
+            "plan_version": next_version,
+            "current_plan_id": record["id"],
+            "updated_at": _utc_now(),
+        })
+        if prior:
+            _clear_plan_approval(deck)
+        payload = yaml.safe_dump(
+            dict(document), sort_keys=True, allow_unicode=True
+        ).encode("utf-8")
+        tx.stage_bytes(destination_path, payload)
+        tx.stage_yaml(plans_path, "plans", plans)
+        tx.stage_yaml(decks_path, "decks", decks)
+        tx.commit()
+        return record

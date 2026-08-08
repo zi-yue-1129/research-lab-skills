@@ -15,7 +15,90 @@ from presentation_contracts import contract_sha256, load_contract
 
 SLIDE_PNG_KIND = "slide-png"
 REVIEW_SHEET_KIND = "review-sheet"
+MODULE_ARTIFACT_KINDS = frozenset({"module-svg", "module-png", "module-pptx"})
+SLIDE_ARTIFACT_KINDS = frozenset(
+    {"slide-svg", "slide-png", "slide-pptx", "deck-pptx", REVIEW_SHEET_KIND}
+)
+SUPPORTED_ARTIFACT_KINDS = MODULE_ARTIFACT_KINDS | SLIDE_ARTIFACT_KINDS
+GENERIC_ARTIFACT_KINDS = frozenset({"completion"})
 _SHA256_LENGTH = 64
+
+
+def mapping_key_blockers(value: Any, location: str = "document") -> list[dict[str, Any]]:
+    """Return structured blockers for every non-string mapping key.
+
+    Args:
+        value: Candidate recursively nested contract value.
+        location: Human-readable root path used in blocker details.
+
+    Returns:
+        Blockers in traversal order, never requiring key comparison or sorting.
+    """
+    blockers: list[dict[str, Any]] = []
+    if isinstance(value, Mapping):
+        for key, nested in value.items():
+            if not isinstance(key, str):
+                blockers.append({
+                    "reason": "mapping keys must be strings",
+                    "path": location,
+                    "key": repr(key),
+                })
+            child_location = f"{location}.{key!s}"
+            blockers.extend(mapping_key_blockers(nested, child_location))
+    elif isinstance(value, list):
+        for index, nested in enumerate(value):
+            blockers.extend(mapping_key_blockers(nested, f"{location}[{index}]"))
+    return blockers
+
+
+def validate_artifact_subject(
+    artifact_kind: Any,
+    slide_id: Any,
+    module_id: Any,
+    *,
+    reject_unknown: bool = False,
+) -> None:
+    """Validate supported artifact kind and exact subject cardinality.
+
+    Args:
+        artifact_kind: Supported artifact kind.
+        slide_id: Optional owning slide record identifier.
+        module_id: Optional owning module record identifier.
+        reject_unknown: Whether unknown non-publishing evidence kinds are
+            rejected instead of accepted as untyped records.
+
+    Raises:
+        ValueError: If kind is unsupported or required/forbidden subjects are
+            malformed for that kind.
+    """
+    if not isinstance(artifact_kind, str) or (
+        reject_unknown and artifact_kind not in SUPPORTED_ARTIFACT_KINDS
+    ) or (
+        not reject_unknown
+        and artifact_kind not in SUPPORTED_ARTIFACT_KINDS | GENERIC_ARTIFACT_KINDS
+    ):
+        raise ValueError(f"unsupported_artifact_kind: {artifact_kind!r}")
+    if artifact_kind not in SUPPORTED_ARTIFACT_KINDS:
+        return
+
+    def _nonempty_identifier(value: Any, field: str) -> None:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"{field}_subject_required")
+
+    if artifact_kind in MODULE_ARTIFACT_KINDS:
+        _nonempty_identifier(module_id, "module")
+        if slide_id is not None and (
+            not isinstance(slide_id, str) or not slide_id.strip()
+        ):
+            raise ValueError("slide_id_subject_invalid")
+        return
+    if module_id is not None:
+        raise ValueError(f"{artifact_kind} forbids module_id subject")
+    if artifact_kind == REVIEW_SHEET_KIND:
+        if slide_id is not None:
+            raise ValueError("review-sheet forbids slide_id subject")
+        return
+    _nonempty_identifier(slide_id, "slide")
 
 
 def canonical_source_digest(paths: Sequence[str], digests: Sequence[str]) -> str:
@@ -285,12 +368,17 @@ def derive_published_provenance(
         current = by_plan_id[plan_slide_id]
         record_id = current.get("id")
         attempt = _require_positive_int(current.get("attempt"), "attempt")
-        matches = [
+        candidates = [
             artifact for artifact in artifacts.values()
             if artifact.get("deck_id") == deck_id
             and artifact.get("artifact_kind") == SLIDE_PNG_KIND
             and artifact.get("slide_id") == record_id
-            and artifact.get("slide_record_id") == record_id
+        ]
+        for candidate in candidates:
+            _require_positive_int(candidate.get("attempt"), "slide-png attempt")
+        matches = [
+            artifact for artifact in candidates
+            if artifact.get("slide_record_id") == record_id
             and artifact.get("attempt") == attempt
         ]
         if len(matches) != 1:

@@ -24,7 +24,10 @@ from typing import Any, Iterator, Sequence
 import yaml
 
 from presentation_contracts import contract_sha256, load_contract
-from presentation_artifact_provenance import validate_artifact_provenance
+from presentation_artifact_provenance import (
+    validate_artifact_provenance,
+    validate_artifact_subject,
+)
 from presentation_transactions import _open_sidecar, require_transaction_recovery
 
 
@@ -668,10 +671,11 @@ def create_artifact_record(
     Raises:
         ValueError: If kind-specific provenance is incomplete or malformed.
     """
+    # Subject cardinality is pure and must fail before any deck/state reads or
+    # unrelated producer/path/provenance validation.
+    validate_artifact_subject(artifact_kind, slide_id, module_id)
     state = _state_module()
     _deck(project_root, deck_id)
-    if not isinstance(artifact_kind, str) or not artifact_kind.strip():
-        raise ValueError("artifact_kind is required")
     if not isinstance(producer_id, str) or not producer_id.strip():
         raise ValueError("producer_id is required")
     provenance = validate_artifact_provenance(

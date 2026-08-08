@@ -379,7 +379,7 @@ def test_integrity_scan_rejects_cross_slide_assignment_and_artifact_pairing(
     artifact = create_artifact_record(
         project,
         deck["id"],
-        artifact_kind="slide-svg",
+        artifact_kind="module-svg",
         artifact_path="slides/module.svg",
         sha256="b" * 64,
         producer_id="worker",
@@ -442,7 +442,7 @@ def test_records_reject_same_deck_cross_slide_pairing(
             create_artifact_record(
                 project,
                 deck["id"],
-                artifact_kind="slide-svg",
+                artifact_kind="module-svg",
                 artifact_path="slides/module.svg",
                 sha256="b" * 64,
                 producer_id="worker",

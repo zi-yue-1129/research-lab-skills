@@ -527,10 +527,10 @@ def test_register_plan_replacement_clears_approval_and_draft_pointers_atomically
     assert deck["approved_plan_version"] is None
 
 
-def test_register_plan_failure_restores_existing_destination_mode_and_bytes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_register_plan_rejects_existing_immutable_destination_without_state_change(
+    tmp_path: Path,
 ) -> None:
-    """Replacing an existing immutable copy restores its exact mode and bytes."""
+    """An existing immutable copy cannot be overwritten by registration."""
     project, deck_id, _ = _approved_project(tmp_path)
     second = copy.deepcopy(_plan(deck_id))
     second["plan_version"] = 2
@@ -541,18 +541,24 @@ def test_register_plan_failure_restores_existing_destination_mode_and_bytes(
     destination.write_bytes(b"old-plan-copy")
     destination.chmod(0o640)
     before = _file_preimage(destination)
-    monkeypatch.setenv("PRESENTATION_TRANSACTION_FAIL_AT", "3")
-
-    with pytest.raises(RuntimeError, match="injected transaction commit failure"):
+    before_state = {
+        path: _file_preimage(path)
+        for path in (
+            project / ".research/presentations/state/decks.yaml",
+            project / ".research/presentations/state/plans.yaml",
+        )
+    }
+    with pytest.raises(ValueError, match="immutable|exists|overwrite"):
         register_plan(project, deck_id, source, "planner-a")
 
     assert _file_preimage(destination) == before
+    assert {path: _file_preimage(path) for path in before_state} == before_state
 
 
-def test_register_plan_new_failure_removes_created_plan_tree_and_state(
+def test_register_plan_new_failure_keeps_stable_sidecar_and_restores_state(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A failed first registration leaves no new plan file or empty tree."""
+    """A failed first registration leaves its stable sidecar for future waiters."""
     project = _project(tmp_path)
     deck = create_deck(project, "Evidence deck", created_by="planner-a")
     source = project / "plan.yaml"
@@ -569,7 +575,9 @@ def test_register_plan_new_failure_removes_created_plan_tree_and_state(
         register_plan(project, deck["id"], source, "planner-a")
 
     assert _file_preimage(destination) == (False, b"", 0)
-    assert not destination.parent.exists()
+    sidecar = destination.with_suffix(destination.suffix + ".lock")
+    assert sidecar.is_file()
+    assert destination.parent.exists()
     assert {path: _file_preimage(path) for path in before} == before
 
 

@@ -22,8 +22,12 @@ import yaml
 from presentation_contracts import contract_sha256, load_contract
 from presentation_artifact_provenance import (
     derive_validated_published_provenance,
+    MODULE_ARTIFACT_KINDS,
     REVIEW_SHEET_KIND,
     SLIDE_PNG_KIND,
+    SLIDE_ARTIFACT_KINDS,
+    SUPPORTED_ARTIFACT_KINDS,
+    validate_artifact_subject,
     validate_review_sheet_contract,
 )
 from presentation_events import (
@@ -43,10 +47,8 @@ from presentation_state import load_decks, load_slides, load_visual_modules
 from validate_slide_spec import validate_slide_spec
 from validate_visual_module import validate_complex_visual_spec, validate_worker_assignment
 
-_MODULE_ARTIFACT_KINDS = frozenset({"module-svg", "module-png", "module-pptx"})
-_SLIDE_ARTIFACT_KINDS = frozenset(
-    {"slide-svg", "slide-png", "slide-pptx", "deck-pptx", "review-sheet"}
-)
+_MODULE_ARTIFACT_KINDS = MODULE_ARTIFACT_KINDS
+_SLIDE_ARTIFACT_KINDS = SLIDE_ARTIFACT_KINDS
 _PROTECTED_FIELDS = (
     ("approved_takeaway", "approved_takeaway_sha256", "takeaway"),
     ("approved_evidence_refs", "approved_evidence_sha256", "evidence"),
@@ -84,8 +86,13 @@ def publish_artifact(
             publication evidence is missing or inconsistent.
     """
     root = Path(project_root).resolve()
+    try:
+        validate_artifact_subject(
+            artifact_kind, slide_id, module_id, reject_unknown=True
+        )
+    except ValueError as exc:
+        _fail(deck_id, [{"reason": str(exc)}])
     _validate_inputs(root, deck_id, source, destination, artifact_kind, producer_id)
-    _validate_subject_kind(artifact_kind, slide_id, module_id, deck_id)
     with _workflow_lock(root):
         _assert_production(root, deck_id)
         return _publish_locked(
@@ -220,7 +227,7 @@ def _validate_inputs(
     producer_id: str,
 ) -> None:
     """Reject malformed API arguments before any filesystem mutation."""
-    if artifact_kind not in _MODULE_ARTIFACT_KINDS | _SLIDE_ARTIFACT_KINDS:
+    if artifact_kind not in SUPPORTED_ARTIFACT_KINDS:
         _fail(deck_id, [{"reason": "unsupported_artifact_kind", "artifact_kind": artifact_kind}])
     if artifact_kind in {SLIDE_PNG_KIND, REVIEW_SHEET_KIND} and destination.suffix.lower() != ".png":
         _fail(deck_id, [{"reason": "typed PNG artifact requires a .png destination"}])
@@ -237,17 +244,10 @@ def _validate_subject_kind(
     artifact_kind: str, slide_id: str | None, module_id: str | None, deck_id: str
 ) -> None:
     """Require each artifact kind to carry exactly its supported subject."""
-    if artifact_kind in _MODULE_ARTIFACT_KINDS:
-        if module_id is None:
-            _fail(deck_id, [{"reason": "module_subject_required"}])
-        return
-    if artifact_kind in _SLIDE_ARTIFACT_KINDS:
-        if module_id is not None:
-            _fail(deck_id, [{"reason": "slide_subject_cannot_include_module"}])
-        if artifact_kind != REVIEW_SHEET_KIND and slide_id is None:
-            _fail(deck_id, [{"reason": "slide_subject_required"}])
-        if artifact_kind == REVIEW_SHEET_KIND and slide_id is not None:
-            _fail(deck_id, [{"reason": "review-sheet forbids slide subject"}])
+    try:
+        validate_artifact_subject(artifact_kind, slide_id, module_id)
+    except ValueError as exc:
+        _fail(deck_id, [{"reason": str(exc)}])
 
 def _resolved_slides_root(project_root: Path, deck_id: str) -> Path:
     """Resolve the confirmed ``slides`` role through resource-resolver."""

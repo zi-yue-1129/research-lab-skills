@@ -19,7 +19,7 @@ from typing import Any, Mapping, Sequence
 import yaml
 
 from presentation_contracts import contract_sha256, load_contract
-from presentation_artifact_provenance import canonical_source_digest
+from presentation_artifact_provenance import canonical_source_digest, mapping_key_blockers
 from presentation_events import load_artifacts, load_plans
 from presentation_gates import DraftGateError, assert_draft_reviewable
 from presentation_state import load_slides
@@ -261,19 +261,7 @@ def validate_draft_decision_flags(decision: Mapping[str, Any], deck_id: str) -> 
         )
 
 
-def _mapping_key_blockers(value: Any, location: str = "preview") -> list[dict[str, Any]]:
-    """Return structured blockers for non-string mapping keys recursively."""
-    blockers: list[dict[str, Any]] = []
-    if isinstance(value, Mapping):
-        for key, nested in value.items():
-            if not isinstance(key, str):
-                blockers.append({"reason": "mapping keys must be strings", "path": location, "key": repr(key)})
-            child_location = f"{location}.{key!s}"
-            blockers.extend(_mapping_key_blockers(nested, child_location))
-    elif isinstance(value, list):
-        for index, nested in enumerate(value):
-            blockers.extend(_mapping_key_blockers(nested, f"{location}[{index}]"))
-    return blockers
+_mapping_key_blockers = mapping_key_blockers
 
 
 def _approved_plan(project_root: Path, deck: Mapping[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any] | None, list[dict[str, Any]]]:
