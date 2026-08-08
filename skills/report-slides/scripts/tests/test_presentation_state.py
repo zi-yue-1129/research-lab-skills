@@ -583,6 +583,154 @@ def test_query_includes_review_history_and_next_actions(tmp_path: Path) -> None:
     assert resumed["next_actions"] == ["record_visual_quality_review"]
 
 
+def test_query_has_exact_resume_key_set(tmp_path: Path) -> None:
+    """Resume snapshots expose the complete stable public key set."""
+    project = _make_project(tmp_path)
+    deck_id, _ = _make_deck_and_slide(project)
+    snapshot = json.loads(_run(project, "--query", "--deck-id", deck_id, "--json").stdout)
+
+    assert set(snapshot) == {
+        "deck",
+        "plans",
+        "approval",
+        "slides",
+        "visual_modules",
+        "assignments",
+        "artifacts",
+        "review_results",
+        "revision_requests",
+        "draft_preview",
+        "draft_decision",
+        "blockers",
+        "next_actions",
+    }
+
+
+def test_legacy_keyword_review_call_persists_unverifiable_identity(tmp_path: Path) -> None:
+    """Legacy keyword calls remain valid without inventing reviewer identity."""
+    project = _make_project(tmp_path)
+    deck_id, _ = _make_deck_and_slide(project)
+    from presentation_state import load_review_results, record_review
+
+    result = record_review(
+        project,
+        "deck",
+        deck_id,
+        reviewer_role="content_reviewer",
+        status="passed",
+    )
+
+    assert result["reviewer_id"] is None
+    assert load_review_results(project)[0]["reviewer_id"] is None
+
+
+def test_latest_review_round_controls_effective_next_action(tmp_path: Path) -> None:
+    """A later failed role review supersedes an earlier passing round."""
+    project = _make_project(tmp_path)
+    deck_id, slide_id = _make_deck_and_slide(project)
+    first = _run(
+        project,
+        "--record-review",
+        "--subject-type",
+        "slide",
+        "--subject-id",
+        slide_id,
+        "--reviewer-id",
+        "scientific-a",
+        "--reviewer-role",
+        "scientific",
+        "--status",
+        "passed",
+        "--round",
+        "1",
+        "--json",
+    )
+    assert first.returncode == 0, first.stderr
+    second = _run(
+        project,
+        "--record-review",
+        "--subject-type",
+        "slide",
+        "--subject-id",
+        slide_id,
+        "--reviewer-id",
+        "scientific-a",
+        "--reviewer-role",
+        "scientific",
+        "--status",
+        "failed",
+        "--round",
+        "2",
+        "--json",
+    )
+    assert second.returncode == 0, second.stderr
+
+    snapshot = json.loads(_run(project, "--query", "--deck-id", deck_id, "--json").stdout)
+
+    assert len(snapshot["review_results"]) == 2
+    assert snapshot["next_actions"] != ["record_visual_quality_review"]
+    assert any(blocker["reason"] == "review:failed" for blocker in snapshot["blockers"])
+
+
+def test_integrity_scan_catches_supersession_dependency_and_ownership_drift(tmp_path: Path) -> None:
+    """Integrity diagnostics cover all new record foreign keys."""
+    project = _make_project(tmp_path)
+    deck_id, slide_id = _make_deck_and_slide(project)
+    other_deck = json.loads(_run(project, "--create-deck", "--title", "Other", "--json").stdout)
+    plans_path = project / ".research" / "presentations" / "state" / "plans.yaml"
+    assignments_path = project / ".research" / "presentations" / "state" / "assignments.yaml"
+    plans_path.parent.mkdir(parents=True, exist_ok=True)
+    plans_path.write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "plans": {
+                    "wrong-key": {
+                        "id": "plan-real",
+                        "deck_id": deck_id,
+                        "version": 1,
+                        "supersedes_plan_id": "plan-missing",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    assignments_path.write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "assignments": {
+                    "assignment-real": {
+                        "id": "assignment-real",
+                        "deck_id": deck_id,
+                        "slide_id": slide_id,
+                        "module_id": None,
+                        "dependencies": ["module-missing"],
+                    },
+                    "assignment-other": {
+                        "id": "assignment-other",
+                        "deck_id": other_deck["id"],
+                        "slide_id": slide_id,
+                        "module_id": None,
+                        "dependencies": [],
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(project, "--validate", "--json")
+
+    assert result.returncode == 0, result.stderr
+    violations = json.loads(result.stdout)["violations"]
+    assert any(v["field"] == "id" and v["entity"] == "plan" for v in violations)
+    assert any(v["field"] == "supersedes_plan_id" for v in violations)
+    assert any(v["field"] == "dependencies" for v in violations)
+    assert any(v["field"] == "slide_id" and v["entity"] == "assignment" for v in violations)
+
+
 def test_validate_on_clean_project_reports_no_violations(tmp_path: Path) -> None:
     project = _make_project(tmp_path)
     _make_deck_and_slide(project)

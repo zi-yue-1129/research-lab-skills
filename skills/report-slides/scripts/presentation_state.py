@@ -54,6 +54,9 @@ from presentation_events import (
     register_assignment_record,
     register_plan_record,
     create_revision_request,
+    effective_review_results,
+    next_actions,
+    workflow_blockers,
 )
 try:
     import yaml
@@ -529,7 +532,7 @@ def record_review(
     project_root: Path,
     subject_type: str,
     subject_id: str,
-    reviewer_id: str,
+    reviewer_id: Optional[str] = None,
     reviewer_role: Optional[str] = None,
     status: Optional[str] = None,
     findings: Optional[list] = None,
@@ -543,8 +546,8 @@ def record_review(
         subject_id: The id of the reviewed record. "plan" and "deck" are
             both validated against Deck records (a plan is embedded in
             its Deck, with no separate store record of its own).
-        reviewer_id: Reviewer identity.  For compatibility, when
-            ``status`` is omitted this value is also used as the role.
+        reviewer_id: Reviewer identity, or ``None`` for an unverifiable
+            legacy call.
         reviewer_role: Review role, e.g. ``scientific`` or
             ``visual_quality``.  Legacy callers may pass the status here and
             omit this argument.
@@ -568,21 +571,19 @@ def record_review(
             subject_id doesn't exist.
     """
     # The original API accepted ``(reviewer_role, status, findings, round)``.
-    # Preserve that call shape while allowing the durable identity/role pair.
+    # Preserve that call shape while explicitly retaining its unverifiable ID.
     if status is None:
         status = reviewer_role
         reviewer_role = reviewer_id
+        reviewer_id = None
     elif not isinstance(status, str):
         legacy_status = reviewer_role
         legacy_findings = status
         legacy_round = findings if isinstance(findings, int) else round_number
-        reviewer_role = reviewer_id
+        reviewer_role, reviewer_id = reviewer_id, None
         status = legacy_status
         findings = legacy_findings if isinstance(legacy_findings, list) else None
         round_number = legacy_round
-    reviewer_role = reviewer_role or reviewer_id
-    if not isinstance(reviewer_id, str) or not reviewer_id.strip():
-        raise ValueError("reviewer_id is required")
     if not isinstance(reviewer_role, str) or not reviewer_role.strip():
         raise ValueError("reviewer_role is required")
     if subject_type not in _REVIEW_SUBJECT_TYPES:
@@ -605,6 +606,7 @@ def record_review(
     event: Dict[str, Any] = {
         "event": "review_result", "id": generate_id("rev"), "subject_type": subject_type,
         "subject_id": subject_id, "reviewer_id": reviewer_id, "reviewer_role": reviewer_role,
+        "identity_verifiable": reviewer_id is not None,
         "status": status,
         "findings": findings or [], "round": round_number, "ts": _utc_now_iso(),
     }
@@ -691,8 +693,8 @@ def query(project_root: Path, deck_id: str) -> Dict[str, Any]:
     reviews = load_review_results(project_root, subject_ids=subject_ids)
     approval = _approval_snapshot(deck)
     draft_preview, draft_decision = _draft_snapshots(project_root, deck_id, deck)
-    blockers = _workflow_blockers(deck, slides, modules, assignments, reviews)
-    next_actions = _next_actions(deck, plans, slides, modules, reviews, approval, draft_preview)
+    blockers = workflow_blockers(deck, slides, modules, assignments, reviews, draft_preview, draft_decision)
+    next_action_list = next_actions(deck, plans, slides, modules, reviews, approval, draft_preview)
     return {
         "deck": deck,
         "plans": sorted(plans, key=_record_order),
@@ -706,7 +708,7 @@ def query(project_root: Path, deck_id: str) -> Dict[str, Any]:
         "draft_preview": draft_preview,
         "draft_decision": draft_decision,
         "blockers": blockers,
-        "next_actions": next_actions,
+        "next_actions": next_action_list,
     }
 
 
@@ -743,81 +745,11 @@ def _draft_snapshots(
     ]
     preview = previews[-1] if previews else None
     decision = decisions[-1] if decisions else None
-    if preview is None and deck.get("draft_preview_id"):
-        preview = {"id": deck["draft_preview_id"]}
-    if decision is None and deck.get("draft_approval_id"):
-        decision = {"id": deck["draft_approval_id"]}
+    if deck.get("draft_preview_id"):
+        preview = next((event for event in previews if event.get("id") == deck["draft_preview_id"]), None)
+    if deck.get("draft_approval_id"):
+        decision = next((event for event in decisions if event.get("id") == deck["draft_approval_id"]), None)
     return preview, decision
-
-
-def _workflow_blockers(
-    deck: Dict[str, Any],
-    slides: list[Dict[str, Any]],
-    modules: list[Dict[str, Any]],
-    assignments: list[Dict[str, Any]],
-    reviews: list[Dict[str, Any]],
-) -> list[Dict[str, Any]]:
-    """Collect explicit blockers in deterministic subject order."""
-    blockers: list[Dict[str, Any]] = []
-    if deck.get("status") == "blocked":
-        blockers.append({"subject_type": "deck", "subject_id": deck["id"], "reason": "status:blocked"})
-    for record_type, records in (("slide", slides), ("module", modules)):
-        for record in records:
-            if record.get("status") == "blocked":
-                blockers.append({"subject_type": record_type, "subject_id": record["id"], "reason": "status:blocked"})
-    for assignment in assignments:
-        if assignment.get("blocker"):
-            blockers.append({
-                "subject_type": "module" if assignment.get("module_id") else "slide",
-                "subject_id": assignment.get("module_id") or assignment.get("slide_id"),
-                "reason": assignment["blocker"],
-            })
-    for review in reviews:
-        if review.get("status") in {"failed", "blocked"}:
-            blockers.append({
-                "subject_type": review.get("subject_type"),
-                "subject_id": review.get("subject_id"),
-                "reason": f"review:{review.get('status')}",
-                "findings": review.get("findings", []),
-            })
-    return sorted(blockers, key=lambda blocker: (str(blocker.get("subject_id", "")), str(blocker.get("reason", ""))))
-
-
-def _next_actions(
-    deck: Dict[str, Any],
-    plans: list[Dict[str, Any]],
-    slides: list[Dict[str, Any]],
-    modules: list[Dict[str, Any]],
-    reviews: list[Dict[str, Any]],
-    approval: Optional[Dict[str, Any]],
-    draft_preview: Optional[Dict[str, Any]],
-) -> list[str]:
-    """Compute deterministic human-readable next legal workflow actions."""
-    roles_by_subject: dict[str, set[str]] = {}
-    for review in reviews:
-        if review.get("status") == "passed":
-            roles_by_subject.setdefault(str(review.get("subject_id")), set()).add(str(review.get("reviewer_role")))
-    for slide in slides:
-        roles = roles_by_subject.get(slide["id"], set())
-        if "scientific" in roles and "visual_quality" not in roles:
-            return ["record_visual_quality_review"]
-        if "visual_quality" in roles and "scientific" not in roles:
-            return ["record_scientific_review"]
-    if not plans:
-        return ["register_plan"]
-    if deck.get("status") == "planning":
-        if "content" not in roles_by_subject.get(deck["id"], set()) and "content_reviewer" not in roles_by_subject.get(deck["id"], set()):
-            return ["record_content_review"]
-        return ["approve_deck"]
-    if deck.get("status") == "awaiting_approval" and approval is None:
-        return ["approve_deck"]
-    if deck.get("status") in {"approved", "producing"} and any(module.get("status") == "planned" for module in modules):
-        return ["assign_visual_modules"]
-    if deck.get("status") == "draft_review" and draft_preview is None:
-        return ["register_draft_preview"]
-    if deck.get("status") == "validating":
-        return ["complete_deck"]
-    return []
 
 
 def validate_referential_integrity(project_root: Path) -> list:
@@ -844,6 +776,10 @@ def validate_referential_integrity(project_root: Path) -> list:
     load_review_results(project_root)
 
     violations: list = []
+    for entity, records in (("deck", decks), ("slide", slides), ("visual_module", modules), ("revision_request", revisions), ("plan", plans), ("assignment", assignments), ("artifact", artifacts)):
+        for record_id, record in records.items():
+            if record.get("id") != record_id:
+                violations.append({"entity": entity, "id": record_id, "field": "id", "missing_id": record.get("id")})
     for slide_id, slide in slides.items():
         deck_id = slide.get("deck_id")
         if deck_id not in decks:
@@ -852,9 +788,21 @@ def validate_referential_integrity(project_root: Path) -> list:
         slide_id = module.get("slide_id")
         if slide_id not in slides:
             violations.append({"entity": "visual_module", "id": module_id, "field": "slide_id", "missing_id": slide_id})
+        elif slides[slide_id].get("deck_id") not in decks:
+            violations.append({"entity": "visual_module", "id": module_id, "field": "slide_id", "missing_id": slides[slide_id].get("deck_id")})
         for dep_id in module.get("dependencies", []):
             if dep_id not in modules:
                 violations.append({"entity": "visual_module", "id": module_id, "field": "dependencies", "missing_id": dep_id})
+        if module.get("assignment_path") and not any(
+            assignment.get("module_id") == module_id and assignment.get("assignment_path") == module.get("assignment_path")
+            for assignment in assignments.values()
+        ):
+            violations.append({"entity": "visual_module", "id": module_id, "field": "assignment_path", "missing_id": module.get("assignment_path")})
+        if module.get("artifact_manifest_path") and not any(
+            artifact.get("module_id") == module_id and artifact.get("path") == module.get("artifact_manifest_path")
+            for artifact in artifacts.values()
+        ):
+            violations.append({"entity": "visual_module", "id": module_id, "field": "artifact_manifest_path", "missing_id": module.get("artifact_manifest_path")})
     known_ids = set(decks) | set(slides) | set(modules)
     for request_id, request in revisions.items():
         subject_id = request.get("subject_id")
@@ -863,6 +811,9 @@ def validate_referential_integrity(project_root: Path) -> list:
     for plan_id, plan in plans.items():
         if plan.get("deck_id") not in decks:
             violations.append({"entity": "plan", "id": plan_id, "field": "deck_id", "missing_id": plan.get("deck_id")})
+        superseded = plan.get("supersedes_plan_id")
+        if superseded is not None and (superseded not in plans or plans[superseded].get("deck_id") != plan.get("deck_id")):
+            violations.append({"entity": "plan", "id": plan_id, "field": "supersedes_plan_id", "missing_id": superseded})
     for assignment_id, assignment in assignments.items():
         if assignment.get("deck_id") not in decks:
             violations.append({"entity": "assignment", "id": assignment_id, "field": "deck_id", "missing_id": assignment.get("deck_id")})
@@ -870,6 +821,22 @@ def validate_referential_integrity(project_root: Path) -> list:
             violations.append({"entity": "assignment", "id": assignment_id, "field": "slide_id", "missing_id": assignment.get("slide_id")})
         if assignment.get("module_id") is not None and assignment.get("module_id") not in modules:
             violations.append({"entity": "assignment", "id": assignment_id, "field": "module_id", "missing_id": assignment.get("module_id")})
+        assignment_deck = assignment.get("deck_id")
+        slide_id = assignment.get("slide_id")
+        if slide_id in slides and slides[slide_id].get("deck_id") != assignment_deck:
+            violations.append({"entity": "assignment", "id": assignment_id, "field": "slide_id", "missing_id": slides[slide_id].get("deck_id")})
+        module_id = assignment.get("module_id")
+        if module_id in modules:
+            module_slide = modules[module_id].get("slide_id")
+            if module_slide not in slides or slides[module_slide].get("deck_id") != assignment_deck:
+                violations.append({"entity": "assignment", "id": assignment_id, "field": "module_id", "missing_id": module_id})
+        for dependency in assignment.get("dependencies", []):
+            if dependency not in modules:
+                violations.append({"entity": "assignment", "id": assignment_id, "field": "dependencies", "missing_id": dependency})
+            else:
+                dep_slide = modules[dependency].get("slide_id")
+                if dep_slide not in slides or slides[dep_slide].get("deck_id") != assignment_deck:
+                    violations.append({"entity": "assignment", "id": assignment_id, "field": "dependencies", "missing_id": dependency})
     for artifact_id, artifact in artifacts.items():
         if artifact.get("deck_id") not in decks:
             violations.append({"entity": "artifact", "id": artifact_id, "field": "deck_id", "missing_id": artifact.get("deck_id")})
@@ -877,6 +844,15 @@ def validate_referential_integrity(project_root: Path) -> list:
             violations.append({"entity": "artifact", "id": artifact_id, "field": "slide_id", "missing_id": artifact.get("slide_id")})
         if artifact.get("module_id") is not None and artifact.get("module_id") not in modules:
             violations.append({"entity": "artifact", "id": artifact_id, "field": "module_id", "missing_id": artifact.get("module_id")})
+        artifact_deck = artifact.get("deck_id")
+        slide_id = artifact.get("slide_id")
+        if slide_id in slides and slides[slide_id].get("deck_id") != artifact_deck:
+            violations.append({"entity": "artifact", "id": artifact_id, "field": "slide_id", "missing_id": slides[slide_id].get("deck_id")})
+        module_id = artifact.get("module_id")
+        if module_id in modules:
+            module_slide = modules[module_id].get("slide_id")
+            if module_slide not in slides or slides[module_slide].get("deck_id") != artifact_deck:
+                violations.append({"entity": "artifact", "id": artifact_id, "field": "module_id", "missing_id": module_id})
     return violations
 
 
@@ -953,8 +929,8 @@ def _dispatch(args: argparse.Namespace, project_root: Path) -> Dict[str, Any]:
         findings = json.loads(args.findings_json) if args.findings_json else None
         return record_review(
             project_root, args.subject_type, args.subject_id,
-            args.reviewer_id or args.reviewer_role, args.reviewer_role,
-            args.status, findings=findings, round_number=args.round,
+            reviewer_id=args.reviewer_id, reviewer_role=args.reviewer_role,
+            status=args.status, findings=findings, round_number=args.round,
         )
     if args.create_revision_request:
         return create_revision_request(

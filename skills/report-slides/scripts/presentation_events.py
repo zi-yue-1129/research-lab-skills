@@ -205,15 +205,115 @@ def load_review_results(
     reviews = load_events(project_root, event_type="review_result")
     if subject_ids is not None:
         reviews = [review for review in reviews if review.get("subject_id") in subject_ids]
-    normalized: list[dict[str, Any]] = []
+    return reviews
+
+
+def effective_review_results(reviews: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Select the latest review round for each subject and reviewer role.
+
+    Full history remains available to callers through ``load_review_results``;
+    workflow predicates consume only this deterministic effective view.
+    """
+    latest: dict[tuple[str, str], dict[str, Any]] = {}
     for review in reviews:
-        result = dict(review)
-        result.setdefault("reviewer_id", result.get("reviewer_role"))
-        result.setdefault("reviewer_role", result.get("reviewer_id"))
-        result.setdefault("findings", [])
-        result.setdefault("round", 1)
-        normalized.append(result)
-    return normalized
+        subject_id = review.get("subject_id")
+        role = review.get("reviewer_role")
+        if not isinstance(subject_id, str) or not isinstance(role, str):
+            continue
+        key = (subject_id, role)
+        previous = latest.get(key)
+        current_order = (
+            int(review.get("round", 1)) if isinstance(review.get("round", 1), int) else 1,
+            str(review.get("ts", "")),
+            str(review.get("id", "")),
+        )
+        previous_order = (
+            int(previous.get("round", 1)) if previous and isinstance(previous.get("round", 1), int) else 1,
+            str(previous.get("ts", "")) if previous else "",
+            str(previous.get("id", "")) if previous else "",
+        )
+        if previous is None or current_order > previous_order:
+            latest[key] = review
+    return sorted(latest.values(), key=lambda review: (str(review.get("subject_id", "")), str(review.get("reviewer_role", ""))))
+
+
+def workflow_blockers(
+    deck: dict[str, Any],
+    slides: list[dict[str, Any]],
+    modules: list[dict[str, Any]],
+    assignments: list[dict[str, Any]],
+    reviews: list[dict[str, Any]],
+    draft_preview: dict[str, Any] | None,
+    draft_decision: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Collect explicit state, review, identity, and missing-evidence blockers."""
+    blockers: list[dict[str, Any]] = []
+    if deck.get("status") == "blocked":
+        blockers.append({"subject_type": "deck", "subject_id": deck["id"], "reason": "status:blocked"})
+    for record_type, records in (("slide", slides), ("module", modules)):
+        for record in records:
+            if record.get("status") == "blocked":
+                blockers.append({"subject_type": record_type, "subject_id": record["id"], "reason": "status:blocked"})
+    for assignment in assignments:
+        if assignment.get("blocker"):
+            blockers.append({
+                "subject_type": "module" if assignment.get("module_id") else "slide",
+                "subject_id": assignment.get("module_id") or assignment.get("slide_id"),
+                "reason": assignment["blocker"],
+            })
+    for review in effective_review_results(reviews):
+        if not review.get("reviewer_id"):
+            blockers.append({"subject_type": review.get("subject_type"), "subject_id": review.get("subject_id"), "reason": "reviewer_identity_unverifiable"})
+        if review.get("status") in {"failed", "blocked"}:
+            blockers.append({
+                "subject_type": review.get("subject_type"), "subject_id": review.get("subject_id"),
+                "reason": f"review:{review.get('status')}", "findings": review.get("findings", []),
+            })
+    if deck.get("draft_preview_id") and draft_preview is None:
+        blockers.append({"subject_type": "deck", "subject_id": deck["id"], "reason": "missing_draft_preview"})
+    if deck.get("draft_approval_id") and draft_decision is None:
+        blockers.append({"subject_type": "deck", "subject_id": deck["id"], "reason": "missing_draft_decision"})
+    return sorted(blockers, key=lambda blocker: (str(blocker.get("subject_id", "")), str(blocker.get("reason", ""))))
+
+
+def next_actions(
+    deck: dict[str, Any],
+    plans: list[dict[str, Any]],
+    slides: list[dict[str, Any]],
+    modules: list[dict[str, Any]],
+    reviews: list[dict[str, Any]],
+    approval: dict[str, Any] | None,
+    draft_preview: dict[str, Any] | None,
+) -> list[str]:
+    """Compute legal next workflow actions from effective review outcomes."""
+    roles_by_subject: dict[str, set[str]] = {}
+    for review in effective_review_results(reviews):
+        if review.get("status") == "passed" and review.get("reviewer_id"):
+            roles_by_subject.setdefault(str(review.get("subject_id")), set()).add(str(review.get("reviewer_role")))
+        if review.get("status") in {"failed", "blocked"}:
+            roles_by_subject.setdefault(str(review.get("subject_id")), set()).discard(str(review.get("reviewer_role")))
+    for slide in slides:
+        roles = roles_by_subject.get(slide["id"], set())
+        if "scientific" in roles and "visual_quality" not in roles:
+            return ["record_visual_quality_review"]
+        if "visual_quality" in roles and "scientific" not in roles:
+            return ["record_scientific_review"]
+    if not plans:
+        return ["register_plan"]
+    if deck.get("status") == "planning":
+        deck_roles = roles_by_subject.get(deck["id"], set())
+        if "content" not in deck_roles and "content_reviewer" not in deck_roles:
+            return ["record_content_review"]
+        return ["approve_deck"]
+    if deck.get("status") == "awaiting_approval" and approval is None:
+        return ["approve_deck"]
+    if deck.get("status") in {"approved", "producing"} and any(module.get("status") == "planned" for module in modules):
+        return ["assign_visual_modules"]
+    if deck.get("status") == "draft_review" and draft_preview is None:
+        return ["register_draft_preview"]
+    if deck.get("status") == "validating":
+        return ["complete_deck"]
+    return []
 
 
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
@@ -418,35 +518,50 @@ def create_assignment_record(
     if blocker is not None and (not isinstance(blocker, str) or not blocker.strip()):
         raise ValueError("blocker must be a non-empty string or null")
     slide_id, module_id = _references(project_root, deck_id, slide_id, module_id)
+    if dependencies is not None and not isinstance(dependencies, list):
+        raise ValueError("dependencies must be a list")
     dependency_ids = list(dependencies or [])
     modules = state.load_visual_modules(project_root)
+    slides = state.load_slides(project_root)
     if any(dependency not in modules for dependency in dependency_ids):
         unknown = next(dependency for dependency in dependency_ids if dependency not in modules)
         raise state.VisualModuleNotFoundError(f"Unknown dependency module id: {unknown}")
+    for dependency in dependency_ids:
+        dependency_slide = modules[dependency].get("slide_id")
+        if dependency_slide not in slides:
+            raise state.SlideNotFoundError(f"Unknown slide_id: {dependency_slide}")
+        if slides[dependency_slide].get("deck_id") != deck_id:
+            raise ValueError("assignment dependencies must belong to the same deck")
     path = project_root / ASSIGNMENTS_RELATIVE_PATH
-    with _locked_file(project_root, path):
-        records = _load_yaml_map(path, "assignments")
-        now = _utc_now_iso()
-        record: dict[str, Any] = {
-            "id": _generate_id("asn"), "deck_id": deck_id, "slide_id": slide_id,
-            "module_id": module_id, "assignment_path": canonical_relative_path(assignment_path),
-            "path": canonical_relative_path(assignment_path), "relative_path": canonical_relative_path(assignment_path),
-            "worker_id": worker_id, "worker": worker_id,
-            "worker_type": worker_type, "dependencies": dependency_ids,
-            "spec_sha256": _digest(spec_sha256, "spec_sha256"),
-            "inputs_resolved": inputs_resolved, "blocker": blocker,
-            "assigned_at": now, "created_at": now,
-        }
-        records[record["id"]] = record
-        _save_yaml_map(path, "assignments", records)
+    relative_path = canonical_relative_path(assignment_path)
+    now = _utc_now_iso()
+    record: dict[str, Any] = {
+        "id": _generate_id("asn"), "deck_id": deck_id, "slide_id": slide_id,
+        "module_id": module_id, "assignment_path": relative_path, "path": relative_path,
+        "relative_path": relative_path, "worker_id": worker_id, "worker": worker_id,
+        "worker_type": worker_type, "dependencies": dependency_ids,
+        "spec_sha256": _digest(spec_sha256, "spec_sha256"),
+        "inputs_resolved": inputs_resolved, "blocker": blocker,
+        "assigned_at": now, "created_at": now,
+    }
     if module_id is not None:
         modules_path = project_root / state.VISUAL_MODULES_RELATIVE_PATH
         with state._locked_file(project_root, modules_path):
             modules = state._load_yaml_map(modules_path, "visual_modules")
-            if module_id in modules:
-                modules[module_id]["assignment_path"] = record["assignment_path"]
+            if module_id not in modules:
+                raise state.VisualModuleNotFoundError(f"Unknown module_id: {module_id}")
+            with _locked_file(project_root, path):
+                records = _load_yaml_map(path, "assignments")
+                records[record["id"]] = record
+                _save_yaml_map(path, "assignments", records)
+                modules[module_id]["assignment_path"] = relative_path
                 modules[module_id]["updated_at"] = _utc_now_iso()
                 state._save_yaml_map(modules_path, "visual_modules", modules)
+    else:
+        with _locked_file(project_root, path):
+            records = _load_yaml_map(path, "assignments")
+            records[record["id"]] = record
+            _save_yaml_map(path, "assignments", records)
     return record
 
 
@@ -504,25 +619,31 @@ def create_artifact_record(
     relative_path = canonical_relative_path(artifact_path)
     digest = _digest(sha256, "sha256")
     path = project_root / ARTIFACTS_RELATIVE_PATH
-    with _locked_file(project_root, path):
-        records = _load_yaml_map(path, "artifacts")
-        record: dict[str, Any] = {
-            "id": _generate_id("art"), "deck_id": deck_id, "slide_id": slide_id,
-            "module_id": module_id, "artifact_kind": artifact_kind, "kind": artifact_kind,
-            "path": relative_path, "relative_path": relative_path, "sha256": digest,
-            "producer_id": producer_id, "produced_by": producer_id,
-            "created_at": _utc_now_iso(),
-        }
-        records[record["id"]] = record
-        _save_yaml_map(path, "artifacts", records)
+    record: dict[str, Any] = {
+        "id": _generate_id("art"), "deck_id": deck_id, "slide_id": slide_id,
+        "module_id": module_id, "artifact_kind": artifact_kind, "kind": artifact_kind,
+        "path": relative_path, "relative_path": relative_path, "sha256": digest,
+        "producer_id": producer_id, "produced_by": producer_id,
+        "created_at": _utc_now_iso(),
+    }
     if module_id is not None:
         modules_path = project_root / state.VISUAL_MODULES_RELATIVE_PATH
         with state._locked_file(project_root, modules_path):
             modules = state._load_yaml_map(modules_path, "visual_modules")
-            if module_id in modules:
+            if module_id not in modules:
+                raise state.VisualModuleNotFoundError(f"Unknown module_id: {module_id}")
+            with _locked_file(project_root, path):
+                records = _load_yaml_map(path, "artifacts")
+                records[record["id"]] = record
+                _save_yaml_map(path, "artifacts", records)
                 modules[module_id]["artifact_manifest_path"] = relative_path
                 modules[module_id]["updated_at"] = _utc_now_iso()
                 state._save_yaml_map(modules_path, "visual_modules", modules)
+    else:
+        with _locked_file(project_root, path):
+            records = _load_yaml_map(path, "artifacts")
+            records[record["id"]] = record
+            _save_yaml_map(path, "artifacts", records)
     return record
 
 
