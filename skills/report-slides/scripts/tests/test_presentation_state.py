@@ -62,14 +62,15 @@ def test_set_deck_status_illegal_transition_errors(tmp_path: Path) -> None:
     project = _make_project(tmp_path)
     deck = json.loads(_run(project, "--create-deck", "--title", "T", "--json").stdout)
 
-    # planning -> approved directly is illegal; must pass through
-    # content_review and awaiting_approval first.
+    # Generic status cannot bypass the approval evidence action.
     result = _run(project, "--set-deck-status", "--deck-id", deck["id"], "--status", "approved", "--json")
 
     assert result.returncode == 1
     data = json.loads(result.stdout)
-    assert data["error"] == "ValueError"
-    assert "Illegal deck transition" in data["message"]
+    assert data["error"] == "ApprovalGateError"
+    assert data["predicate"] == "plan_approvable"
+    assert data["deck_id"] == deck["id"]
+    assert data["blockers"]
 
 
 def test_set_deck_status_unrecognized_status_errors(tmp_path: Path) -> None:
@@ -175,12 +176,15 @@ def test_set_slide_status_illegal_transition_errors(tmp_path: Path) -> None:
         project, "--create-slide", "--deck-id", deck["id"], "--plan-slide-id", "slide-01", "--title", "T", "--json",
     ).stdout)
 
-    # planned -> passed directly is illegal.
+    # Generic status cannot bypass independent production reviews.
     result = _run(project, "--set-slide-status", "--slide-id", slide["id"], "--status", "passed", "--json")
 
     assert result.returncode == 1
     data = json.loads(result.stdout)
-    assert data["error"] == "ValueError"
+    assert data["error"] == "ReviewGateError"
+    assert data["predicate"] == "slide_passable"
+    assert data["deck_id"] == deck["id"]
+    assert data["blockers"]
 
 
 def test_set_slide_status_unknown_slide_id_errors(tmp_path: Path) -> None:
@@ -295,9 +299,9 @@ def test_module_cannot_start_producing_with_unresolved_dependency(tmp_path: Path
     assert "unresolved dependencies" in data["message"]
 
 
-def test_module_can_start_producing_once_dependency_passed(tmp_path: Path) -> None:
+def test_module_cannot_be_marked_passed_without_review_evidence(tmp_path: Path) -> None:
     project = _make_project(tmp_path)
-    _, slide_id = _make_deck_and_slide(project)
+    deck_id, slide_id = _make_deck_and_slide(project)
     upstream = json.loads(_run(
         project, "--create-visual-module", "--slide-id", slide_id,
         "--module-key", "upstream", "--module-type", "architecture", "--json",
@@ -307,15 +311,19 @@ def test_module_can_start_producing_once_dependency_passed(tmp_path: Path) -> No
         "--module-key", "downstream", "--module-type", "architecture",
         "--dependencies", upstream["id"], "--json",
     ).stdout)
-    for status in ("ready", "assigned", "producing", "review_required", "passed"):
+    for status in ("ready", "assigned", "producing", "review_required"):
         _run(project, "--set-module-status", "--module-id", upstream["id"], "--status", status, "--json")
     for status in ("ready", "assigned"):
         _run(project, "--set-module-status", "--module-id", downstream["id"], "--status", status, "--json")
 
-    result = _run(project, "--set-module-status", "--module-id", downstream["id"], "--status", "producing", "--json")
+    result = _run(project, "--set-module-status", "--module-id", upstream["id"], "--status", "passed", "--json")
 
-    assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout)["status"] == "producing"
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "ReviewGateError"
+    assert data["predicate"] == "module_passable"
+    assert data["deck_id"] == deck_id
+    assert data["blockers"]
 
 
 def test_two_independent_modules_can_both_reach_producing(tmp_path: Path) -> None:
@@ -484,20 +492,29 @@ def test_check_production_allowed_blocks_before_approved(tmp_path: Path) -> None
 
     assert result.returncode == 1
     data = json.loads(result.stdout)
-    assert data["error"] == "ProductionNotAllowedError"
+    assert data["error"] == "ProductionGateError"
+    assert data["predicate"] == "production_allowed"
+    assert data["deck_id"] == deck["id"]
+    assert data["blockers"]
 
 
 def test_check_production_allowed_passes_at_approved(tmp_path: Path) -> None:
     project = _make_project(tmp_path)
     deck = json.loads(_run(project, "--create-deck", "--title", "T", "--json").stdout)
-    for status in ("content_review", "awaiting_approval", "approved"):
+    for status in ("content_review", "awaiting_approval"):
         _run(project, "--set-deck-status", "--deck-id", deck["id"], "--status", status, "--json")
+
+    approve = _run(project, "--set-deck-status", "--deck-id", deck["id"], "--status", "approved", "--json")
+    assert approve.returncode == 1
+    assert json.loads(approve.stdout)["error"] == "ApprovalGateError"
 
     result = _run(project, "--check-production-allowed", "--deck-id", deck["id"], "--json")
 
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 1
     data = json.loads(result.stdout)
-    assert data["status"] == "approved"
+    assert data["error"] == "ProductionGateError"
+    assert data["predicate"] == "production_allowed"
+    assert data["deck_id"] == deck["id"]
 
 
 def test_check_production_allowed_unknown_deck_id_errors(tmp_path: Path) -> None:

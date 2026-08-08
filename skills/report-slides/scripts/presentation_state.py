@@ -2,7 +2,6 @@
 """presentation_state.py -- Deck/Slide/VisualModule state store, Review
 Result event log, and Revision Request store for the report-slides
 multi-agent workflow.
-
 Independent implementation (no import from skills/agent-state/) that
 follows the same proven pattern: sidecar-lock-file writes, atomic YAML
 replace, id-keyed maps for mutable records, append-only JSONL for
@@ -10,13 +9,11 @@ immutable facts, and write-time referential-integrity checks. Bootstraps
 its own .research/presentations/.gitignore rather than touching
 .research/.gitignore, since agent-state may independently manage that
 file in the same project.
-
 Usage:
     python presentation_state.py --create-deck --title "..." [--skill NAME] [--json]
     python presentation_state.py --set-deck-status --deck-id DECK_ID \
         --status planning|content_review|awaiting_approval|approved|producing| \
         draft_review|revising|validating|completed|blocked [--json]
-
     python presentation_state.py --create-slide --deck-id DECK_ID \
         --plan-slide-id "slide-01" --title "..." [--skill NAME] [--json]
     python presentation_state.py --set-slide-status --slide-id SLIDE_ID \
@@ -35,7 +32,6 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterator, Optional
-
 from presentation_events import (
     LockTimeoutError,
     StateParseError,
@@ -63,8 +59,6 @@ try:
 except ImportError:
     print("Error: PyYAML required. Run: pip install pyyaml", file=sys.stderr)
     raise SystemExit(1)
-
-
 DECKS_RELATIVE_PATH = Path(".research/presentations/state/decks.yaml")
 SLIDES_RELATIVE_PATH = Path(".research/presentations/state/slides.yaml")
 VISUAL_MODULES_RELATIVE_PATH = Path(".research/presentations/state/visual_modules.yaml")
@@ -72,7 +66,6 @@ REVISION_REQUESTS_RELATIVE_PATH = Path(".research/presentations/state/revision_r
 STATE_SCHEMA_VERSION = 1
 LOCK_TIMEOUT_SECONDS = int(os.environ.get("PRESENTATION_STATE_LOCK_TIMEOUT_SECONDS", "30"))
 LOCK_POLL_INTERVAL_SECONDS = 0.1
-
 _DECK_TRANSITIONS: Dict[str, frozenset] = {
     "planning": frozenset({"content_review", "blocked"}),
     "content_review": frozenset({"awaiting_approval", "planning", "blocked"}),
@@ -89,16 +82,14 @@ _DECK_TRANSITIONS: Dict[str, frozenset] = {
     }),
 }
 _DECK_STATUSES = frozenset(_DECK_TRANSITIONS.keys())
-
-# Shared by Slide and Visual Module -- the task's own required-states list
 # defines one 9-state enum for "Slide or visual module", not two.
 _PRODUCTION_UNIT_TRANSITIONS: Dict[str, frozenset] = {
     "planned": frozenset({"ready", "blocked"}),
     "ready": frozenset({"assigned", "blocked"}),
     "assigned": frozenset({"producing", "blocked"}),
     "producing": frozenset({"review_required", "blocked"}),
-    "review_required": frozenset({"passed", "revision_required", "blocked"}),
-    "revision_required": frozenset({"producing", "blocked"}),
+    "review_required": frozenset({"passed", "revision_required", "superseded", "blocked"}),
+    "revision_required": frozenset({"producing", "superseded", "blocked"}),
     "passed": frozenset({"superseded", "blocked"}),
     "blocked": frozenset({
         "planned", "ready", "assigned", "producing",
@@ -107,7 +98,6 @@ _PRODUCTION_UNIT_TRANSITIONS: Dict[str, frozenset] = {
     "superseded": frozenset(),
 }
 _PRODUCTION_UNIT_STATUSES = frozenset(_PRODUCTION_UNIT_TRANSITIONS.keys())
-
 _MODULE_TYPES = frozenset({"data_visualization", "architecture", "conceptual", "annotation"})
 _REVIEW_SUBJECT_TYPES = frozenset({"plan", "module", "slide", "deck"})
 _REVIEW_STATUSES = frozenset({"passed", "failed", "blocked"})
@@ -124,8 +114,6 @@ class ProductionNotAllowedError(RuntimeError):
     """Raised when a production-guarded action is attempted before a Deck
     reaches "approved" or a later status."""
 _APPROVED_OR_LATER = frozenset({"approved", "producing", "draft_review", "revising", "validating", "completed"})
-
-
 def find_project_root(start: Path) -> Path:
     """Find the nearest ancestor directory containing a .git entry.
     Args:
@@ -257,8 +245,6 @@ def load_decks(project_root: Path) -> Dict[str, Any]:
         id -> Deck record map (empty if none exist yet).
     """
     return _load_yaml_map(project_root / DECKS_RELATIVE_PATH, "decks")
-
-
 def create_deck(project_root: Path, title: str, created_by: str = "user") -> Dict[str, Any]:
     """Create a new Deck record with status "planning".
     Args:
@@ -288,8 +274,6 @@ def create_deck(project_root: Path, title: str, created_by: str = "user") -> Dic
         decks[deck_id] = record
         _save_yaml_map(path, "decks", decks)
     return record
-
-
 def set_deck_status(project_root: Path, deck_id: str, status: str) -> Dict[str, Any]:
     """Transition a Deck's workflow status.
     Args:
@@ -321,8 +305,6 @@ def set_deck_status(project_root: Path, deck_id: str, status: str) -> Dict[str, 
         decks[deck_id]["updated_at"] = _utc_now_iso()
         _save_yaml_map(path, "decks", decks)
         return decks[deck_id]
-
-
 def load_slides(project_root: Path) -> Dict[str, Any]:
     """Load all Slide records.
     Args:
@@ -331,8 +313,6 @@ def load_slides(project_root: Path) -> Dict[str, Any]:
         id -> Slide record map (empty if none exist yet).
     """
     return _load_yaml_map(project_root / SLIDES_RELATIVE_PATH, "slides")
-
-
 def create_slide(
     project_root: Path, deck_id: str, plan_slide_id: str, title: str, created_by: str = "user",
 ) -> Dict[str, Any]:
@@ -372,8 +352,6 @@ def create_slide(
         slides[slide_id] = record
         _save_yaml_map(path, "slides", slides)
     return record
-
-
 def set_slide_status(project_root: Path, slide_id: str, status: str) -> Dict[str, Any]:
     """Transition a Slide's production status.
     Args:
@@ -405,8 +383,6 @@ def set_slide_status(project_root: Path, slide_id: str, status: str) -> Dict[str
         slides[slide_id]["updated_at"] = _utc_now_iso()
         _save_yaml_map(path, "slides", slides)
         return slides[slide_id]
-
-
 def load_visual_modules(project_root: Path) -> Dict[str, Any]:
     """Load all Visual Module records.
     Args:
@@ -415,8 +391,6 @@ def load_visual_modules(project_root: Path) -> Dict[str, Any]:
         id -> Visual Module record map (empty if none exist yet).
     """
     return _load_yaml_map(project_root / VISUAL_MODULES_RELATIVE_PATH, "visual_modules")
-
-
 def create_visual_module(
     project_root: Path,
     slide_id: str,
@@ -426,7 +400,6 @@ def create_visual_module(
     created_by: str = "user",
 ) -> Dict[str, Any]:
     """Create a new Visual Module record with status "planned".
-
     Args:
         project_root: The project's root directory.
         slide_id: The Slide this module belongs to; must already exist.
@@ -439,10 +412,8 @@ def create_visual_module(
             other Visual Modules that must reach "passed" before this one
             may enter "producing". Each must already exist.
         created_by: Name of the skill/agent creating this module, or "user".
-
     Returns:
         The full new Visual Module record, including its generated "id".
-
     Raises:
         ValueError: If module_key is empty/missing, or module_type is not
             one of the four allowed values.
@@ -476,25 +447,19 @@ def create_visual_module(
         modules[module_id] = record
         _save_yaml_map(path, "visual_modules", modules)
     return record
-
-
 def set_module_status(project_root: Path, module_id: str, status: str) -> Dict[str, Any]:
     """Transition a Visual Module's production status.
-
     Entering "producing" additionally requires every id in this module's
     "dependencies" to already be "passed" -- the mechanism that lets
     independent modules run in parallel while a module with an unresolved
     dependency stays blocked from starting.
-
     Args:
         project_root: The project's root directory.
         module_id: The Visual Module to update.
         status: New status; must be a legal transition from the module's
             current status per the shared production-unit state machine.
-
     Returns:
         The updated Visual Module record.
-
     Raises:
         VisualModuleNotFoundError: If module_id doesn't exist.
         ValueError: If status is unrecognized, not a legal transition
@@ -526,8 +491,6 @@ def set_module_status(project_root: Path, module_id: str, status: str) -> Dict[s
         record["updated_at"] = _utc_now_iso()
         _save_yaml_map(path, "visual_modules", modules)
         return record
-
-
 def record_review(
     project_root: Path,
     subject_type: str,
@@ -539,7 +502,6 @@ def record_review(
     round_number: int = 1,
 ) -> Dict[str, Any]:
     """Append a Review Result event.
-
     Args:
         project_root: The project's root directory.
         subject_type: Must be one of "plan", "module", "slide", "deck".
@@ -556,10 +518,8 @@ def record_review(
             schema-validated here (that is validate_deck_plan.py's /
             validate_visual_module.py's job at the contract layer).
         round_number: Which review round this is for the subject (1-based).
-
     Returns:
         The full Review Result event, including its generated "id" and "ts".
-
     Raises:
         ValueError: If subject_type/status is not one of the allowed
             values, or round_number is not a positive int.
@@ -618,21 +578,16 @@ def record_review(
     }
     append_event(project_root, event)
     return event
-
-
 def assert_production_allowed(project_root: Path, deck_id: str) -> Dict[str, Any]:
     """Guard used by every artifact-producing script before it writes
     anything -- the mechanism that makes "no presentation artifact before
     plan approval" a real, deterministic guarantee rather than a prose
     instruction.
-
     Args:
         project_root: The project's root directory.
         deck_id: The Deck the artifact belongs to.
-
     Returns:
         The Deck record, if production is currently allowed.
-
     Raises:
         DeckNotFoundError: If deck_id doesn't exist.
         ProductionNotAllowedError: If the Deck's status is earlier than
@@ -648,22 +603,16 @@ def assert_production_allowed(project_root: Path, deck_id: str) -> Dict[str, Any
             "artifact may be produced before it reaches 'approved'."
         )
     return record
-
-
 def query(project_root: Path, deck_id: str) -> Dict[str, Any]:
     """Return the complete durable workflow snapshot for one deck.
-
     The query is read-only and deterministic: it never replays or appends
     events, so invoking it from a fresh process cannot create duplicates.
-
     Args:
         project_root: The project's root directory.
         deck_id: The Deck to look up.
-
     Returns:
         A mapping containing deck, plan, assignment, artifact, review, draft,
         blocker, and next-action records.
-
     Raises:
         DeckNotFoundError: If ``deck_id`` does not exist.
         StateParseError: If a state YAML file or event shard is malformed.
@@ -716,13 +665,9 @@ def query(project_root: Path, deck_id: str) -> Dict[str, Any]:
         "blockers": blockers,
         "next_actions": next_action_list,
     }
-
-
 def _record_order(record: Dict[str, Any]) -> tuple[str, str]:
     """Return a stable timestamp/ID ordering key for persisted records."""
     return str(record.get("created_at", record.get("ts", ""))), str(record.get("id", ""))
-
-
 def _approval_snapshot(deck: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Extract persisted approval identity, or ``None`` when absent."""
     if not deck.get("approval_id") and deck.get("approved_plan_version") is None:
@@ -735,8 +680,6 @@ def _approval_snapshot(deck: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "approved_at": deck.get("approved_at"),
         "approval_mode": deck.get("approval_mode"),
     }
-
-
 def _draft_snapshots(
     project_root: Path, deck_id: str, deck: Dict[str, Any]
 ) -> tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
@@ -756,18 +699,13 @@ def _draft_snapshots(
     if deck.get("draft_approval_id"):
         decision = next((event for event in decisions if event.get("id") == deck["draft_approval_id"]), None)
     return preview, decision
-
-
 def validate_referential_integrity(project_root: Path) -> list:
     """Scan state/*.yaml for dangling foreign keys.
-
     Diagnostic pass over hand-authored/hand-edited data -- every write
     path in this module already rejects a dangling reference at write
     time, so a clean project should always report zero violations.
-
     Args:
         project_root: The project's root directory.
-
     Returns:
         A list of violation dicts, each shaped {"entity", "id", "field",
         "missing_id"}. Empty if nothing is broken.
@@ -780,7 +718,6 @@ def validate_referential_integrity(project_root: Path) -> list:
     assignments = load_assignments(project_root)
     artifacts = load_artifacts(project_root)
     load_review_results(project_root)
-
     violations: list = []
     for entity, records in (("deck", decks), ("slide", slides), ("visual_module", modules), ("revision_request", revisions), ("plan", plans), ("assignment", assignments), ("artifact", artifacts)):
         for record_id, record in records.items():
@@ -864,8 +801,6 @@ def validate_referential_integrity(project_root: Path) -> list:
             elif slide_id is not None and module_slide != slide_id:
                 violations.append({"entity": "artifact", "id": artifact_id, "field": "slide_id", "missing_id": module_slide})
     return violations
-
-
 def _build_parser() -> argparse.ArgumentParser:
     """Construct the presentation_state.py argument parser."""
     parser = argparse.ArgumentParser(
@@ -883,8 +818,14 @@ def _build_parser() -> argparse.ArgumentParser:
     action.add_argument("--check-production-allowed", action="store_true")
     action.add_argument("--query", action="store_true")
     action.add_argument("--validate", action="store_true")
-
+    for gated_action in (
+        "--register-plan", "--record-content-review", "--approve-deck",
+        "--record-production-review", "--request-targeted-revision",
+        "--register-draft-preview", "--approve-draft", "--complete-deck",
+    ):
+        action.add_argument(gated_action, action="store_true")
     parser.add_argument("--skill", metavar="NAME")
+    parser.add_argument("--authored-by", dest="authored_by", metavar="NAME")
     parser.add_argument("--title", metavar="TEXT")
     parser.add_argument("--deck-id", metavar="ID")
     parser.add_argument("--slide-id", metavar="ID")
@@ -903,23 +844,54 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--instructions", metavar="TEXT")
     parser.add_argument("--supersedes", metavar="ID")
     parser.add_argument("--status", metavar="STATUS")
+    parser.add_argument("--plan-path", "--plan", dest="plan_path", type=Path, metavar="PATH")
+    parser.add_argument("--review-path", "--review", dest="review_path", type=Path, metavar="PATH")
+    parser.add_argument("--approval-path", "--approval", dest="approval_path", type=Path, metavar="PATH")
+    parser.add_argument("--revision-path", "--revision", dest="revision_path", type=Path, metavar="PATH")
+    parser.add_argument("--preview-path", "--preview", dest="preview_path", type=Path, metavar="PATH")
+    parser.add_argument("--decision-path", "--decision", dest="decision_path", type=Path, metavar="PATH")
+    parser.add_argument("--completion-record-path", "--completion", dest="completion_record_path", type=Path, metavar="PATH")
+    parser.add_argument("--path", "--source", dest="generic_path", type=Path, metavar="PATH")
     parser.add_argument("--json", action="store_true")
     return parser
-
-
 def _dispatch(args: argparse.Namespace, project_root: Path) -> Dict[str, Any]:
     """Route parsed CLI args to the matching call.
-
     Args:
         args: Parsed argparse namespace.
         project_root: The project's root directory.
-
     Returns:
         The JSON-serializable result of the selected action.
     """
     if args.create_deck:
         return create_deck(project_root, args.title, created_by=args.skill or "user")
     if args.set_deck_status:
+        if args.status == "approved":
+            from presentation_gates import ApprovalGateError
+            from presentation_workflow import approve_deck
+            if args.approval_path is None and args.generic_path is None:
+                raise ApprovalGateError(
+                    "plan_approvable", args.deck_id or "<unknown>",
+                    [{"reason": "approval evidence document is required"}],
+                )
+            return approve_deck(project_root, args.approval_path or args.generic_path)
+        if args.status == "completed":
+            from presentation_gates import CompletionGateError
+            from presentation_workflow import complete_deck
+            if args.completion_record_path is None and args.generic_path is None:
+                raise CompletionGateError(
+                    "deck_completable", args.deck_id or "<unknown>",
+                    [{"reason": "completion evidence document is required"}],
+                )
+            return complete_deck(project_root, args.deck_id, args.completion_record_path or args.generic_path)
+        if args.status == "validating":
+            from presentation_gates import DraftGateError
+            from presentation_workflow import approve_draft
+            if args.decision_path is None and args.generic_path is None:
+                raise DraftGateError(
+                    "draft_approvable", args.deck_id or "<unknown>",
+                    [{"reason": "draft decision evidence document is required"}],
+                )
+            return approve_draft(project_root, args.decision_path or args.generic_path)
         return set_deck_status(project_root, args.deck_id, args.status)
     if args.create_slide:
         return create_slide(
@@ -927,6 +899,12 @@ def _dispatch(args: argparse.Namespace, project_root: Path) -> Dict[str, Any]:
             created_by=args.skill or "user",
         )
     if args.set_slide_status:
+        if args.status == "passed":
+            if args.review_path is not None or args.generic_path is not None:
+                from presentation_workflow import record_production_review
+                return record_production_review(project_root, args.review_path or args.generic_path)
+            from presentation_gates import assert_slide_passable
+            assert_slide_passable(project_root, args.slide_id)
         return set_slide_status(project_root, args.slide_id, args.status)
     if args.create_visual_module:
         return create_visual_module(
@@ -934,6 +912,17 @@ def _dispatch(args: argparse.Namespace, project_root: Path) -> Dict[str, Any]:
             dependencies=args.dependencies, created_by=args.skill or "user",
         )
     if args.set_module_status:
+        if args.status == "passed":
+            from presentation_gates import ReviewGateError
+            from presentation_workflow import record_production_review
+            if args.review_path is None and args.generic_path is None:
+                module = load_visual_modules(project_root).get(args.module_id, {})
+                slide = load_slides(project_root).get(module.get("slide_id"), {})
+                raise ReviewGateError(
+                    "module_passable", str(slide.get("deck_id", "<unknown>")),
+                    [{"reason": "production review evidence document is required"}],
+                )
+            return record_production_review(project_root, args.review_path or args.generic_path)
         return set_module_status(project_root, args.module_id, args.status)
     if args.record_review:
         findings = json.loads(args.findings_json) if args.findings_json else None
@@ -948,20 +937,42 @@ def _dispatch(args: argparse.Namespace, project_root: Path) -> Dict[str, Any]:
             args.instructions, supersedes=args.supersedes,
         )
     if args.check_production_allowed:
-        return assert_production_allowed(project_root, args.deck_id)
+        from presentation_gates import assert_production_allowed as assert_production_gate
+        return assert_production_gate(project_root, args.deck_id)
     if args.query:
         return query(project_root, args.deck_id)
     if args.validate:
         violations = validate_referential_integrity(project_root)
         return {"violations": violations, "clean": len(violations) == 0}
+    if args.register_plan:
+        from presentation_workflow import register_plan
+        return register_plan(project_root, args.deck_id, args.plan_path or args.generic_path, args.authored_by or args.skill or "user")
+    if args.record_content_review:
+        from presentation_workflow import record_content_review
+        return record_content_review(project_root, args.deck_id, args.review_path or args.generic_path)
+    if args.approve_deck:
+        from presentation_workflow import approve_deck
+        return approve_deck(project_root, args.approval_path or args.generic_path)
+    if args.record_production_review:
+        from presentation_workflow import record_production_review
+        return record_production_review(project_root, args.review_path or args.generic_path)
+    if args.request_targeted_revision:
+        from presentation_workflow import request_targeted_revision
+        return request_targeted_revision(project_root, args.revision_path or args.generic_path)
+    if args.register_draft_preview:
+        from presentation_workflow import register_draft_preview
+        return register_draft_preview(project_root, args.preview_path or args.generic_path)
+    if args.approve_draft:
+        from presentation_workflow import approve_draft
+        return approve_draft(project_root, args.decision_path or args.generic_path)
+    if args.complete_deck:
+        from presentation_workflow import complete_deck
+        return complete_deck(project_root, args.deck_id, args.completion_record_path or args.generic_path)
     raise AssertionError("no action selected despite argparse required group")
-
-
 def main() -> None:
     """CLI entry point for presentation_state.py."""
     parser = _build_parser()
     args = parser.parse_args()
-
     try:
         project_root = find_project_root(Path.cwd())
         result = _dispatch(args, project_root)
@@ -971,15 +982,18 @@ def main() -> None:
         LockTimeoutError, ValueError,
     ) as exc:
         error = {"error": type(exc).__name__, "message": str(exc)}
+        for field in ("predicate", "deck_id", "blockers"):
+            if hasattr(exc, field):
+                error[field] = getattr(exc, field)
         print(json.dumps(error) if args.json else f"Error: {exc}")
         sys.exit(1)
     except Exception as exc:  # noqa: BLE001 -- stdout must always stay parseable
         error = {"error": type(exc).__name__, "message": str(exc)}
+        for field in ("predicate", "deck_id", "blockers"):
+            if hasattr(exc, field):
+                error[field] = getattr(exc, field)
         print(json.dumps(error) if args.json else f"Error: {exc}")
         sys.exit(1)
-
     print(json.dumps(result) if args.json else json.dumps(result, indent=2))
-
-
 if __name__ == "__main__":
     main()
