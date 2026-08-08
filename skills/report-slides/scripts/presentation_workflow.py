@@ -25,10 +25,8 @@ from presentation_contracts import contract_sha256, load_contract
 from presentation_events import (
     append_event,
     create_revision_request,
-    effective_review_results,
     load_events,
     load_plans,
-    load_review_results,
     register_plan_record,
 )
 from presentation_gates import (
@@ -44,7 +42,9 @@ from presentation_gates import (
     assert_plan_approvable,
     assert_plan_reviewable,
     assert_production_allowed,
+    assert_module_passable,
     assert_slide_passable,
+    review_result_blockers,
 )
 from validate_deck_plan import validate_deck_plan
 
@@ -57,6 +57,10 @@ _REVISION_KINDS = frozenset(
         "review_finding", "module_retry", "slide_retry",
     }
 )
+_USER_PLAN_REVISION_KINDS = frozenset({
+    "revise_slide", "add_slide", "remove_slide", "reorder_slides",
+    "change_emphasis", "change_audience", "change_duration",
+})
 
 
 def translate_cli_gate_error(args: Any, error: BaseException) -> BaseException:
@@ -323,7 +327,7 @@ def _record_review_event(
         "event": "review_result", "id": _id("rev"), "subject_type": subject_type,
         "subject_id": subject_id, "reviewer_id": review.get("reviewer_id"),
         "reviewer_role": review.get("reviewer_role", "content"),
-        "identity_verifiable": True, "status": review.get("status"),
+        "identity_verifiable": review.get("identity_verifiable", True), "status": review.get("status"),
         "findings": review.get("findings", []), "round": review.get("round", 1),
         "ts": review.get("reviewed_at", _now()),
     }
@@ -331,6 +335,22 @@ def _record_review_event(
         event.update(dict(extra))
     append_event(project_root, event)
     return event
+
+
+def _update_revision_request(
+    project_root: Path, request_id: str, updates: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Annotate one persisted Revision Request under its state lock."""
+    import presentation_events
+
+    path = project_root / presentation_events.REVISION_REQUESTS_RELATIVE_PATH
+    with presentation_events._locked_file(project_root, path):
+        records = presentation_events._load_yaml_map(path, "revision_requests")
+        if request_id not in records:
+            raise ValueError(f"Unknown revision request: {request_id}")
+        records[request_id].update(dict(updates))
+        presentation_events._save_yaml_map(path, "revision_requests", records)
+        return records[request_id]
 
 
 def approve_deck(project_root: Path, approval_path: Path) -> dict[str, Any]:
@@ -414,12 +434,12 @@ def record_production_review(project_root: Path, review_path: Path) -> dict[str,
             assert_production_allowed(project_root, deck_id)
         except ProductionGateError as exc:
             raise ReviewGateError("production_review_recordable", deck_id, exc.blockers) from exc
-        if review.get("reviewer_role") not in {"scientific", "visual_quality"}:
-            raise ReviewGateError("production_review_recordable", deck_id, [{"reason": "invalid_reviewer_role"}])
-        if not isinstance(review.get("reviewer_id"), str) or not review["reviewer_id"].strip():
-            raise ReviewGateError("production_review_recordable", deck_id, [{"reason": "reviewer_id_required"}])
-        if review.get("status") not in {"passed", "failed", "blocked"}:
-            raise ReviewGateError("production_review_recordable", deck_id, [{"reason": "invalid_review_status"}])
+        blockers = review_result_blockers(project_root, subject_type, subject_id, review)
+        if target.get("status") != "review_required":
+            blockers.append({"reason": f"status:{target.get('status')}:review_required_expected"})
+        if blockers:
+            reasons = "; ".join(str(item.get("reason", item)) for item in blockers)
+            raise ReviewGateError("production_review_recordable", deck_id, blockers, f"production_review_recordable blocked for deck {deck_id}: {reasons}")
         revision_request: dict[str, Any] | None = None
         if review["status"] in {"failed", "blocked"}:
             try:
@@ -443,6 +463,17 @@ def record_production_review(project_root: Path, review_path: Path) -> dict[str,
             review,
             {"revision_request_id": revision_request["id"]} if revision_request else None,
         )
+        if revision_request is not None:
+            revision_request = _update_revision_request(
+                project_root,
+                revision_request["id"],
+                {
+                    "revision_kind": "review_finding",
+                    "target_type": subject_type,
+                    "target_id": subject_id,
+                    "review_id": event["id"],
+                },
+            )
         if review["status"] in {"failed", "blocked"}:
             _save_unit(project_root, subject_type, subject_id, {"status": "revision_required"})
         elif subject_type == "slide":
@@ -453,15 +484,11 @@ def record_production_review(project_root: Path, review_path: Path) -> dict[str,
             else:
                 _save_unit(project_root, "slide", subject_id, {"status": "passed"})
         else:
-            reviews = effective_review_results(load_review_results(project_root, {subject_id}))
-            roles = {
-                review.get("reviewer_role")
-                for review in reviews
-                if review.get("status") == "passed"
-                and isinstance(review.get("reviewer_id"), str)
-                and review.get("reviewer_role") in {"scientific", "visual_quality"}
-            }
-            if roles == {"scientific", "visual_quality"}:
+            try:
+                assert_module_passable(project_root, subject_id)
+            except ReviewGateError:
+                pass
+            else:
                 _save_unit(project_root, "module", subject_id, {"status": "passed"})
         return {
             "review": event,
@@ -490,24 +517,71 @@ def request_targeted_revision(project_root: Path, revision_path: Path) -> dict[s
         deck_id = str(revision.get("deck_id", "<unknown>"))
         if subject_type not in {"deck", "plan", "slide", "module"} or not isinstance(subject_id, str):
             raise ReviewGateError("revision_requestable", deck_id, [{"reason": "invalid_subject"}])
-        if revision.get("revision_kind") not in _REVISION_KINDS:
+        revision_kind = revision.get("revision_kind")
+        if revision_kind not in _REVISION_KINDS:
             raise ReviewGateError("revision_requestable", deck_id, [{"reason": "invalid_revision_kind"}])
+        requested_by = revision.get("requested_by", "reviewer")
+        if subject_type in {"deck", "plan"} and requested_by == "user" and revision_kind not in _USER_PLAN_REVISION_KINDS:
+            raise ReviewGateError("revision_requestable", deck_id, [{"reason": "invalid_user_plan_revision_kind"}])
         state = _state()
-        if subject_type in {"deck", "plan"}:
+        source: dict[str, Any] | None = None
+        if subject_type == "deck":
             deck_id = subject_id
+            if deck_id not in state.load_decks(project_root):
+                raise ReviewGateError("revision_requestable", deck_id, [{"reason": "unknown_subject"}])
+        elif subject_type == "plan":
+            plan_record = load_plans(project_root).get(subject_id)
+            if plan_record is None:
+                raise ReviewGateError("revision_requestable", deck_id, [{"reason": "unknown_subject"}])
+            deck_id = str(plan_record.get("deck_id"))
         elif subject_type == "slide":
-            target = state.load_slides(project_root).get(subject_id)
-            if target is None:
+            source = state.load_slides(project_root).get(subject_id)
+            if source is None:
                 raise ReviewGateError("revision_requestable", deck_id, [{"reason": "unknown_subject"}])
-            deck_id = str(target["deck_id"])
+            deck_id = str(source["deck_id"])
         else:
-            target = state.load_visual_modules(project_root).get(subject_id)
-            if target is None:
+            source = state.load_visual_modules(project_root).get(subject_id)
+            if source is None:
                 raise ReviewGateError("revision_requestable", deck_id, [{"reason": "unknown_subject"}])
-            deck_id = str(state.load_slides(project_root)[target["slide_id"]]["deck_id"])
+            deck_id = str(state.load_slides(project_root)[source["slide_id"]]["deck_id"])
+        blockers: list[dict[str, Any]] = []
+        plan_binding: dict[str, Any] = {}
+        if subject_type in {"deck", "plan"}:
+            current_deck = state.load_decks(project_root).get(deck_id)
+            current_plan_id = current_deck.get("current_plan_id") if current_deck else None
+            current_plan = load_plans(project_root).get(current_plan_id) if isinstance(current_plan_id, str) else None
+            if not isinstance(current_plan, Mapping):
+                blockers.append({"reason": "missing_current_plan"})
+            else:
+                plan_binding = {
+                    "plan_scoped": True,
+                    "scope_subject_type": "plan",
+                    "scope_subject_id": current_plan.get("id", current_plan_id),
+                    "plan_id": current_plan.get("id", current_plan_id),
+                    "plan_version": current_plan.get("version"),
+                    "plan_sha256": current_plan.get("sha256", current_plan.get("plan_sha256")),
+                    "current_plan_id": current_plan.get("id", current_plan_id),
+                    "current_plan_version": current_plan.get("version"),
+                    "current_plan_sha256": current_plan.get("sha256", current_plan.get("plan_sha256")),
+                    "next_action": "register_plan",
+                }
+        if source is not None:
+            supersedes = revision.get("supersedes", revision.get("superseded_subject_id", subject_id))
+            if supersedes != subject_id:
+                blockers.append({"reason": "supersedes_target_mismatch", "expected": subject_id, "actual": supersedes})
+            if source.get("status") not in {"review_required", "revision_required", "passed"}:
+                blockers.append({"reason": f"status:{source.get('status')}:not_revisionable"})
+            if revision_kind == "slide_retry" and subject_type != "slide":
+                blockers.append({"reason": "slide_retry_requires_slide_subject"})
+            if revision_kind == "module_retry" and subject_type != "module":
+                blockers.append({"reason": "module_retry_requires_module_subject"})
+        if blockers:
+            raise ReviewGateError("revision_requestable", deck_id, blockers)
+        request_subject_type = "deck" if subject_type == "plan" else subject_type
+        request_subject_id = deck_id if subject_type == "plan" else subject_id
         try:
             record = create_revision_request(
-                project_root, subject_type, subject_id, revision.get("requested_by", "reviewer"),
+                project_root, request_subject_type, request_subject_id, requested_by,
                 revision.get("instructions", "Targeted revision"), supersedes=revision.get(
                     "supersedes", revision.get("superseded_subject_id", subject_id if subject_type in {"slide", "module"} else None)
                 ),
@@ -517,29 +591,41 @@ def request_targeted_revision(project_root: Path, revision_path: Path) -> dict[s
                 "revision_requestable", deck_id,
                 [{"reason": "invalid_revision_request", "message": str(exc)}],
             ) from exc
+        record = _update_revision_request(
+            project_root,
+            record["id"],
+            {
+                "revision_kind": revision_kind,
+                "target_type": subject_type,
+                "target_id": subject_id,
+                "requested_subject_type": subject_type,
+                "requested_subject_id": subject_id,
+                **plan_binding,
+            },
+        )
         replacement: dict[str, Any] | None = None
-        if subject_type in {"slide", "module"}:
-            source = state.load_slides(project_root).get(subject_id) if subject_type == "slide" else state.load_visual_modules(project_root).get(subject_id)
-            if source is not None:
-                replacement = dict(source)
-                replacement["id"] = _id("sld" if subject_type == "slide" else "mod")
-                replacement["status"] = "planned"
-                replacement["attempt"] = int(source.get("attempt", 1)) + 1
-                replacement["supersedes_slide_id" if subject_type == "slide" else "supersedes_module_id"] = subject_id
-                if subject_type == "slide":
-                    replacement["slide_spec_path"] = None
-                    replacement["slide_spec_sha256"] = None
-                else:
-                    replacement["assignment_path"] = None
-                    replacement["artifact_manifest_path"] = None
-                replacement.pop("updated_at", None)
-                replacement["created_at"] = _now()
-                path = state.SLIDES_RELATIVE_PATH if subject_type == "slide" else state.VISUAL_MODULES_RELATIVE_PATH
-                top = "slides" if subject_type == "slide" else "visual_modules"
-                with state._locked_file(project_root, project_root / path):
-                    records = state._load_yaml_map(project_root / path, top)
-                    records[replacement["id"]] = replacement
-                    state._save_yaml_map(project_root / path, top, records)
+        if subject_type in {"slide", "module"} and source is not None:
+            replacement = dict(source)
+            replacement["id"] = _id("sld" if subject_type == "slide" else "mod")
+            replacement["status"] = "planned"
+            replacement["attempt"] = int(source.get("attempt", 1)) + 1
+            replacement["supersedes_slide_id" if subject_type == "slide" else "supersedes_module_id"] = subject_id
+            replacement["revision_request_id"] = record["id"]
+            replacement["revision_kind"] = revision_kind
+            if subject_type == "slide":
+                replacement["slide_spec_path"] = None
+                replacement["slide_spec_sha256"] = None
+            else:
+                replacement["assignment_path"] = None
+                replacement["artifact_manifest_path"] = None
+            replacement.pop("updated_at", None)
+            replacement["created_at"] = _now()
+            path = state.SLIDES_RELATIVE_PATH if subject_type == "slide" else state.VISUAL_MODULES_RELATIVE_PATH
+            top = "slides" if subject_type == "slide" else "visual_modules"
+            with state._locked_file(project_root, project_root / path):
+                records = state._load_yaml_map(project_root / path, top)
+                records[replacement["id"]] = replacement
+                state._save_yaml_map(project_root / path, top, records)
         else:
             _save_deck(
                 project_root,
@@ -551,7 +637,10 @@ def request_targeted_revision(project_root: Path, revision_path: Path) -> dict[s
                     "draft_preview_id": None, "draft_approval_id": None,
                 },
             )
-        return {"revision": record, "replacement": replacement}
+        result: dict[str, Any] = {"revision": record, "replacement": replacement, "revision_kind": revision_kind, **plan_binding}
+        if replacement is not None:
+            result.update(replacement)
+        return result
 
 
 def register_draft_preview(project_root: Path, preview_path: Path) -> dict[str, Any]:

@@ -20,15 +20,12 @@ from validate_deck_plan import validate_deck_approval, validate_deck_plan
 from validate_visual_review import derive_overall_status, validate_review_record
 from validate_visual_module import validate_complex_visual_spec, validate_worker_assignment
 
-
 _APPROVED_STATUSES = frozenset(
     {"approved", "producing", "draft_review", "revising", "validating", "completed"}
 )
 _REVIEW_ROLES = frozenset({"scientific", "visual_quality"})
 _CONTENT_ROLES = frozenset({"content", "content_reviewer"})
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
-
-
 class GateError(RuntimeError):
     """Base error carrying machine-readable predicate failure evidence."""
 
@@ -510,12 +507,84 @@ def assert_module_publishable(project_root: Path, module_id: str, artifact: dict
         _fail(PublicationGateError, "module_publishable", deck_id, blockers)
     return {"deck": deck, "slide": slide, "module": module, "assignment": assignment, "artifact": artifact}
 
-
 def _subject_reviews(project_root: Path, subject_type: str, subject_id: str) -> list[dict[str, Any]]:
     """Return effective reviews for one typed subject."""
     return effective_review_results(load_review_results(project_root, {subject_id}))
 
 
+_FINDING_KINDS = frozenset({"clipping", "overlap", "text-reflow", "connector-drift", "crop", "unreadably-small-text", "missing-image", "z-order", "alignment", "other", "unsupported-claim", "duplicated-content", "missing-limitation", "excessive-background", "unnecessary-visual", "weak-continuity"})
+
+def review_result_blockers(
+    project_root: Path, subject_type: str, subject_id: str, review: Mapping[str, Any]
+) -> list[dict[str, Any]]:
+    """Validate one production review and its independence constraints.
+
+    Args:
+        project_root: Project root containing persisted state.
+        subject_type: ``slide`` or ``module``.
+        subject_id: Target production-unit ID.
+        review: Candidate Review Result mapping.
+
+    Returns:
+        Machine-readable blockers; an empty list means admissible.
+    """
+    blockers: list[dict[str, Any]] = []
+    if review.get("subject_type") != subject_type or review.get("subject_id") != subject_id:
+        blockers.append({"reason": "review_subject_mismatch"})
+    role = review.get("reviewer_role")
+    if role not in _REVIEW_ROLES:
+        blockers.append({"reason": "invalid_reviewer_role"})
+    reviewer_id = review.get("reviewer_id")
+    if not _review_identity(review):
+        blockers.append({"reason": "reviewer_identity_unverifiable"})
+    if review.get("status") not in {"passed", "failed", "blocked"}:
+        blockers.append({"reason": "invalid_review_status"})
+    round_number = review.get("round", 1)
+    if isinstance(round_number, bool) or not isinstance(round_number, int) or round_number < 1:
+        blockers.append({"reason": "invalid_review_round"})
+    findings = review.get("findings", [])
+    if not isinstance(findings, list):
+        blockers.append({"reason": "findings_must_be_list"})
+        findings = []
+    if review.get("status") in {"failed", "blocked"} and not findings:
+        blockers.append({"reason": "failed_review_requires_findings"})
+    for finding in findings:
+        if not isinstance(finding, Mapping):
+            blockers.append({"reason": "finding_must_be_mapping"})
+            continue
+        kind = finding.get("kind")
+        if kind is not None and kind not in _FINDING_KINDS:
+            blockers.append({"reason": "invalid_finding_kind", "kind": kind})
+        if kind is None and not isinstance(finding.get("code"), str):
+            blockers.append({"reason": "finding_kind_required"})
+        disposition = finding.get("disposition")
+        if disposition is not None and disposition not in {"open", "fixed", "rechecked"}:
+            blockers.append({"reason": "invalid_finding_disposition"})
+        if review.get("status") == "passed" and (
+            disposition not in {"fixed", "rechecked"} or finding.get("severity") in {"blocking", "critical"}
+        ):
+            blockers.append({"reason": "findings_inconsistent_with_passed_status"})
+        if review.get("status") in {"failed", "blocked"} and kind is not None and disposition != "open":
+            blockers.append({"reason": "findings_inconsistent_with_failed_status"})
+    state = _state()
+    target = (state.load_slides(project_root) if subject_type == "slide" else state.load_visual_modules(project_root)).get(subject_id)
+    if target is None:
+        blockers.append({"reason": "unknown_subject"})
+    else:
+        owner_ids = {str(target.get("created_by"))}
+        for record in load_events(project_root, "review_result"):
+            if record.get("subject_type") == subject_type and record.get("subject_id") == subject_id:
+                if record.get("id") != review.get("id") and record.get("reviewer_role") == role and record.get("round", 1) == round_number:
+                    blockers.append({"reason": "duplicate_review_role_round"})
+        for assignment in state.load_assignments(project_root).values():
+            if assignment.get("module_id" if subject_type == "module" else "slide_id") == subject_id:
+                owner_ids.add(str(assignment.get("worker_id", assignment.get("worker"))))
+        for artifact in load_artifacts(project_root).values():
+            if artifact.get("module_id" if subject_type == "module" else "slide_id") == subject_id:
+                owner_ids.add(str(artifact.get("producer_id", artifact.get("produced_by"))))
+        if isinstance(reviewer_id, str) and reviewer_id in owner_ids:
+            blockers.append({"reason": "reviewer_self_review_prohibited"})
+    return blockers
 def assert_slide_passable(project_root: Path, slide_id: str) -> dict[str, Any]:
     """Assert independent scientific and visual-quality slide reviews pass.
 
@@ -536,7 +605,10 @@ def assert_slide_passable(project_root: Path, slide_id: str) -> dict[str, Any]:
     slide = slides[slide_id]
     deck_id = str(slide.get("deck_id"))
     blockers: list[dict[str, Any]] = []
-    reviews = _subject_reviews(project_root, "slide", slide_id)
+    raw_reviews = load_review_results(project_root, {slide_id})
+    for review in raw_reviews:
+        blockers.extend(review_result_blockers(project_root, "slide", slide_id, review))
+    reviews = effective_review_results(raw_reviews)
     by_role = {review.get("reviewer_role"): review for review in reviews}
     for role in sorted(_REVIEW_ROLES):
         review = by_role.get(role)
@@ -551,8 +623,26 @@ def assert_slide_passable(project_root: Path, slide_id: str) -> dict[str, Any]:
     if blockers:
         _fail(ReviewGateError, "slide_passable", deck_id, blockers)
     return {"slide": slide, "reviews": reviews}
-
-
+def assert_module_passable(project_root: Path, module_id: str) -> dict[str, Any]:
+    """Assert independent scientific and visual-quality module reviews pass."""
+    modules = _state().load_visual_modules(project_root)
+    module = modules.get(module_id)
+    if module is None:
+        _fail(ReviewGateError, "module_passable", "<unknown>", [{"reason": "unknown_module", "module_id": module_id}])
+    slides = _state().load_slides(project_root)
+    deck_id = str(slides.get(module.get("slide_id"), {}).get("deck_id"))
+    blockers: list[dict[str, Any]] = []
+    raw_reviews = load_review_results(project_root, {module_id})
+    for review in raw_reviews:
+        blockers.extend(review_result_blockers(project_root, "module", module_id, review))
+    reviews = effective_review_results(raw_reviews)
+    roles = {review.get("reviewer_role") for review in reviews if review.get("status") == "passed"}
+    blockers.extend({"reason": role} for role in sorted(_REVIEW_ROLES - roles))
+    if module.get("status") not in {"review_required", "passed"}:
+        blockers.append({"reason": f"status:{module.get('status')}"})
+    if blockers:
+        _fail(ReviewGateError, "module_passable", deck_id, blockers)
+    return {"module": module, "reviews": reviews}
 def assert_draft_reviewable(project_root: Path, deck_id: str, preview: dict[str, Any]) -> dict[str, Any]:
     """Assert a complete rendered slide set is available for draft review.
 
@@ -883,6 +973,10 @@ def assert_deck_completable(project_root: Path, deck_id: str, completion: dict[s
     for module in modules:
         if module.get("status") != "passed":
             blockers.append({"reason": f"module:{module.get('id')}:status:{module.get('status')}"})
+        try:
+            assert_module_passable(project_root, str(module.get("id")))
+        except ReviewGateError as exc:
+            blockers.extend({"reason": f"module:{module.get('id')}:{item.get('reason', item)}"} for item in exc.blockers)
     previews = [event for event in load_events(project_root, "draft_preview") if event.get("deck_id") == deck_id]
     decisions = [event for event in load_events(project_root, "draft_decision") if event.get("deck_id") == deck_id]
     current_preview = next((event for event in previews if event.get("id") == deck.get("draft_preview_id")), None)

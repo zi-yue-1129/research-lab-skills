@@ -11,8 +11,8 @@ import pytest
 import yaml
 
 from presentation_contracts import contract_sha256
-from presentation_events import create_artifact_record, load_events, load_revision_requests
-from presentation_state import create_deck, create_slide, create_visual_module, load_decks, load_slides, record_review, set_module_status, set_slide_status
+from presentation_events import create_artifact_record, load_revision_requests
+from presentation_state import create_deck, create_slide, create_visual_module, load_decks, load_slides, load_visual_modules, record_review, set_module_status, set_slide_status
 from presentation_workflow import (
     ApprovalGateError,
     CompletionGateError,
@@ -467,3 +467,21 @@ def test_failed_production_review_links_revision_and_targeted_revision_supersede
     assert result["replacement"]["supersedes_slide_id"] == slide["id"]
     assert load_slides(project)[slide["id"]]["status"] == "superseded"
     assert load_slides(project)[result["replacement"]["id"]]["status"] == "planned"
+
+
+def test_targeted_revision_supersedes_passed_module_without_restarting_it(tmp_path: Path) -> None:
+    """A replacement preserves the passed source as superseded, never producing."""
+    project, deck_id, _ = _approved_project(tmp_path)
+    slide = create_slide(project, deck_id, "slide-01", "Evidence changes decisions")
+    module = create_visual_module(project, slide["id"], "module-a", "architecture")
+    for status in ("ready", "assigned", "producing", "review_required", "passed"):
+        set_module_status(project, module["id"], status)
+    revision = project / "module-revision.yaml"
+    revision.write_text(yaml.safe_dump({
+        "subject_type": "module", "subject_id": module["id"], "requested_by": "reviewer",
+        "instructions": "Retry the module.", "revision_kind": "module_retry",
+    }), encoding="utf-8")
+    result = request_targeted_revision(project, revision)
+    records = load_visual_modules(project)
+    assert records[module["id"]]["status"] == "superseded"
+    assert records[result["replacement"]["id"]]["status"] == "planned"
