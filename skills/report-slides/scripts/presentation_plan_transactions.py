@@ -138,6 +138,45 @@ def _validate_plan_versions(plans: Mapping[str, Any]) -> None:
             raise ValueError(f"stored plan {plan_id!r} version must be a positive integer")
 
 
+def _validate_document_identity(
+    document: object,
+    deck_id: object,
+    next_version: object,
+) -> None:
+    """Validate plan ownership and version before any filesystem access.
+
+    Args:
+        document: Caller-provided Deck Plan mapping.
+        deck_id: Deck identifier supplied to the registration helper.
+        next_version: Version supplied to the registration helper.
+
+    Raises:
+        ValueError: If the document is not a mapping or its identity does not
+            exactly match the helper arguments.
+    """
+    if not isinstance(document, Mapping):
+        raise ValueError("document must be a mapping")
+    if not isinstance(deck_id, str) or not deck_id:
+        raise ValueError("deck_id must be a non-empty string")
+    if type(next_version) is not int or next_version <= 0:
+        raise ValueError("next_version must be a positive integer")
+    document_deck_id = document.get("deck_id")
+    if (
+        type(document_deck_id) is not str
+        or not document_deck_id
+        or document_deck_id != deck_id
+    ):
+        raise ValueError("document deck_id must be a non-empty string matching deck_id")
+    document_version = document.get("plan_version")
+    if type(document_version) is not int or document_version <= 0:
+        raise ValueError("document plan_version must be a positive integer")
+    if document_version != next_version:
+        raise ValueError(
+            "document plan_version must match next_version "
+            f"({next_version})"
+        )
+
+
 def register_plan_transaction(
     project_root: Path,
     deck_id: str,
@@ -163,6 +202,7 @@ def register_plan_transaction(
         RuntimeError: If the transaction commit fails and is rolled back.
         ValueError: If durable state does not contain the expected deck.
     """
+    _validate_document_identity(document, deck_id, next_version)
     root = project_root.resolve()
     state_dir = root / ".research/presentations/state"
     decks_path = state_dir / "decks.yaml"
@@ -188,6 +228,11 @@ def register_plan_transaction(
     plan_digest = contract_sha256(document)
     paths = (decks_path, plans_path, destination_path)
     with transaction(paths, root) as tx:
+        if os.path.lexists(destination_path):
+            raise ValueError(
+                "immutable plan destination appeared while acquiring its lock: "
+                f"{destination_path}"
+            )
         decks = tx.read_yaml(decks_path, "decks")
         deck = decks.get(deck_id)
         if not isinstance(deck, dict):
