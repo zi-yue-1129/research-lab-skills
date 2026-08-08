@@ -900,9 +900,8 @@ def _dispatch(args: argparse.Namespace, project_root: Path) -> Dict[str, Any]:
                 return record_production_review(project_root, args.review_path or args.generic_path)
             from presentation_gates import ReviewGateError
             slides = load_slides(project_root)
-            if args.slide_id not in slides:
-                raise SlideNotFoundError(f"Unknown slide_id: {args.slide_id}")
-            raise ReviewGateError("slide_passable", str(slides[args.slide_id].get("deck_id", "<unknown>")), [{"reason": "production review evidence document is required"}])
+            slide = slides.get(args.slide_id, {})
+            raise ReviewGateError("slide_passable", str(slide.get("deck_id", "<unknown>")), [{"reason": "production review evidence document is required"}])
         return set_slide_status(project_root, args.slide_id, args.status)
     if args.create_visual_module:
         return create_visual_module(
