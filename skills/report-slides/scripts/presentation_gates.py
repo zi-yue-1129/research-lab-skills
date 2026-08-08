@@ -50,30 +50,23 @@ class GateError(RuntimeError):
 class PlanGateError(GateError):
     """Raised when a Deck Plan cannot be reviewed."""
 
-
 class ApprovalGateError(GateError):
     """Raised when a Deck Plan cannot be approved."""
-
 
 class ProductionGateError(GateError):
     """Raised when production evidence is not authorized."""
 
-
 class AssignmentGateError(GateError):
     """Raised when a worker assignment is not admissible."""
-
 
 class PublicationGateError(GateError):
     """Raised when a module artifact does not match its contract."""
 
-
 class ReviewGateError(GateError):
     """Raised when a slide or module review gate is incomplete."""
 
-
 class DraftGateError(GateError):
     """Raised when a complete-deck draft preview is incomplete."""
-
 
 class CompletionGateError(GateError):
     """Raised when final completion evidence is incomplete."""
@@ -117,8 +110,6 @@ def _plan_for_deck(project_root: Path, deck: dict[str, Any]) -> tuple[dict[str, 
         return None, None, [{"reason": "invalid_current_plan_id", "plan_id": plan_id}]
     if record.get("deck_id") != deck.get("id"):
         return record, None, [{"reason": "current_plan_deck_mismatch", "plan_id": plan_id}]
-    if record is None:
-        return None, None, [{"reason": "missing_plan"}]
     raw_path = record.get("plan_path", record.get("path"))
     if not isinstance(raw_path, str) or not raw_path:
         return record, None, [{"reason": "missing_plan_path", "plan_id": record.get("id")}]
@@ -196,6 +187,8 @@ def assert_plan_reviewable(project_root: Path, deck_id: str) -> dict[str, Any]:
     _, document, blockers = _plan_blockers(project_root, deck)
     if deck.get("status") not in {"planning", "content_review", "awaiting_approval"}:
         blockers.append({"reason": f"status:{deck.get('status')}"})
+    if deck.get("plan_revision_required"):
+        blockers.append({"reason": "replacement_plan_required", "next_action": "register_plan"})
     if blockers:
         _fail(PlanGateError, "plan_reviewable", deck_id, blockers)
     record, _, _ = _plan_blockers(project_root, deck)
@@ -507,15 +500,15 @@ def assert_module_publishable(project_root: Path, module_id: str, artifact: dict
         _fail(PublicationGateError, "module_publishable", deck_id, blockers)
     return {"deck": deck, "slide": slide, "module": module, "assignment": assignment, "artifact": artifact}
 
-def _subject_reviews(project_root: Path, subject_type: str, subject_id: str) -> list[dict[str, Any]]:
-    """Return effective reviews for one typed subject."""
-    return effective_review_results(load_review_results(project_root, {subject_id}))
-
-
 _FINDING_KINDS = frozenset({"clipping", "overlap", "text-reflow", "connector-drift", "crop", "unreadably-small-text", "missing-image", "z-order", "alignment", "other", "unsupported-claim", "duplicated-content", "missing-limitation", "excessive-background", "unnecessary-visual", "weak-continuity"})
+_FINDING_ROLE_KINDS = {
+    "scientific": frozenset({"unsupported-claim", "other"}),
+    "visual_quality": frozenset(_FINDING_KINDS - {"unsupported-claim", "duplicated-content", "missing-limitation", "excessive-background", "unnecessary-visual", "weak-continuity"}),
+}
+_TERMINAL_DISPOSITIONS = frozenset({"fixed", "resolved", "closed", "accepted", "rechecked", "done", "dismissed"})
 
 def review_result_blockers(
-    project_root: Path, subject_type: str, subject_id: str, review: Mapping[str, Any]
+    project_root: Path, subject_type: str, subject_id: str, review: Mapping[str, Any], persisted_id: str | None = None
 ) -> list[dict[str, Any]]:
     """Validate one production review and its independence constraints.
 
@@ -524,6 +517,7 @@ def review_result_blockers(
         subject_type: ``slide`` or ``module``.
         subject_id: Target production-unit ID.
         review: Candidate Review Result mapping.
+        persisted_id: Existing event ID when validating persisted history.
 
     Returns:
         Machine-readable blockers; an empty list means admissible.
@@ -546,26 +540,30 @@ def review_result_blockers(
     if not isinstance(findings, list):
         blockers.append({"reason": "findings_must_be_list"})
         findings = []
-    if review.get("status") in {"failed", "blocked"} and not findings:
-        blockers.append({"reason": "failed_review_requires_findings"})
+    unresolved = 0
     for finding in findings:
         if not isinstance(finding, Mapping):
             blockers.append({"reason": "finding_must_be_mapping"})
             continue
         kind = finding.get("kind")
-        if kind is not None and kind not in _FINDING_KINDS:
-            blockers.append({"reason": "invalid_finding_kind", "kind": kind})
-        if kind is None and not isinstance(finding.get("code"), str):
-            blockers.append({"reason": "finding_kind_required"})
+        code = finding.get("code")
+        if (kind is None) == (code is None):
+            blockers.append({"reason": "finding_kind_or_code_required"})
+            continue
+        finding_name = kind if kind is not None else code
+        if not isinstance(finding_name, str) or finding_name not in _FINDING_ROLE_KINDS.get(str(role), set()):
+            blockers.append({"reason": "finding_role_mismatch", "finding": finding_name})
         disposition = finding.get("disposition")
-        if disposition is not None and disposition not in {"open", "fixed", "rechecked"}:
+        if disposition is not None and (not isinstance(disposition, str) or disposition not in {"open"} | _TERMINAL_DISPOSITIONS):
             blockers.append({"reason": "invalid_finding_disposition"})
-        if review.get("status") == "passed" and (
-            disposition not in {"fixed", "rechecked"} or finding.get("severity") in {"blocking", "critical"}
-        ):
+        if review.get("status") == "passed":
             blockers.append({"reason": "findings_inconsistent_with_passed_status"})
-        if review.get("status") in {"failed", "blocked"} and kind is not None and disposition != "open":
+        elif disposition not in _TERMINAL_DISPOSITIONS:
+            unresolved += 1
+        elif review.get("status") in {"failed", "blocked"}:
             blockers.append({"reason": "findings_inconsistent_with_failed_status"})
+    if review.get("status") in {"failed", "blocked"} and not unresolved:
+        blockers.append({"reason": "failed_review_requires_unresolved_findings"})
     state = _state()
     target = (state.load_slides(project_root) if subject_type == "slide" else state.load_visual_modules(project_root)).get(subject_id)
     if target is None:
@@ -574,7 +572,7 @@ def review_result_blockers(
         owner_ids = {str(target.get("created_by"))}
         for record in load_events(project_root, "review_result"):
             if record.get("subject_type") == subject_type and record.get("subject_id") == subject_id:
-                if record.get("id") != review.get("id") and record.get("reviewer_role") == role and record.get("round", 1) == round_number:
+                if record.get("id") != persisted_id and record.get("reviewer_role") == role and record.get("round", 1) == round_number:
                     blockers.append({"reason": "duplicate_review_role_round"})
         for assignment in state.load_assignments(project_root).values():
             if assignment.get("module_id" if subject_type == "module" else "slide_id") == subject_id:
@@ -607,7 +605,7 @@ def assert_slide_passable(project_root: Path, slide_id: str) -> dict[str, Any]:
     blockers: list[dict[str, Any]] = []
     raw_reviews = load_review_results(project_root, {slide_id})
     for review in raw_reviews:
-        blockers.extend(review_result_blockers(project_root, "slide", slide_id, review))
+        blockers.extend(review_result_blockers(project_root, "slide", slide_id, review, str(review.get("id"))))
     reviews = effective_review_results(raw_reviews)
     by_role = {review.get("reviewer_role"): review for review in reviews}
     for role in sorted(_REVIEW_ROLES):
@@ -634,7 +632,7 @@ def assert_module_passable(project_root: Path, module_id: str) -> dict[str, Any]
     blockers: list[dict[str, Any]] = []
     raw_reviews = load_review_results(project_root, {module_id})
     for review in raw_reviews:
-        blockers.extend(review_result_blockers(project_root, "module", module_id, review))
+        blockers.extend(review_result_blockers(project_root, "module", module_id, review, str(review.get("id"))))
     reviews = effective_review_results(raw_reviews)
     roles = {review.get("reviewer_role") for review in reviews if review.get("status") == "passed"}
     blockers.extend({"reason": role} for role in sorted(_REVIEW_ROLES - roles))

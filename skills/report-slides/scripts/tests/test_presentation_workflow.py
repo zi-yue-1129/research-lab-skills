@@ -461,7 +461,7 @@ def test_failed_production_review_links_revision_and_targeted_revision_supersede
     revision = project / "revision.yaml"
     revision.write_text(yaml.safe_dump({
         "subject_type": "slide", "subject_id": slide["id"], "requested_by": "reviewer",
-        "instructions": "Fix overlap", "revision_kind": "revise_slide",
+        "instructions": "Fix overlap", "revision_kind": "slide_retry",
     }), encoding="utf-8")
     result = request_targeted_revision(project, revision)
     assert result["replacement"]["supersedes_slide_id"] == slide["id"]
