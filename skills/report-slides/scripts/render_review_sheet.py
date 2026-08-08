@@ -1,6 +1,7 @@
 """Compose labeled raster previews into a visual review sheet."""
 
 import argparse
+import hashlib
 import json
 import math
 import sys
@@ -17,6 +18,43 @@ GAP: int = 8
 HEADER_HEIGHT: int = 28
 BACKGROUND: Tuple[int, int, int] = (245, 247, 250)
 SUPPORTED_EXTENSIONS = frozenset({".jpeg", ".jpg", ".png"})
+
+
+def contact_sheet_source_digest(input_paths: Sequence[Path]) -> str:
+    """Return a canonical digest for an ordered rendered-image set.
+
+    Args:
+        input_paths: Ordered PNG or JPEG paths that will be composed.
+
+    Returns:
+        SHA-256 over the ordered project-facing path strings and file digests.
+
+    Raises:
+        ValueError: If the input sequence is empty, duplicated, or contains an
+            unsupported extension.
+        FileNotFoundError: If a declared source image is absent.
+    """
+    paths = [Path(input_path) for input_path in input_paths]
+    if not paths:
+        raise ValueError("at least one input image is required")
+    if len(set(paths)) != len(paths):
+        raise ValueError("input image paths must be unique")
+    labels: list[str] = []
+    digests: list[str] = []
+    for path in paths:
+        if not path.is_file():
+            raise FileNotFoundError(f"input image not found: {path}")
+        if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+            raise ValueError(f"unsupported input extension for {path}: expected PNG or JPEG")
+        labels.append(path.as_posix())
+        digests.append(hashlib.sha256(path.read_bytes()).hexdigest())
+    canonical = json.dumps(
+        {"paths": labels, "digests": digests},
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
 
 
 def compose_review_sheet(
@@ -54,6 +92,10 @@ def compose_review_sheet(
         raise ValueError("cell_width must be positive")
     if cell_height <= 0:
         raise ValueError("cell_height must be positive")
+    if len(set(paths)) != len(paths):
+        raise ValueError("input image paths must be unique")
+    if Path(output_path) in paths:
+        raise ValueError("output path must not overwrite an input image")
 
     for path in paths:
         if not path.is_file():

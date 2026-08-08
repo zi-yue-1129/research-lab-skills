@@ -6,8 +6,10 @@ import yaml
 import pytest
 from pathlib import Path
 
-SCRIPT = Path(__file__).resolve().parent.parent / "presentation_state.py"
 from presentation_state import record_review
+
+
+SCRIPT = Path(__file__).resolve().parent.parent / "presentation_state.py"
 
 
 def _make_project(tmp_path: Path) -> Path:
@@ -36,6 +38,14 @@ def test_create_deck_returns_new_record(tmp_path: Path) -> None:
     assert data["status"] == "planning"
     assert data["plan_version"] == 0
     assert data["created_by"] == "research_narrative_planner"
+
+
+def test_yes_draft_flag_is_exposed_by_state_cli(tmp_path: Path) -> None:
+    """Expose draft approval's explicit non-interactive mode separately."""
+    result = _run(tmp_path, "--help")
+
+    assert result.returncode == 0
+    assert "--yes-draft" in result.stdout
 
 
 def test_create_deck_without_title_errors(tmp_path: Path) -> None:

@@ -26,6 +26,8 @@ from presentation_workflow import (
     register_plan,
     request_targeted_revision,
 )
+from render_plan_preview import _canonical_source_digest
+from render_review_sheet import compose_review_sheet
 
 
 def test_workflow_actions_are_not_available_before_implementation() -> None:
@@ -102,6 +104,52 @@ def _approved_project(tmp_path: Path) -> tuple[Path, str, dict]:
     return project, deck["id"], plan
 
 
+def _write_draft_preview(
+    project: Path,
+    deck_id: str,
+    slide_path: Path,
+    contact_path: Path,
+) -> Path:
+    """Write a strict draft-preview contract bound to rendered PNG evidence."""
+    plan_path = project / "decks" / deck_id / "plans" / "plan-v0001.yaml"
+    plan = yaml.safe_load(plan_path.read_text(encoding="utf-8"))
+    slide_relative = slide_path.relative_to(project).as_posix()
+    contact_relative = contact_path.relative_to(project).as_posix()
+    compose_review_sheet([slide_path], contact_path, columns=1, cell_width=40, cell_height=20)
+    slide_digest = hashlib.sha256(slide_path.read_bytes()).hexdigest()
+    contact_digest = hashlib.sha256(contact_path.read_bytes()).hexdigest()
+    document = {
+        "schema_version": 1,
+        "deck_id": deck_id,
+        "plan_version": plan["plan_version"],
+        "plan_sha256": contract_sha256(plan),
+        "rendered_slide_paths": [{"slide_id": "slide-01", "path": slide_relative}],
+        "contact_sheet_path": contact_relative,
+        "slides": [{
+            "slide_id": "slide-01",
+            "title": plan["slides"][0]["title"],
+            "key_takeaway": plan["slides"][0]["key_takeaway"],
+        }],
+        "artifact_digests": {slide_relative: slide_digest, contact_relative: contact_digest},
+        "artifact_bindings": {
+            slide_relative: {
+                "kind": "rendered_slide", "deck_id": deck_id, "slide_id": "slide-01",
+                "plan_version": plan["plan_version"], "plan_sha256": contract_sha256(plan),
+                "producer_id": "renderer",
+            },
+            contact_relative: {
+                "kind": "contact_sheet", "deck_id": deck_id,
+                "plan_version": plan["plan_version"], "plan_sha256": contract_sha256(plan),
+                "producer_id": "renderer", "source_paths": [slide_relative],
+                "source_sha256": _canonical_source_digest([slide_relative], [slide_digest]),
+            },
+        },
+    }
+    preview = project / "preview.yaml"
+    preview.write_text(yaml.safe_dump(document), encoding="utf-8")
+    return preview
+
+
 def test_approval_copies_plan_and_persists_digest_bound_state(tmp_path: Path) -> None:
     """Approval records the exact version and immutable destination copy."""
     project, deck_id, plan = _approved_project(tmp_path)
@@ -121,8 +169,9 @@ def test_draft_and_completion_actions_require_persisted_current_evidence(tmp_pat
     slide_path = project / "renders" / "slide-01.png"
     contact_path = project / "renders" / "contact.png"
     slide_path.parent.mkdir(parents=True, exist_ok=True)
-    slide_path.write_bytes(b"png")
-    contact_path.write_bytes(b"png")
+    from PIL import Image
+    Image.new("RGB", (20, 20), (1, 2, 3)).save(slide_path)
+    Image.new("RGB", (20, 20), (1, 2, 3)).save(contact_path)
     state_path = project / ".research/presentations/state/decks.yaml"
     state_doc = yaml.safe_load(state_path.read_text(encoding="utf-8"))
     state_doc["decks"][deck_id]["status"] = "draft_review"
@@ -136,13 +185,12 @@ def test_draft_and_completion_actions_require_persisted_current_evidence(tmp_pat
     slide_state.write_text(yaml.safe_dump(slide_doc), encoding="utf-8")
     record_review(project, "slide", slide["id"], "scientific-reviewer", "scientific", "passed")
     record_review(project, "slide", slide["id"], "visual-reviewer", "visual_quality", "passed")
-    preview = project / "preview.yaml"
-    preview.write_text(yaml.safe_dump({
-        "deck_id": deck_id,
-        "rendered_slide_paths": [{"slide_id": "slide-01", "path": "renders/slide-01.png"}],
-        "contact_sheet_path": "renders/contact.png",
-        "slides": [{"slide_id": "slide-01", "title": "Evidence changes decisions", "key_takeaway": "Evidence changes decisions."}],
-    }), encoding="utf-8")
+    preview = _write_draft_preview(
+        project,
+        deck_id,
+        project / "renders/slide-01.png",
+        project / "renders/contact.png",
+    )
     registered = register_draft_preview(project, preview)
     decision = project / "decision.yaml"
     decision.write_text(yaml.safe_dump({
@@ -264,11 +312,12 @@ def _complete_fixture(tmp_path: Path) -> tuple[Path, str, Path, Path, str, dict]
     for path in (project / "renders/slide-1.png", project / "renders/contact.png"):
         path.parent.mkdir(parents=True, exist_ok=True)
         Image.new("RGB", (20, 20), (1, 2, 3)).save(path)
-    preview = project / "preview.yaml"
-    preview.write_text(yaml.safe_dump({
-        "deck_id": deck_id, "rendered_slide_paths": [{"slide_id": "slide-01", "path": "renders/slide-1.png"}],
-        "contact_sheet_path": "renders/contact.png", "slides": [{"slide_id": "slide-01", "title": "Evidence changes decisions", "key_takeaway": "Evidence changes decisions."}],
-    }), encoding="utf-8")
+    preview = _write_draft_preview(
+        project,
+        deck_id,
+        project / "renders/slide-1.png",
+        project / "renders/contact.png",
+    )
     registered = register_draft_preview(project, preview)
     decision = project / "decision.yaml"
     decision.write_text(yaml.safe_dump({
@@ -418,11 +467,12 @@ def test_new_preview_clears_old_approval_and_stale_decision_cannot_apply(tmp_pat
     for path in (project / "renders/slide.png", project / "renders/contact.png"):
         path.parent.mkdir(parents=True, exist_ok=True)
         Image.new("RGB", (10, 10), (1, 2, 3)).save(path)
-    preview = project / "preview.yaml"
-    preview.write_text(yaml.safe_dump({
-        "deck_id": deck_id, "rendered_slide_paths": [{"slide_id": "slide-01", "path": "renders/slide.png"}],
-        "contact_sheet_path": "renders/contact.png", "slides": [{"slide_id": "slide-01", "title": "Evidence changes decisions", "key_takeaway": "Evidence changes decisions."}],
-    }), encoding="utf-8")
+    preview = _write_draft_preview(
+        project,
+        deck_id,
+        project / "renders/slide.png",
+        project / "renders/contact.png",
+    )
     first = register_draft_preview(project, preview)
     first_decision = project / "first-decision.yaml"
     first_decision.write_text(yaml.safe_dump({

@@ -42,13 +42,13 @@ from presentation_gates import (
     ProductionGateError,
     ReviewGateError,
     assert_deck_completable,
-    assert_draft_reviewable,
     assert_plan_approvable,
     assert_plan_reviewable,
     assert_production_allowed,
     review_result_blockers,
 )
 from validate_deck_plan import validate_deck_plan
+from render_plan_preview import validate_draft_preview
 
 
 WORKFLOW_LOCK_RELATIVE_PATH = Path(".research/presentations/state/workflow.lock")
@@ -803,26 +803,54 @@ def request_targeted_revision(project_root: Path, revision_path: Path) -> dict[s
 
 
 def register_draft_preview(project_root: Path, preview_path: Path) -> dict[str, Any]:
-    """Validate and persist a complete-deck Draft Preview record."""
+    """Validate and atomically persist a complete-deck Draft Preview record.
+
+    Args:
+        project_root: Project root containing presentation state.
+        preview_path: Draft Preview YAML/JSON contract path.
+
+    Returns:
+        The updated deck, immutable preview event, and current slides.
+
+    Raises:
+        DraftGateError: If any current rendered-slide or contact-sheet
+            evidence is missing, stale, extra, or tampered.
+    """
     with _workflow_lock(project_root):
-        preview = _action_document(preview_path, DraftGateError, "draft_reviewable", "<unknown>")
-        deck_id = preview.get("deck_id")
-        if not isinstance(deck_id, str):
+        source = _action_document(preview_path, DraftGateError, "draft_reviewable", "<unknown>")
+        deck_id = source.get("deck_id")
+        if not isinstance(deck_id, str) or not deck_id:
             raise DraftGateError("draft_reviewable", "<unknown>", [{"reason": "deck_id_required"}])
-        checked = assert_draft_reviewable(project_root, deck_id, preview)
-        event = dict(preview)
-        event.update({
-            "event": "draft_preview",
-            "id": _id("draft"),
-            "preview_sha256": contract_sha256(preview),
-            "ts": _now(),
-        })
-        append_event(project_root, event)
-        deck = _save_deck(project_root, deck_id, {"draft_preview_id": event["id"], "draft_approval_id": None})
-        return {"deck": deck, "preview": event, "slides": checked["slides"]}
+        state = _state()
+        decks_path = project_root / state.DECKS_RELATIVE_PATH
+        event_path = events_shard_path(project_root)
+        with transaction([decks_path, event_path], project_root) as tx:
+            checked = validate_draft_preview(project_root, deck_id, source)
+            preview = checked["preview"]
+            event = dict(preview)
+            event.update({
+                "event": "draft_preview",
+                "id": _id("draft"),
+                "preview_sha256": contract_sha256(preview),
+                "ts": _now(),
+            })
+            tx.stage_append(event_path, json.dumps(event, sort_keys=True, ensure_ascii=False).encode("utf-8"))
+            decks = tx.read_yaml(decks_path, "decks")
+            deck = decks.get(deck_id)
+            if not isinstance(deck, dict):
+                raise DraftGateError("draft_reviewable", deck_id, [{"reason": "unknown_deck"}])
+            deck.update({"draft_preview_id": event["id"], "draft_approval_id": None, "updated_at": _now()})
+            tx.stage_yaml(decks_path, "decks", decks)
+            tx.commit()
+            return {"deck": deck, "preview": event, "slides": checked["slides"]}
 
 
-def approve_draft(project_root: Path, decision_path: Path) -> dict[str, Any]:
+def approve_draft(
+    project_root: Path,
+    decision_path: Path,
+    *,
+    yes_draft: bool = False,
+) -> dict[str, Any]:
     """Persist an explicit Draft Approval and advance to final validation.
 
     Args:
@@ -838,36 +866,61 @@ def approve_draft(project_root: Path, decision_path: Path) -> dict[str, Any]:
     with _workflow_lock(project_root):
         decision = _action_document(decision_path, DraftGateError, "draft_approvable", "<unknown>")
         deck_id = decision.get("deck_id")
-        if not isinstance(deck_id, str):
+        if not isinstance(deck_id, str) or not deck_id:
             raise DraftGateError("draft_approvable", "<unknown>", [{"reason": "deck_id_required"}])
-        deck = _deck(project_root, deck_id)
-        previews = [event for event in load_events(project_root, "draft_preview") if event.get("deck_id") == deck_id]
-        preview_id = decision.get("preview_id")
-        if not isinstance(preview_id, str) or not preview_id:
-            raise DraftGateError("draft_approvable", deck_id, [{"reason": "preview_id_required"}])
-        preview = next((event for event in previews if event.get("id") == preview_id), None)
-        if preview is None:
-            raise DraftGateError("draft_approvable", deck_id, [{"reason": "missing_draft_preview"}])
-        assert_draft_reviewable(project_root, deck_id, preview)
-        blockers: list[dict[str, Any]] = []
-        if decision.get("preview_id") != deck.get("draft_preview_id"):
-            blockers.append({"reason": "preview_id_not_current"})
-        if decision.get("preview_sha256") != preview.get("preview_sha256"):
-            blockers.append({"reason": "preview_digest_mismatch"})
-        if decision.get("decision") != "approve":
-            blockers.append({"reason": "decision must be approve"})
-        if not isinstance(decision.get("approved_by"), str) or not decision["approved_by"].strip():
-            blockers.append({"reason": "approved_by_required"})
-        if blockers:
-            raise DraftGateError("draft_approvable", deck_id, blockers)
-        event = dict(decision)
-        event.update({
-            "event": "draft_decision", "id": _id("draft-approval"),
-            "preview_id": preview_id, "preview_sha256": preview["preview_sha256"], "ts": _now(),
-        })
-        append_event(project_root, event)
-        deck = _save_deck(project_root, deck_id, {"draft_approval_id": event["id"], "status": "validating"})
-        return {"deck": deck, "decision": event, "preview": preview}
+        state = _state()
+        decks_path = project_root / state.DECKS_RELATIVE_PATH
+        event_path = events_shard_path(project_root)
+        with transaction([decks_path, event_path], project_root) as tx:
+            decks = tx.read_yaml(decks_path, "decks")
+            deck = decks.get(deck_id)
+            if not isinstance(deck, dict):
+                raise DraftGateError("draft_approvable", deck_id, [{"reason": "unknown_deck"}])
+            preview_id = decision.get("preview_id")
+            if not isinstance(preview_id, str) or not preview_id:
+                raise DraftGateError("draft_approvable", deck_id, [{"reason": "preview_id_required"}])
+            previews = [event for event in load_events(project_root, "draft_preview") if event.get("deck_id") == deck_id]
+            preview = next((event for event in previews if event.get("id") == preview_id), None)
+            if preview is None:
+                raise DraftGateError("draft_approvable", deck_id, [{"reason": "missing_draft_preview"}])
+            checked = validate_draft_preview(project_root, deck_id, preview)
+            blockers: list[dict[str, Any]] = []
+            if decision.get("preview_id") != deck.get("draft_preview_id"):
+                blockers.append({"reason": "preview_id_not_current"})
+            if decision.get("preview_sha256") != preview.get("preview_sha256"):
+                blockers.append({"reason": "preview_digest_mismatch"})
+            if decision.get("decision") != "approve":
+                blockers.append({"reason": "decision must be approve"})
+            mode = "explicit_noninteractive" if yes_draft else decision.get("approval_mode", "interactive")
+            if mode not in {"interactive", "explicit_noninteractive"}:
+                blockers.append({"reason": "invalid approval_mode"})
+            approved_by = decision.get("approved_by")
+            if mode == "interactive":
+                if not isinstance(approved_by, str) or not approved_by.strip():
+                    blockers.append({"reason": "approved_by_required"})
+            elif not (yes_draft or decision.get("yes_draft") is True):
+                blockers.append({"reason": "explicit --yes-draft is required"})
+            if blockers:
+                summary = "; ".join(str(item.get("reason", item)) for item in blockers)
+                raise DraftGateError(
+                    "draft_approvable",
+                    deck_id,
+                    blockers,
+                    f"draft_approvable blocked for deck {deck_id}: {summary}",
+                )
+            event = dict(decision)
+            event.update({
+                "event": "draft_decision", "id": _id("draft-approval"),
+                "preview_id": preview_id, "preview_sha256": preview["preview_sha256"],
+                "approval_mode": mode,
+                "approved_by": approved_by if isinstance(approved_by, str) and approved_by.strip() else "auto (--yes-draft)",
+                "ts": _now(),
+            })
+            tx.stage_append(event_path, json.dumps(event, sort_keys=True, ensure_ascii=False).encode("utf-8"))
+            deck.update({"draft_approval_id": event["id"], "status": "validating", "updated_at": _now()})
+            tx.stage_yaml(decks_path, "decks", decks)
+            tx.commit()
+            return {"deck": deck, "decision": event, "preview": checked["preview"]}
 
 
 def complete_deck(project_root: Path, deck_id: str, completion_record_path: Path) -> dict[str, Any]:

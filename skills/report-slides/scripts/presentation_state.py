@@ -845,6 +845,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--revision-path", "--revision", dest="revision_path", type=Path, metavar="PATH")
     parser.add_argument("--preview-path", "--preview", dest="preview_path", type=Path, metavar="PATH")
     parser.add_argument("--decision-path", "--decision", dest="decision_path", type=Path, metavar="PATH")
+    parser.add_argument("--yes-draft", action="store_true", help="Approve the registered draft non-interactively.")
     parser.add_argument("--completion-record-path", "--completion", dest="completion_record_path", type=Path, metavar="PATH")
     parser.add_argument("--path", "--source", dest="generic_path", type=Path, metavar="PATH")
     parser.add_argument("--json", action="store_true")
@@ -886,7 +887,7 @@ def _dispatch(args: argparse.Namespace, project_root: Path) -> Dict[str, Any]:
                     "draft_approvable", args.deck_id or "<unknown>",
                     [{"reason": "draft decision evidence document is required"}],
                 )
-            return approve_draft(project_root, args.decision_path or args.generic_path)
+            return approve_draft(project_root, args.decision_path or args.generic_path, yes_draft=args.yes_draft)
         return set_deck_status(project_root, args.deck_id, args.status)
     if args.create_slide:
         return create_slide(
@@ -968,7 +969,7 @@ def _dispatch(args: argparse.Namespace, project_root: Path) -> Dict[str, Any]:
         return register_draft_preview(project_root, args.preview_path or args.generic_path)
     if args.approve_draft:
         from presentation_workflow import approve_draft
-        return approve_draft(project_root, args.decision_path or args.generic_path)
+        return approve_draft(project_root, args.decision_path or args.generic_path, yes_draft=args.yes_draft)
     if args.complete_deck:
         from presentation_workflow import complete_deck
         return complete_deck(project_root, args.deck_id, args.completion_record_path or args.generic_path)
@@ -980,11 +981,7 @@ def main() -> None:
     try:
         project_root = find_project_root(Path.cwd())
         result = _dispatch(args, project_root)
-    except (
-        ProjectRootNotFoundError, StateParseError, DeckNotFoundError,
-        SlideNotFoundError, VisualModuleNotFoundError, ProductionNotAllowedError,
-        LockTimeoutError, ValueError,
-    ) as exc:
+    except (ProjectRootNotFoundError, StateParseError, DeckNotFoundError, SlideNotFoundError, VisualModuleNotFoundError, ProductionNotAllowedError, LockTimeoutError, ValueError) as exc:
         from presentation_workflow import translate_cli_gate_error
         exc = translate_cli_gate_error(args, exc)
         error = ({"error": type(exc).__name__, "predicate": getattr(exc, "predicate"), "deck_id": getattr(exc, "deck_id"), "blockers": getattr(exc, "blockers")} if all(hasattr(exc, field) for field in ("predicate", "deck_id", "blockers")) else {"error": type(exc).__name__, "message": str(exc)})

@@ -11,7 +11,7 @@ from PIL import Image
 import yaml
 
 from presentation_contracts import contract_sha256
-from render_review_sheet import _parse_arguments, compose_review_sheet
+from render_review_sheet import _parse_arguments, compose_review_sheet, contact_sheet_source_digest
 from test_artifact_entrypoint_gates import deck_awaiting_approval
 
 
@@ -92,6 +92,29 @@ def test_compose_review_sheet_requires_existing_inputs(
             cell_width=120,
             cell_height=68,
         )
+
+
+def test_contact_sheet_source_digest_binds_ordered_input_bytes(
+    source_images: Tuple[Path, Path],
+) -> None:
+    """Source digest changes when either bytes or ordering changes."""
+    first, second = source_images
+    forward = contact_sheet_source_digest([first, second])
+    reverse = contact_sheet_source_digest([second, first])
+    assert forward != reverse
+    first.write_bytes(b"changed")
+    assert contact_sheet_source_digest([first, second]) != forward
+
+
+def test_compose_review_sheet_rejects_duplicate_or_overwritten_inputs(
+    source_images: Tuple[Path, Path], tmp_path: Path
+) -> None:
+    """Reject ambiguous source sets before creating a contact sheet."""
+    first, _ = source_images
+    with pytest.raises(ValueError, match="unique"):
+        compose_review_sheet([first, first], tmp_path / "contact.png")
+    with pytest.raises(ValueError, match="overwrite"):
+        compose_review_sheet([first], first)
 
 
 @pytest.mark.parametrize(
