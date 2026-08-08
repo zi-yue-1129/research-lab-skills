@@ -24,6 +24,7 @@ from typing import Any, Iterator
 import yaml
 
 from presentation_contracts import contract_sha256, load_contract
+from presentation_transactions import require_transaction_recovery
 
 
 EVENTS_RELATIVE_DIR = Path(".research/presentations/events")
@@ -68,7 +69,6 @@ def _locked_file(project_root: Path, path: Path) -> Iterator[None]:
     Raises:
         LockTimeoutError: If another process holds the lock too long.
     """
-    _ensure_research_gitignore(project_root)
     path.parent.mkdir(parents=True, exist_ok=True)
     lock_path = path.with_suffix(path.suffix + ".lock")
     lock_path.touch(exist_ok=True)
@@ -87,6 +87,8 @@ def _locked_file(project_root: Path, path: Path) -> Iterator[None]:
                         f"Could not acquire lock on {lock_path} within {LOCK_TIMEOUT_SECONDS}s"
                     )
                 time.sleep(LOCK_POLL_INTERVAL_SECONDS)
+        require_transaction_recovery(project_root)
+        _ensure_research_gitignore(project_root)
         yield
     finally:
         fcntl.flock(descriptor, fcntl.LOCK_UN)

@@ -9,7 +9,13 @@ import pytest
 import yaml
 
 from presentation_contracts import contract_sha256
-from presentation_events import create_assignment_record, load_assignments, load_events, load_revision_requests
+from presentation_events import (
+    create_assignment_record,
+    load_artifacts,
+    load_assignments,
+    load_events,
+    load_revision_requests,
+)
 from presentation_state import (
     create_slide,
     create_visual_module,
@@ -346,11 +352,38 @@ def test_targeted_revision_transaction_rolls_back_each_commit_position(
         "revision_kind": "module_retry",
     })
     before = load_visual_modules(project)
+    before_slides = load_slides(project)
+    before_assignments = load_assignments(project)
+    before_artifacts = load_artifacts(project)
+    before_events = load_events(project)
+    before_requests = load_revision_requests(project)
+    state_root = project / ".research/presentations/state"
+    tracked_paths = [
+        state_root / "slides.yaml",
+        state_root / "visual_modules.yaml",
+        state_root / "assignments.yaml",
+        state_root / "revision_requests.yaml",
+    ]
+    before_files = {
+        path: (path.exists(), path.read_bytes() if path.exists() else b"", path.stat().st_mode & 0o777 if path.exists() else None)
+        for path in tracked_paths
+    }
     monkeypatch.setenv("PRESENTATION_TRANSACTION_FAIL_AT", str(commit_position))
     with pytest.raises(RuntimeError, match="transaction commit"):
         request_targeted_revision(project, revision)
     assert load_revision_requests(project) == {}
     assert load_visual_modules(project)[failed_id] == before[failed_id]
+    assert load_visual_modules(project) == before
+    assert load_slides(project) == before_slides
+    assert load_assignments(project) == before_assignments
+    assert load_artifacts(project) == before_artifacts
+    assert load_events(project) == before_events
+    assert load_revision_requests(project) == before_requests
+    for path, snapshot in before_files.items():
+        assert path.exists() == snapshot[0]
+        if snapshot[0]:
+            assert path.read_bytes() == snapshot[1]
+            assert path.stat().st_mode & 0o777 == snapshot[2]
 
 
 def test_transaction_rollback_releases_sidecar_for_waiting_writer(
@@ -385,12 +418,22 @@ def test_transaction_rollback_releases_sidecar_for_waiting_writer(
         assert allow_commit.wait(timeout=3)
 
     monkeypatch.setattr(presentation_transactions.WorkflowTransaction, "_before_commit", before_commit)
-    writer_started = threading.Event()
+    writer_lock_attempted = threading.Event()
     writer_finished = threading.Event()
+    writer_thread_id: list[int] = []
+    original_flock = presentation_state.fcntl.flock
+
+    def flock_with_writer_barrier(descriptor: int, operation: int) -> None:
+        """Observe the competing thread's actual non-blocking flock attempt."""
+        if writer_thread_id and threading.get_ident() == writer_thread_id[0] and operation & presentation_state.fcntl.LOCK_EX:
+            writer_lock_attempted.set()
+        original_flock(descriptor, operation)
+
+    monkeypatch.setattr(presentation_state.fcntl, "flock", flock_with_writer_barrier)
 
     def write_after_lock() -> None:
         """Persist an unrelated low-level state update once the sidecar is free."""
-        writer_started.set()
+        writer_thread_id.append(threading.get_ident())
         presentation_state.set_slide_status(project, slide["id"], "blocked")
         writer_finished.set()
 
@@ -409,7 +452,7 @@ def test_transaction_rollback_releases_sidecar_for_waiting_writer(
     assert locked.wait(timeout=2)
     writer = threading.Thread(target=write_after_lock)
     writer.start()
-    writer_started.wait(timeout=2)
+    assert writer_lock_attempted.wait(timeout=2)
     assert not writer_finished.is_set()
     allow_commit.set()
     action.join(timeout=3)

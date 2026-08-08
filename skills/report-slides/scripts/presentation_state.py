@@ -4,13 +4,6 @@ Independent implementation (no import from skills/agent-state/) that follows the
 replace, id-keyed maps for mutable records, append-only JSONL for immutable facts, and write-time referential-integrity checks. Bootstraps
 its own .research/presentations/.gitignore rather than touching .research/.gitignore, since agent-state may independently manage that
 file in the same project.
-    python presentation_state.py --create-deck --title "..." [--skill NAME] [--json]
-    python presentation_state.py --set-deck-status --deck-id DECK_ID \
-        --status planning|content_review|awaiting_approval|approved|producing| \
-        draft_review|revising|validating|completed|blocked [--json]
-    python presentation_state.py --set-slide-status --slide-id SLIDE_ID \
-        --status planned|ready|assigned|producing|review_required| \
-        revision_required|passed|blocked|superseded [--json]
 """
 import argparse
 import errno
@@ -24,7 +17,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterator, Optional
-from presentation_transactions import incomplete_transaction_journals
+from presentation_transactions import incomplete_transaction_journals, require_transaction_recovery
 from presentation_events import (
     LockTimeoutError,
     StateParseError,
@@ -162,7 +155,6 @@ def _locked_file(project_root: Path, path: Path) -> Iterator[None]:
         LockTimeoutError: If the lock isn't acquired within
             LOCK_TIMEOUT_SECONDS.
     """
-    _ensure_research_gitignore(project_root)
     path.parent.mkdir(parents=True, exist_ok=True)
     lock_path = path.with_suffix(path.suffix + ".lock")
     lock_path.touch(exist_ok=True)
@@ -181,6 +173,8 @@ def _locked_file(project_root: Path, path: Path) -> Iterator[None]:
                         f"Could not acquire lock on {lock_path} within {LOCK_TIMEOUT_SECONDS}s"
                     )
                 time.sleep(LOCK_POLL_INTERVAL_SECONDS)
+        require_transaction_recovery(project_root)
+        _ensure_research_gitignore(project_root)
         yield
     finally:
         fcntl.flock(fd, fcntl.LOCK_UN)
@@ -597,8 +591,6 @@ def assert_production_allowed(project_root: Path, deck_id: str) -> Dict[str, Any
     return record
 def query(project_root: Path, deck_id: str) -> Dict[str, Any]:
     """Return the complete durable workflow snapshot for one deck.
-    The query is read-only and deterministic: it never replays or appends
-    events, so invoking it from a fresh process cannot create duplicates.
     Args:
         project_root: The project's root directory.
         deck_id: The Deck to look up.
@@ -609,6 +601,14 @@ def query(project_root: Path, deck_id: str) -> Dict[str, Any]:
         DeckNotFoundError: If ``deck_id`` does not exist.
         StateParseError: If a state YAML file or event shard is malformed.
     """
+    journals = incomplete_transaction_journals(project_root)
+    if journals:
+        blocker = {"reason": "incomplete_transaction", "journals": [str(path) for path in journals]}
+        return {
+            "deck": None, "plans": [], "approval": None, "slides": [], "visual_modules": [],
+            "assignments": [], "artifacts": [], "review_results": [], "revision_requests": [],
+            "draft_preview": None, "draft_decision": None, "blockers": [blocker], "next_actions": [],
+        }
     decks = load_decks(project_root)
     if deck_id not in decks:
         raise DeckNotFoundError(f"Unknown deck_id: {deck_id}")
@@ -641,9 +641,6 @@ def query(project_root: Path, deck_id: str) -> Dict[str, Any]:
     approval = _approval_snapshot(deck)
     draft_preview, draft_decision = _draft_snapshots(project_root, deck_id, deck)
     blockers = workflow_blockers(deck, slides, modules, assignments, reviews, draft_preview, draft_decision)
-    journals = incomplete_transaction_journals(project_root)
-    if journals:
-        blockers.append({"reason": "incomplete_transaction", "journals": [str(path) for path in journals]})
     next_action_list = next_actions(deck, plans, slides, modules, reviews, approval, draft_preview)
     return {
         "deck": deck,

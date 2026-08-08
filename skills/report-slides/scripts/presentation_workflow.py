@@ -132,6 +132,10 @@ def _workflow_lock(project_root: Path) -> Iterator[None]:
 
         with WorkflowTransaction([], project_root):
             pass
+        gitignore = project_root / ".research/presentations/.gitignore"
+        if not gitignore.exists():
+            gitignore.parent.mkdir(parents=True, exist_ok=True)
+            gitignore.write_text("state/*.lock\nstate/*.tmp\nevents/\ncache/\n", encoding="utf-8")
         yield
     finally:
         fcntl.flock(descriptor, fcntl.LOCK_UN)
@@ -361,7 +365,7 @@ def _transaction_paths(project_root: Path, action: Mapping[str, Any], review: bo
     """Select only stores an action can mutate before acquiring sidecar locks."""
     state = _state()
     state_dir = project_root / ".research/presentations/state"
-    paths = [project_root / ".research/presentations/.gitignore"]
+    paths: list[Path] = []
     subject_type = action.get("subject_type")
     if review:
         paths.extend((state_dir / "decks.yaml", state_dir / "plans.yaml", state_dir / "assignments.yaml", state_dir / "artifacts.yaml"))
@@ -426,8 +430,7 @@ def _review_event(
 
 def _stage_gitignore(transaction_handle: Any, path: Path) -> None:
     """Stage the presentation ignore file only when this action creates it."""
-    if not path.is_file():
-        transaction_handle.stage_bytes(path, b"state/*.lock\nstate/*.tmp\nevents/\ncache/\n")
+    del transaction_handle, path
 
 
 def approve_deck(project_root: Path, approval_path: Path) -> dict[str, Any]:

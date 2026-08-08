@@ -1,13 +1,23 @@
-"""Deterministic lock ordering, journal recovery, and umask tests."""
+"""Deterministic lock ordering, journal recovery, and enforcement tests."""
 
 from __future__ import annotations
 
+import base64
+import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
-from presentation_transactions import WorkflowTransaction
+from presentation_events import append_event, events_shard_path
+from presentation_state import create_deck, create_slide, create_visual_module, load_slides, set_module_status
+from presentation_transactions import (
+    SimulatedProcessDeath,
+    TransactionError,
+    TransactionRecoveryRequiredError,
+    WorkflowTransaction,
+)
 
 
 def _transaction_paths(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
@@ -30,7 +40,7 @@ def test_transaction_order_matches_nested_writer_order(tmp_path: Path) -> None:
 
 def test_transaction_new_file_mode_honors_umask(tmp_path: Path) -> None:
     """A newly committed file follows open(0o666) and the process umask."""
-    target = tmp_path / "state" / "new.yaml"
+    target = tmp_path / ".research/presentations/state/visual_modules.yaml"
     previous = os.umask(0o027)
     try:
         with WorkflowTransaction([target]) as transaction:
@@ -43,8 +53,8 @@ def test_transaction_new_file_mode_honors_umask(tmp_path: Path) -> None:
 
 def test_transaction_journal_recovers_after_process_death(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A partial replace leaves a journal that the next transaction restores."""
-    first = tmp_path / "state" / "first.yaml"
-    second = tmp_path / "state" / "second.yaml"
+    first = tmp_path / ".research/presentations/state/visual_modules.yaml"
+    second = tmp_path / ".research/presentations/state/assignments.yaml"
     first.parent.mkdir(parents=True)
     first.write_bytes(b"first-before")
     second.write_bytes(b"second-before")
@@ -54,10 +64,187 @@ def test_transaction_journal_recovers_after_process_death(tmp_path: Path, monkey
             transaction.stage_bytes(first, b"first-after")
             transaction.stage_bytes(second, b"second-after")
             transaction.commit()
-    assert list((tmp_path / ".research/presentations/transactions").glob("*.json"))
+    journals = list((tmp_path / ".research/presentations/transactions").glob("*.json"))
+    assert journals
+    journal = json.loads(journals[0].read_text(encoding="utf-8"))
+    assert [entry["path"] for entry in journal["paths"]] == [
+        ".research/presentations/state/visual_modules.yaml",
+        ".research/presentations/state/assignments.yaml",
+    ]
     monkeypatch.delenv("PRESENTATION_TRANSACTION_CRASH_AT")
     with WorkflowTransaction([first, second]):
         pass
     assert first.read_bytes() == b"first-before"
     assert second.read_bytes() == b"second-before"
     assert not list((tmp_path / ".research/presentations/transactions").glob("*.json"))
+
+
+def _write_journal(project: Path, entries: list[dict[str, object]]) -> Path:
+    """Write a crafted durable journal for recovery validation tests."""
+    journal_dir = project / ".research/presentations/transactions"
+    journal_dir.mkdir(parents=True, exist_ok=True)
+    journal = journal_dir / "crafted.json"
+    journal.write_text(
+        json.dumps({"transaction_id": "crafted", "paths": entries}),
+        encoding="utf-8",
+    )
+    return journal
+
+
+def _journal_entry(path: str, *, exists: bool = False, mode: int = 0o644) -> dict[str, object]:
+    """Build one minimally encoded journal entry."""
+    return {
+        "path": path,
+        "exists": exists,
+        "mode": mode,
+        "content": base64.b64encode(b"before").decode("ascii"),
+    }
+
+
+@pytest.mark.parametrize(
+    "journal_path",
+    [
+        "../outside.txt",
+        "/tmp/outside.txt",
+        "./.research/presentations/state/slides.yaml",
+        ".research//presentations/state/slides.yaml",
+        ".research/presentations/state/../slides.yaml",
+        ".research/presentations/state/workflow.lock",
+        ".research/presentations/transactions/evil.json",
+        ".research/presentations/state/not-a-store.yaml",
+        ".research/presentations/events/2026-08-08.jsonl.tmp",
+        ".research/presentations/events/not-a-day.jsonl",
+        ".research/presentations/state",
+    ],
+)
+def test_crafted_journal_paths_fail_closed_without_outside_mutation(
+    tmp_path: Path, journal_path: str
+) -> None:
+    """Malformed or unallowlisted journal paths cannot escape the project."""
+    outside = tmp_path / "outside.txt"
+    outside.write_bytes(b"sentinel")
+    _write_journal(tmp_path, [_journal_entry(journal_path)])
+
+    with pytest.raises(TransactionError, match="journal|path|allow|relative|normalized"):
+        with WorkflowTransaction([], tmp_path):
+            pass
+
+    assert outside.read_bytes() == b"sentinel"
+    assert not (outside.parent / "outside.txt.lock").exists()
+
+
+@pytest.mark.parametrize("mode", [-1, 0o1000, 0o7777, True])
+def test_crafted_journal_rejects_non_permission_modes(tmp_path: Path, mode: int) -> None:
+    """Recovery accepts only ordinary permission-bit modes."""
+    _write_journal(
+        tmp_path,
+        [_journal_entry(".research/presentations/state/slides.yaml", mode=mode)],
+    )
+
+    with pytest.raises(TransactionError, match="mode|metadata|journal"):
+        with WorkflowTransaction([], tmp_path):
+            pass
+
+
+def test_crafted_journal_rejects_symlink_escape_without_touching_target(tmp_path: Path) -> None:
+    """An allowlisted name cannot resolve through a symlink outside the project."""
+    outside = tmp_path.parent / f"{tmp_path.name}-outside.txt"
+    outside.write_bytes(b"sentinel")
+    state = tmp_path / ".research/presentations/state"
+    state.mkdir(parents=True)
+    target = state / "slides.yaml"
+    target.symlink_to(outside)
+    _write_journal(tmp_path, [_journal_entry(".research/presentations/state/slides.yaml")])
+
+    with pytest.raises(TransactionError, match="symlink|project|path|journal"):
+        with WorkflowTransaction([], tmp_path):
+            pass
+
+    assert outside.read_bytes() == b"sentinel"
+    assert target.is_symlink()
+
+
+def test_low_level_state_and_event_writes_require_journal_recovery(tmp_path: Path) -> None:
+    """Pending durable journals block every low-level state/event mutation."""
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / ".git").mkdir()
+    deck = create_deck(project, "Guard")
+    slide = create_slide(project, deck["id"], "slide-01", "Guard")
+    module = create_visual_module(project, slide["id"], "module", "architecture")
+    state_path = project / ".research/presentations/state/visual_modules.yaml"
+    state_before = state_path.read_bytes()
+    event_path = events_shard_path(project, datetime.now(timezone.utc))
+    _write_journal(
+        project,
+        [
+            _journal_entry(
+                ".research/presentations/state/visual_modules.yaml",
+                exists=True,
+                mode=state_path.stat().st_mode & 0o777,
+            ),
+            _journal_entry(
+                ".research/presentations/events/" + event_path.name,
+                exists=False,
+            ),
+        ],
+    )
+
+    with pytest.raises(TransactionRecoveryRequiredError, match="recovery required"):
+        set_module_status(project, module["id"], "ready")
+    with pytest.raises(TransactionRecoveryRequiredError, match="recovery required"):
+        append_event(project, {"event": "guarded", "id": "guarded"})
+
+    assert state_path.read_bytes() == state_before
+    assert not event_path.exists()
+
+
+def test_crash_split_state_blocks_writes_then_workflow_recovers_exact_preimages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A first-replacement crash leaves a split state until workflow recovery."""
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / ".git").mkdir()
+    deck = create_deck(project, "Crash")
+    slide = create_slide(project, deck["id"], "slide-01", "Crash")
+    module = create_visual_module(project, slide["id"], "module", "architecture")
+    first = project / ".research/presentations/state/visual_modules.yaml"
+    second = events_shard_path(project, datetime.now(timezone.utc))
+    first_before = first.read_bytes()
+    first_mode = first.stat().st_mode & 0o777
+    second_mode = 0o640
+    monkeypatch.setenv("PRESENTATION_TRANSACTION_CRASH_AT", "1")
+    with pytest.raises(SimulatedProcessDeath, match="simulated process death"):
+        with WorkflowTransaction([first, second], project) as transaction:
+            transaction.stage_bytes(first, b"first-after")
+            transaction.stage_bytes(second, b"second-after", mode=second_mode)
+            transaction.commit()
+    monkeypatch.delenv("PRESENTATION_TRANSACTION_CRASH_AT")
+
+    assert first.read_bytes() == b"first-after"
+    assert not second.exists()  # The first visible replacement split the transaction.
+    assert list((project / ".research/presentations/transactions").glob("*.json"))
+    assert load_slides(project)[slide["id"]]["status"] == "planned"
+    from presentation_state import query
+
+    assert any(blocker["reason"] == "incomplete_transaction" for blocker in query(project, deck["id"])["blockers"])
+
+    with pytest.raises(TransactionRecoveryRequiredError, match="recovery required"):
+        set_module_status(project, module["id"], "ready")
+    with pytest.raises(RuntimeError, match="recovery"):
+        from presentation_gates import assert_production_allowed
+
+        assert_production_allowed(project, deck["id"])
+
+    from presentation_workflow import _workflow_lock
+
+    with _workflow_lock(project):
+        pass
+    assert first.read_bytes() == first_before
+    assert not second.exists()
+    assert (first.stat().st_mode & 0o777) == first_mode
+    assert not list((project / ".research/presentations/transactions").glob("*.json"))
+
+    set_module_status(project, module["id"], "ready")
+    append_event(project, {"event": "recovered", "id": "recovered"})

@@ -15,6 +15,7 @@ import base64
 import fcntl
 import json
 import os
+import re
 import time
 import uuid
 from contextlib import contextmanager
@@ -27,6 +28,10 @@ import yaml
 
 class TransactionError(RuntimeError):
     """Raised when a multi-file commit or rollback cannot complete safely."""
+
+
+class TransactionRecoveryRequiredError(TransactionError):
+    """Raised when a low-level writer runs before a durable journal is recovered."""
 
 
 class SimulatedProcessDeath(BaseException):
@@ -60,6 +65,8 @@ def _acquire_sidecar(path: Path) -> int:
     """Acquire one exclusive sidecar lock and return its descriptor."""
     path.parent.mkdir(parents=True, exist_ok=True)
     lock_path = _sidecar(path)
+    if lock_path.is_symlink() or (lock_path.exists() and not lock_path.is_file()):
+        raise TransactionError(f"sidecar lock must be a regular file: {lock_path}")
     lock_path.touch(exist_ok=True)
     descriptor = os.open(str(lock_path), os.O_RDWR)
     timeout = int(os.environ.get("PRESENTATION_STATE_LOCK_TIMEOUT_SECONDS", "30"))
@@ -128,12 +135,88 @@ def _journal_dir(project_root: Path) -> Path:
     return project_root / ".research/presentations/transactions"
 
 
+_ALLOWED_STATE_NAMES = frozenset({
+    "decks.yaml", "plans.yaml", "slides.yaml", "visual_modules.yaml",
+    "assignments.yaml", "artifacts.yaml", "revision_requests.yaml",
+})
+_EVENT_SHARD_PATTERN = re.compile(r"\.research/presentations/events/(\d{4}-\d{2}-\d{2})\.jsonl")
+
+
+def _validate_mode(mode: object, source: Path) -> int:
+    """Validate and return ordinary Unix permission bits from journal metadata."""
+    if isinstance(mode, bool) or not isinstance(mode, int) or mode < 0 or mode & ~0o777:
+        raise TransactionError(f"invalid journal mode for {source}: {mode!r}")
+    return mode
+
+
+def _canonical_journal_relative_path(raw_path: object) -> str:
+    """Validate the lexical form of one project-relative journal path."""
+    if not isinstance(raw_path, str) or not raw_path or "\x00" in raw_path:
+        raise TransactionError(f"journal path must be a non-empty relative path: {raw_path!r}")
+    if raw_path.startswith("/") or "\\" in raw_path:
+        raise TransactionError(f"journal path must be project-relative and POSIX-normalized: {raw_path!r}")
+    parts = raw_path.split("/")
+    if any(part in {"", ".", ".."} for part in parts) or "/".join(parts) != raw_path:
+        raise TransactionError(f"journal path is not normalized: {raw_path!r}")
+    return raw_path
+
+
+def _validate_journal_target(project_root: Path, raw_path: object) -> Path:
+    """Validate an allowlisted state/event target without touching the filesystem."""
+    relative = _canonical_journal_relative_path(raw_path)
+    state_prefix = ".research/presentations/state/"
+    if relative.startswith(state_prefix):
+        name = relative[len(state_prefix):]
+        if name not in _ALLOWED_STATE_NAMES:
+            raise TransactionError(f"journal path is not an allowed state store: {relative}")
+    else:
+        match = _EVENT_SHARD_PATTERN.fullmatch(relative)
+        if match is None:
+            raise TransactionError(f"journal path is not an allowed event shard: {relative}")
+        try:
+            datetime.strptime(match.group(1), "%Y-%m-%d")
+        except ValueError as exc:
+            raise TransactionError(f"journal event shard has invalid date: {relative}") from exc
+    root = project_root.resolve()
+    candidate = root / relative
+    try:
+        resolved = candidate.resolve(strict=False)
+        resolved.relative_to(root)
+    except (OSError, ValueError) as exc:
+        raise TransactionError(f"journal path escapes project root: {relative}") from exc
+    if candidate.exists() and candidate.is_dir():
+        raise TransactionError(f"journal path must name a file: {relative}")
+    return candidate
+
+
+def _project_relative_path(project_root: Path, path: Path) -> str:
+    """Return a canonical lexical path relative to a project root."""
+    root = project_root.resolve()
+    candidate = path if path.is_absolute() else root / path
+    try:
+        relative = candidate.relative_to(root).as_posix()
+    except ValueError as exc:
+        raise TransactionError(f"transaction path escapes project root: {path}") from exc
+    _validate_journal_target(root, relative)
+    return relative
+
+
 def incomplete_transaction_journals(project_root: Path) -> list[Path]:
     """List incomplete transaction journals without changing state."""
     directory = _journal_dir(project_root)
+    if directory.is_symlink():
+        raise TransactionError(f"transaction journal directory must not be a symlink: {directory}")
     if not directory.is_dir():
         return []
     return sorted(directory.glob("*.json"), key=lambda path: path.name)
+
+
+def require_transaction_recovery(project_root: Path) -> None:
+    """Raise before a low-level mutation while any durable journal remains."""
+    journals = incomplete_transaction_journals(project_root)
+    if journals:
+        names = ", ".join(str(path) for path in journals)
+        raise TransactionRecoveryRequiredError(f"transaction recovery required before write: {names}")
 
 
 def _journal_path(project_root: Path, transaction_id: str) -> Path:
@@ -141,39 +224,51 @@ def _journal_path(project_root: Path, transaction_id: str) -> Path:
     return _journal_dir(project_root) / f"{transaction_id}.json"
 
 
-def _encode_snapshot(path: Path, snapshot: _FileSnapshot) -> dict[str, Any]:
+def _encode_snapshot(project_root: Path, path: Path, snapshot: _FileSnapshot) -> dict[str, Any]:
     """Encode one exact preimage for durable recovery."""
     return {
-        "path": str(path),
+        "path": _project_relative_path(project_root, path),
         "exists": snapshot.exists,
         "mode": snapshot.mode,
         "content": base64.b64encode(snapshot.content).decode("ascii"),
     }
 
 
-def _decode_journal(path: Path) -> tuple[str, list[tuple[Path, _FileSnapshot]]]:
+def _decode_journal(project_root: Path, path: Path) -> tuple[str, list[tuple[Path, _FileSnapshot]]]:
     """Decode one journal and reject malformed recovery metadata."""
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise TransactionError(f"invalid transaction journal {path}: {exc}") from exc
+    if not isinstance(document, dict):
+        raise TransactionError(f"invalid transaction journal shape: {path}")
     transaction_id = document.get("transaction_id")
     entries = document.get("paths")
     if not isinstance(transaction_id, str) or not transaction_id or not isinstance(entries, list):
         raise TransactionError(f"invalid transaction journal shape: {path}")
+    if not entries:
+        raise TransactionError(f"invalid transaction journal entries: {path}")
     decoded: list[tuple[Path, _FileSnapshot]] = []
+    seen_paths: set[Path] = set()
     for entry in entries:
         if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
             raise TransactionError(f"invalid transaction journal entry: {path}")
+        target = _validate_journal_target(project_root, entry["path"])
+        if target in seen_paths:
+            raise TransactionError(f"duplicate transaction journal path: {path}")
+        seen_paths.add(target)
         try:
-            content = base64.b64decode(entry.get("content", ""), validate=True)
+            encoded_content = entry.get("content", "")
+            if not isinstance(encoded_content, str):
+                raise TypeError("content must be base64 text")
+            content = base64.b64decode(encoded_content, validate=True)
         except (ValueError, TypeError) as exc:
             raise TransactionError(f"invalid transaction journal bytes: {path}") from exc
         exists = entry.get("exists")
         mode = entry.get("mode")
-        if not isinstance(exists, bool) or not isinstance(mode, int) or mode < 0:
+        if not isinstance(exists, bool):
             raise TransactionError(f"invalid transaction journal metadata: {path}")
-        decoded.append((Path(entry["path"]), _FileSnapshot(exists, content, mode)))
+        decoded.append((target, _FileSnapshot(exists, content, _validate_mode(mode, path))))
     return transaction_id, decoded
 
 
@@ -205,8 +300,10 @@ class WorkflowTransaction:
             paths: Data files this action may replace.
             project_root: Optional root used to locate crash-recovery journals.
         """
-        self.paths = tuple(sorted(set(paths), key=_path_key))
-        self.project_root = project_root or _infer_project_root(self.paths)
+        self.project_root = (project_root or _infer_project_root(paths)).resolve()
+        self.paths = tuple(sorted({Path(path).resolve() for path in paths}, key=_path_key))
+        for path in self.paths:
+            _project_relative_path(self.project_root, path)
         self._lock_paths: tuple[Path, ...] = self.paths
         self._descriptors: list[int] = []
         self._snapshots: dict[Path, _FileSnapshot] = {}
@@ -252,7 +349,15 @@ class WorkflowTransaction:
         """Read all pending journals before acquiring any data locks."""
         journals: list[tuple[Path, list[tuple[Path, _FileSnapshot]]]] = []
         for journal in incomplete_transaction_journals(self.project_root):
-            _, entries = _decode_journal(journal)
+            if journal.is_symlink() or not journal.is_file():
+                raise TransactionError(f"transaction journal must be a regular file: {journal}")
+            if journal.parent != _journal_dir(self.project_root):
+                raise TransactionError(f"transaction journal is outside its directory: {journal}")
+            try:
+                journal.resolve(strict=True).relative_to(_journal_dir(self.project_root).resolve())
+            except (OSError, ValueError) as exc:
+                raise TransactionError(f"transaction journal escapes its directory: {journal}") from exc
+            _, entries = _decode_journal(self.project_root, journal)
             journals.append((journal, entries))
         return journals
 
@@ -292,7 +397,7 @@ class WorkflowTransaction:
         """Stage bytes for one selected file with fsync and its original mode."""
         self._assert_path(path)
         snapshot = self._snapshots[path]
-        target_mode = snapshot.mode if snapshot.exists else 0o666
+        target_mode = _validate_mode(mode, path) if mode is not None else (snapshot.mode if snapshot.exists else 0o666)
         temporary = _temporary_path(path)
         try:
             _write_fsync(temporary, content, target_mode)
@@ -422,7 +527,10 @@ class WorkflowTransaction:
         journal = _journal_path(self.project_root, transaction_id)
         document = {
             "transaction_id": transaction_id,
-            "paths": [_encode_snapshot(stage.path, self._snapshots[stage.path]) for stage in stages],
+            "paths": [
+                _encode_snapshot(self.project_root, stage.path, self._snapshots[stage.path])
+                for stage in stages
+            ],
         }
         temporary = _temporary_path(journal)
         _write_fsync(temporary, json.dumps(document, sort_keys=True).encode("utf-8"), 0o666)
