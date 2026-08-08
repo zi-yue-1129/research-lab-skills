@@ -96,14 +96,18 @@ in place after registration; approval references its immutable versioned copy.
 New `presentation_gates.py` contains pure, deterministic predicate functions
 used by the state CLI and artifact publishers:
 
-- `assert_plan_reviewable(...)`
-- `assert_plan_approvable(...)`
-- `assert_production_allowed(...)`
-- `assert_module_assignable(...)`
-- `assert_module_publishable(...)`
-- `assert_slide_passable(...)`
-- `assert_draft_reviewable(...)`
-- `assert_deck_completable(...)`
+- `assert_plan_reviewable(project_root: Path, deck_id: str) -> dict`
+- `assert_plan_approvable(project_root: Path, approval: dict) -> dict`
+- `assert_production_allowed(project_root: Path, deck_id: str) -> dict`
+- `assert_module_assignable(project_root: Path, module_id: str,
+  assignment: dict) -> dict`
+- `assert_module_publishable(project_root: Path, module_id: str,
+  artifact: dict) -> dict`
+- `assert_slide_passable(project_root: Path, slide_id: str) -> dict`
+- `assert_draft_reviewable(project_root: Path, deck_id: str,
+  preview: dict) -> dict`
+- `assert_deck_completable(project_root: Path, deck_id: str,
+  completion: dict) -> dict`
 
 Every failure returns a named exception and structured JSON containing the
 failed predicate and blocker. A gate never substitutes a default, silently
@@ -203,9 +207,12 @@ unresolved inputs cannot enter `assigned` or `producing`.
 
 Review Result validates reviewer role, reviewer identity, subject, round,
 status, and role-appropriate findings. Revision Request validates an exact
-target set, requested-by identity, instructions, and the artifacts/specifications
-it supersedes. Workflow-state validation cross-checks every stored path and
-foreign key.
+target set, requested-by identity, instructions, the artifacts/specifications
+it supersedes, and `revision_kind`. The allowed revision kinds are
+`revise_slide`, `add_slide`, `remove_slide`, `reorder_slides`,
+`change_emphasis`, `change_audience`, `change_duration`, `review_finding`,
+`module_retry`, and `slide_retry`. Workflow-state validation cross-checks every
+stored path and foreign key.
 
 ### 3.5 Review, retry, and resume
 
