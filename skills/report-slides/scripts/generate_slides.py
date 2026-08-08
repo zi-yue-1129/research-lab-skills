@@ -12,6 +12,11 @@ Slide types:
 import json
 import argparse
 import os
+from pathlib import Path
+from typing import Sequence
+
+from presentation_gates import ProductionGateError, assert_production_allowed
+from presentation_state import find_project_root
 
 
 # ── Style constants ───────────────────────────────────────────────────────────
@@ -653,10 +658,53 @@ def _try_import(name: str) -> bool:
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
-def main() -> None:
+def _authorize_production(deck_id: str, project_root: Path | None) -> Path | None:
+    """Authorize the CLI before it reads inputs or creates output paths."""
+    try:
+        root = (
+            Path(project_root).resolve()
+            if project_root is not None
+            else find_project_root(Path.cwd())
+        )
+        assert_production_allowed(root, deck_id)
+    except ProductionGateError as exc:
+        print(
+            json.dumps(
+                {
+                    "error": type(exc).__name__,
+                    "predicate": exc.predicate,
+                    "deck_id": exc.deck_id,
+                    "blockers": exc.blockers,
+                }
+            )
+        )
+        return None
+    except Exception as exc:  # noqa: BLE001 - CLI failures stay machine-readable
+        print(
+            json.dumps(
+                {
+                    "error": "ProductionGateError",
+                    "predicate": "production_allowed",
+                    "deck_id": deck_id,
+                    "blockers": [{"reason": "project_root_invalid", "message": str(exc)}],
+                }
+            )
+        )
+        return None
+    return root
+
+
+def main(arguments: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Generate SVG research slides from JSON")
     ap.add_argument("--data",     help="Path to slide_data.json")
     ap.add_argument("--out",      help="Output directory for SVG files")
+    ap.add_argument("--deck-id", required=True, help="Approved presentation Deck identifier")
+    ap.add_argument(
+        "--project-root",
+        type=Path,
+        default=None,
+        help="Project root (defaults to the nearest ancestor of the current directory)",
+    )
     ap.add_argument("--slide",    type=int, default=None, help="Render only slide N")
     ap.add_argument("--style",    metavar="FILE",      default=None,
                     help="Style .md file to override colors/fonts (see references/styles/STYLES.md in skill bundle)")
@@ -664,13 +712,18 @@ def main() -> None:
                     help="Convert all slide*.svg in SVG_DIR to PPTX (skips SVG generation)")
     ap.add_argument("--pptx-out", metavar="FILE", default=None,
                     help="Output PPTX path (default: SVG_DIR/deck.pptx)")
-    args = ap.parse_args()
+    args = ap.parse_args(arguments)
+
+    project_root = _authorize_production(args.deck_id, args.project_root)
+    if project_root is None:
+        return 1
 
     # ── Mode: convert existing SVGs to PPTX ──
     if args.to_pptx:
         out = args.pptx_out or os.path.join(args.to_pptx, "deck.pptx")
+        Path(out).parent.mkdir(parents=True, exist_ok=True)
         to_pptx(args.to_pptx, out)
-        return
+        return 0
 
     # ── Mode: generate SVGs from JSON ──
     if not args.data or not args.out:
@@ -700,7 +753,8 @@ def main() -> None:
         generated += 1
 
     print(f"\n{generated} slide(s) written to {args.out}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

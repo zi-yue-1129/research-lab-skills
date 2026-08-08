@@ -8,11 +8,33 @@ from typing import Tuple
 
 import pytest
 from PIL import Image
+import yaml
 
+from presentation_contracts import contract_sha256
 from render_review_sheet import _parse_arguments, compose_review_sheet
+from test_artifact_entrypoint_gates import deck_awaiting_approval
 
 
 SCRIPT = Path(__file__).resolve().parent.parent / "render_review_sheet.py"
+
+
+@pytest.fixture
+def approved_deck_project(tmp_path: Path) -> Tuple[Path, str]:
+    """Create an approved deck fixture for the supported CLI path."""
+    project, deck_id = deck_awaiting_approval(tmp_path)
+    plan = yaml.safe_load((project / "plan.yaml").read_text(encoding="utf-8"))
+    state_path = project / ".research/presentations/state/decks.yaml"
+    state = yaml.safe_load(state_path.read_text(encoding="utf-8"))
+    state["decks"][deck_id].update(
+        {
+            "status": "approved",
+            "approval_id": "approval-test",
+            "approved_plan_version": plan["plan_version"],
+            "approved_plan_sha256": contract_sha256(plan),
+        }
+    )
+    state_path.write_text(yaml.safe_dump(state), encoding="utf-8")
+    return project, deck_id
 
 
 @pytest.fixture
@@ -52,7 +74,9 @@ def test_review_sheet_defaults_match_visual_authoring_contract() -> None:
         parameters["cell_height"].default,
     ) == (2, 600, 338)
 
-    parsed = _parse_arguments(["--input", "slide.png", "--out", "review.png"])
+    parsed = _parse_arguments(
+        ["--input", "slide.png", "--out", "review.png", "--deck-id", "deck-test"]
+    )
     assert (parsed.columns, parsed.cell_width, parsed.cell_height) == (2, 600, 338)
 
 
@@ -132,11 +156,12 @@ def _run_cli(*arguments: str) -> subprocess.CompletedProcess[str]:
 
 
 def test_review_sheet_cli_accepts_repeated_inputs(
-    source_images: Tuple[Path, Path], tmp_path: Path
+    source_images: Tuple[Path, Path], approved_deck_project: Tuple[Path, str]
 ) -> None:
     """Accept repeated --input arguments and report the output path."""
     first, second = source_images
-    output = tmp_path / "review-sheet.png"
+    project, deck_id = approved_deck_project
+    output = project / "review-sheet.png"
 
     result = _run_cli(
         "--input",
@@ -151,6 +176,10 @@ def test_review_sheet_cli_accepts_repeated_inputs(
         "120",
         "--cell-height",
         "68",
+        "--deck-id",
+        deck_id,
+        "--project-root",
+        str(project),
     )
 
     assert result.returncode == 0
@@ -158,19 +187,26 @@ def test_review_sheet_cli_accepts_repeated_inputs(
     assert result.stderr == ""
 
 
-def test_review_sheet_cli_reports_failures_to_stderr(tmp_path: Path) -> None:
+def test_review_sheet_cli_reports_failures_to_stderr(
+    approved_deck_project: Tuple[Path, str]
+) -> None:
     """Report composition failures with an ERROR prefix and exit one."""
+    project, deck_id = approved_deck_project
     result = _run_cli(
         "--input",
-        str(tmp_path / "missing.png"),
+        str(project / "missing.png"),
         "--out",
-        str(tmp_path / "review-sheet.png"),
+        str(project / "review-sheet.png"),
         "--columns",
         "1",
         "--cell-width",
         "120",
         "--cell-height",
         "68",
+        "--deck-id",
+        deck_id,
+        "--project-root",
+        str(project),
     )
 
     assert result.returncode == 1

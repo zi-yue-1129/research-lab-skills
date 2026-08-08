@@ -15,14 +15,19 @@ Usage:
 
 import argparse
 import io
+import json
 import re
 import struct
 import zipfile
 import zlib
 from pathlib import Path
+from typing import Sequence
 
 from pptx import Presentation
 from pptx.util import Emu
+
+from presentation_gates import ProductionGateError, assert_production_allowed
+from presentation_state import find_project_root
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -151,7 +156,43 @@ def pack_slides(svg_files: list, out_path: Path) -> None:
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
-def main() -> None:
+def _authorize_production(deck_id: str, project_root: Path | None) -> Path | None:
+    """Authorize the CLI before it enumerates inputs or creates outputs."""
+    try:
+        root = (
+            Path(project_root).resolve()
+            if project_root is not None
+            else find_project_root(Path.cwd())
+        )
+        assert_production_allowed(root, deck_id)
+    except ProductionGateError as exc:
+        print(
+            json.dumps(
+                {
+                    "error": type(exc).__name__,
+                    "predicate": exc.predicate,
+                    "deck_id": exc.deck_id,
+                    "blockers": exc.blockers,
+                }
+            )
+        )
+        return None
+    except Exception as exc:  # noqa: BLE001 - CLI failures stay machine-readable
+        print(
+            json.dumps(
+                {
+                    "error": "ProductionGateError",
+                    "predicate": "production_allowed",
+                    "deck_id": deck_id,
+                    "blockers": [{"reason": "project_root_invalid", "message": str(exc)}],
+                }
+            )
+        )
+        return None
+    return root
+
+
+def main(arguments: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description="Pack SVG slides into a PPTX with native SVG embedding"
     )
@@ -159,14 +200,24 @@ def main() -> None:
                     help="Directory containing slide*.svg files")
     ap.add_argument("--out",    required=True,
                     help="Output .pptx file path")
-    args = ap.parse_args()
+    ap.add_argument("--deck-id", required=True, help="Approved presentation Deck identifier")
+    ap.add_argument(
+        "--project-root",
+        type=Path,
+        default=None,
+        help="Project root (defaults to the nearest ancestor of the current directory)",
+    )
+    args = ap.parse_args(arguments)
+
+    if _authorize_production(args.deck_id, args.project_root) is None:
+        return 1
 
     slide_dir = Path(args.slides)
     svg_files = sorted(slide_dir.glob("slide*.svg"))
 
     if not svg_files:
         print(f"No slide*.svg files found in {slide_dir}")
-        return
+        return 1
 
     out_path = Path(args.out)
     pack_slides(svg_files, out_path)
@@ -176,7 +227,8 @@ def main() -> None:
     print(f"\n{len(svg_files)} slide(s) -> {out_path}")
     print("Open with PowerPoint 2016+ / 365 for native SVG rendering.")
     print("Older viewers display the white PNG fallback (slide content is visible in SVG mode only).")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

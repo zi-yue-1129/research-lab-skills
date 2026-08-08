@@ -1,12 +1,16 @@
 """Compose labeled raster previews into a visual review sheet."""
 
 import argparse
+import json
 import math
 import sys
 from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
 
 from PIL import Image, ImageDraw, ImageOps
+
+from presentation_gates import ProductionGateError, assert_production_allowed
+from presentation_state import find_project_root
 
 
 GAP: int = 8
@@ -142,6 +146,17 @@ def _parse_arguments(arguments: Optional[Sequence[str]]) -> argparse.Namespace:
         help="Output review-sheet path.",
     )
     parser.add_argument(
+        "--deck-id",
+        required=True,
+        help="Approved presentation Deck identifier.",
+    )
+    parser.add_argument(
+        "--project-root",
+        type=Path,
+        default=None,
+        help="Project root (defaults to the nearest ancestor of the current directory).",
+    )
+    parser.add_argument(
         "--columns",
         type=_positive_integer,
         default=2,
@@ -172,6 +187,37 @@ def main(arguments: Optional[Sequence[str]] = None) -> int:
         Zero on success, or one when composition or output fails.
     """
     parsed = _parse_arguments(arguments)
+    try:
+        project_root = (
+            parsed.project_root.resolve()
+            if parsed.project_root is not None
+            else find_project_root(Path.cwd())
+        )
+        assert_production_allowed(project_root, parsed.deck_id)
+    except ProductionGateError as error:
+        print(
+            json.dumps(
+                {
+                    "error": type(error).__name__,
+                    "predicate": error.predicate,
+                    "deck_id": error.deck_id,
+                    "blockers": error.blockers,
+                }
+            )
+        )
+        return 1
+    except Exception as error:  # noqa: BLE001 - keep CLI output parseable
+        print(
+            json.dumps(
+                {
+                    "error": "ProductionGateError",
+                    "predicate": "production_allowed",
+                    "deck_id": parsed.deck_id,
+                    "blockers": [{"reason": "project_root_invalid", "message": str(error)}],
+                }
+            )
+        )
+        return 1
     try:
         compose_review_sheet(
             parsed.input_paths,
