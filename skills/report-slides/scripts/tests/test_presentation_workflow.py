@@ -11,8 +11,8 @@ import pytest
 import yaml
 
 from presentation_contracts import contract_sha256
-from presentation_events import load_events, load_revision_requests
-from presentation_state import create_deck, create_slide, load_decks, load_slides, record_review, set_slide_status
+from presentation_events import create_artifact_record, load_events, load_revision_requests
+from presentation_state import create_deck, create_slide, create_visual_module, load_decks, load_slides, record_review, set_module_status, set_slide_status
 from presentation_workflow import (
     ApprovalGateError,
     CompletionGateError,
@@ -152,6 +152,13 @@ def test_draft_and_completion_actions_require_persisted_current_evidence(tmp_pat
     }), encoding="utf-8")
     approve_draft(project, decision)
     visual_review = _materialize_visual_review(project, deck_id)
+    for relative in ("deck/final.pptx", "renders/source/slide-1.png", "renders/pptx/slide-1.png"):
+        path = project / relative
+        create_artifact_record(
+            project, deck_id, "completion", relative,
+            hashlib.sha256(path.read_bytes()).hexdigest(), "reviewer",
+            slide_id=slide["id"] if relative.endswith(".png") else None,
+        )
     completion = project / "completion.yaml"
     completion.write_text(yaml.safe_dump({"visual_review_path": str(visual_review.relative_to(project))}), encoding="utf-8")
     complete_deck(project, deck_id, completion)
@@ -213,7 +220,11 @@ def _materialize_visual_review(project: Path, deck_id: str) -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)
         Image.new("RGB", (20, 20), (20, 80, 120)).save(path)
     path = project / "visual-review.json"
-    record["artifact_digests"] = {"deck/final.pptx": hashlib.sha256(b"artifact").hexdigest()}
+    record["artifact_digests"] = {
+        "deck/final.pptx": hashlib.sha256(b"artifact").hexdigest(),
+        "renders/source/slide-1.png": hashlib.sha256((project / "renders/source/slide-1.png").read_bytes()).hexdigest(),
+        "renders/pptx/slide-1.png": hashlib.sha256((project / "renders/pptx/slide-1.png").read_bytes()).hexdigest(),
+    }
     path.write_text(json.dumps(record), encoding="utf-8")
     return path
 
@@ -230,22 +241,121 @@ def test_completion_rejects_status_stubs_and_requires_visual_review_record(tmp_p
         complete_deck(project, deck_id, completion)
 
 
-def test_completion_valid_record_then_mutation_or_removal_is_rejected(tmp_path: Path) -> None:
-    """Persisted review evidence is revalidated and cannot be removed or mutated."""
+def _complete_fixture(tmp_path: Path) -> tuple[Path, str, Path, Path, str, dict]:
+    """Materialize a deck that demonstrably completes before mutation tests."""
     project, deck_id, _ = _approved_project(tmp_path)
+    slide = create_slide(project, deck_id, "slide-01", "Evidence changes decisions")
+    for status in ("ready", "assigned", "producing", "review_required"):
+        set_slide_status(project, slide["id"], status)
+    record_review(project, "slide", slide["id"], "scientific-reviewer", "scientific", "passed")
+    record_review(project, "slide", slide["id"], "visual-reviewer", "visual_quality", "passed")
+    set_slide_status(project, slide["id"], "passed")
+    module = create_visual_module(project, slide["id"], "module-a", "architecture")
+    for status in ("ready", "assigned", "producing", "review_required"):
+        set_module_status(project, module["id"], status)
+    record_review(project, "module", module["id"], "scientific-reviewer", "scientific", "passed")
+    record_review(project, "module", module["id"], "visual-reviewer", "visual_quality", "passed")
+    set_module_status(project, module["id"], "passed")
+    state_path = project / ".research/presentations/state/decks.yaml"
+    state_doc = yaml.safe_load(state_path.read_text(encoding="utf-8"))
+    state_doc["decks"][deck_id]["status"] = "draft_review"
+    state_path.write_text(yaml.safe_dump(state_doc), encoding="utf-8")
+    from PIL import Image
+    for path in (project / "renders/slide-1.png", project / "renders/contact.png"):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (20, 20), (1, 2, 3)).save(path)
+    preview = project / "preview.yaml"
+    preview.write_text(yaml.safe_dump({
+        "deck_id": deck_id, "rendered_slide_paths": [{"slide_id": "slide-01", "path": "renders/slide-1.png"}],
+        "contact_sheet_path": "renders/contact.png", "slides": [{"slide_id": "slide-01", "title": "Evidence changes decisions", "key_takeaway": "Evidence changes decisions."}],
+    }), encoding="utf-8")
+    registered = register_draft_preview(project, preview)
+    decision = project / "decision.yaml"
+    decision.write_text(yaml.safe_dump({
+        "deck_id": deck_id, "preview_id": registered["preview"]["id"], "preview_sha256": registered["preview"]["preview_sha256"],
+        "decision": "approve", "approved_by": "reviewer",
+    }), encoding="utf-8")
+    approve_draft(project, decision)
     visual_review = _materialize_visual_review(project, deck_id)
+    for relative in ("deck/final.pptx", "renders/source/slide-1.png", "renders/pptx/slide-1.png"):
+        path = project / relative
+        create_artifact_record(
+            project, deck_id, "completion", relative,
+            hashlib.sha256(path.read_bytes()).hexdigest(), "reviewer",
+            slide_id=slide["id"] if relative.endswith(".png") else None,
+        )
     # The remaining workflow preparation is deliberately explicit: no status stub is accepted.
     completion = project / "completion.yaml"
     completion.write_text(yaml.safe_dump({"visual_review_path": str(visual_review.relative_to(project))}), encoding="utf-8")
-    with pytest.raises(CompletionGateError):
-        complete_deck(project, deck_id, completion)
-    record = json.loads(visual_review.read_text(encoding="utf-8"))
-    record["statuses"]["pptx_render"]["status"] = "failed"
-    visual_review.write_text(json.dumps(record), encoding="utf-8")
-    with pytest.raises(CompletionGateError):
-        complete_deck(project, deck_id, completion)
+    complete_deck(project, deck_id, completion)
+    return project, deck_id, visual_review, completion, slide["id"], module
+
+
+def test_completion_fixture_succeeds_before_each_required_evidence_mutation(tmp_path: Path) -> None:
+    """A complete current-record fixture proves the completion path is live."""
+    project, deck_id, visual_review, _, _, _ = _complete_fixture(tmp_path)
+    assert load_decks(project)[deck_id]["status"] == "completed"
+    assert visual_review.is_file()
+
+
+def test_completion_rejects_one_removed_or_mutated_current_record(tmp_path: Path) -> None:
+    """Removing one persisted final record or digest blocks completion by name."""
+    project, deck_id, visual_review, completion, slide_id, _ = _complete_fixture(tmp_path)
+    # Restore validating status to replay the gate against mutations.
+    deck_path = project / ".research/presentations/state/decks.yaml"
+    deck_doc = yaml.safe_load(deck_path.read_text(encoding="utf-8"))
+    deck_doc["decks"][deck_id]["status"] = "validating"
+    deck_path.write_text(yaml.safe_dump(deck_doc), encoding="utf-8")
     visual_review.unlink()
     with pytest.raises(CompletionGateError):
+        complete_deck(project, deck_id, completion)
+
+
+def test_completion_rejects_mutated_rendered_png_digest(tmp_path: Path) -> None:
+    """Replacing one inspected PNG fails its persisted artifact digest gate."""
+    project, deck_id, _, completion, _, _ = _complete_fixture(tmp_path)
+    deck_path = project / ".research/presentations/state/decks.yaml"
+    deck_doc = yaml.safe_load(deck_path.read_text(encoding="utf-8"))
+    deck_doc["decks"][deck_id]["status"] = "validating"
+    deck_path.write_text(yaml.safe_dump(deck_doc), encoding="utf-8")
+    (project / "renders/pptx/slide-1.png").write_bytes(b"replaced")
+    with pytest.raises(CompletionGateError, match="artifact_digest_mismatch"):
+        complete_deck(project, deck_id, completion)
+
+
+def test_completion_requires_pptx_visual_review_output_format(tmp_path: Path) -> None:
+    """A source-only visual review with not-applicable PPTX gates cannot complete."""
+    project, deck_id, visual_review, completion, _, _ = _complete_fixture(tmp_path)
+    deck_path = project / ".research/presentations/state/decks.yaml"
+    deck_doc = yaml.safe_load(deck_path.read_text(encoding="utf-8"))
+    deck_doc["decks"][deck_id]["status"] = "validating"
+    deck_path.write_text(yaml.safe_dump(deck_doc), encoding="utf-8")
+    record = json.loads(visual_review.read_text(encoding="utf-8"))
+    record["output_format"] = "svg"
+    record["artifacts"]["pptx"] = None
+    record["statuses"]["pptx_structure"] = dict(record["statuses"]["pptx_structure"], status="not_applicable", reason="PPTX omitted", reviewed_by="workflow", inspected_paths=[])
+    record["statuses"]["pptx_render"] = dict(record["statuses"]["pptx_render"], status="not_applicable", reason="PPTX omitted", reviewed_by="workflow", inspected_paths=[])
+    record["overall"] = {"status": "passed", "completion_allowed": True, "authority": "source-pixel"}
+    visual_review.write_text(json.dumps(record), encoding="utf-8")
+    with pytest.raises(CompletionGateError, match="output_format_pptx"):
+        complete_deck(project, deck_id, completion)
+
+
+def test_completion_rejects_removed_png_artifact_record(tmp_path: Path) -> None:
+    """Removing one persisted PNG artifact record blocks completion."""
+    project, deck_id, _, completion, _, _ = _complete_fixture(tmp_path)
+    deck_path = project / ".research/presentations/state/decks.yaml"
+    deck_doc = yaml.safe_load(deck_path.read_text(encoding="utf-8"))
+    deck_doc["decks"][deck_id]["status"] = "validating"
+    deck_path.write_text(yaml.safe_dump(deck_doc), encoding="utf-8")
+    artifacts_path = project / ".research/presentations/state/artifacts.yaml"
+    artifacts = yaml.safe_load(artifacts_path.read_text(encoding="utf-8"))
+    artifacts["artifacts"] = {
+        key: value for key, value in artifacts["artifacts"].items()
+        if value.get("path") != "renders/pptx/slide-1.png"
+    }
+    artifacts_path.write_text(yaml.safe_dump(artifacts), encoding="utf-8")
+    with pytest.raises(CompletionGateError, match="missing_persisted_artifact"):
         complete_deck(project, deck_id, completion)
 
 

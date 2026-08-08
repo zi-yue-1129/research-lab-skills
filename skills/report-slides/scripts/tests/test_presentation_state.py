@@ -7,6 +7,7 @@ import pytest
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parent.parent / "presentation_state.py"
+from presentation_state import record_review
 
 
 def _make_project(tmp_path: Path) -> Path:
@@ -353,15 +354,12 @@ def test_record_review_returns_new_event(tmp_path: Path) -> None:
     project = _make_project(tmp_path)
     deck_id, _ = _make_deck_and_slide(project)
 
-    result = _run(
-        project, "--record-review", "--subject-type", "deck", "--subject-id", deck_id,
-        "--reviewer-role", "content_reviewer", "--status", "failed",
-        "--findings-json", json.dumps([{"kind": "unsupported-claim", "description": "Slide 2 claims X without a citation"}]),
-        "--round", "1", "--json",
+    data = record_review(
+        project, "deck", deck_id, reviewer_id="reviewer", reviewer_role="content_reviewer",
+        status="failed", findings=[{"kind": "unsupported-claim", "description": "Slide 2 claims X without a citation"}],
+        round_number=1,
     )
 
-    assert result.returncode == 0, result.stderr
-    data = json.loads(result.stdout)
     assert data["id"].startswith("rev_")
     assert data["subject_type"] == "deck"
     assert data["subject_id"] == deck_id
@@ -381,7 +379,7 @@ def test_record_review_invalid_subject_type_errors(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     data = json.loads(result.stdout)
-    assert data["error"] == "ValueError"
+    assert data["error"] == "ReviewGateError"
 
 
 def test_record_review_invalid_status_errors(tmp_path: Path) -> None:

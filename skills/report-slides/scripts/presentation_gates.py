@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from presentation_contracts import contract_sha256, load_contract
-from presentation_events import effective_review_results, load_events, load_plans, load_review_results
+from presentation_events import effective_review_results, load_artifacts, load_events, load_plans, load_review_results
 from validate_deck_plan import validate_deck_approval, validate_deck_plan
 from validate_visual_review import derive_overall_status, validate_review_record
 from validate_visual_module import validate_complex_visual_spec, validate_worker_assignment
@@ -240,9 +240,9 @@ def assert_plan_approvable(project_root: Path, approval: dict[str, Any]) -> dict
     if deck.get("status") not in {"planning", "content_review", "awaiting_approval"}:
         blockers.append({"reason": f"status:{deck.get('status')}"})
     authored_by = plan.get("authored_by") if isinstance(plan, dict) else None
-    reviews = effective_review_results(load_review_results(project_root, {deck_id}))
-    content = [
-        review for review in reviews
+    raw_reviews = load_review_results(project_root, {deck_id})
+    raw_content = [
+        review for review in raw_reviews
         if review.get("subject_type") == "deck"
         and review.get("subject_id") == deck_id
         and review.get("reviewer_role") in _CONTENT_ROLES
@@ -250,6 +250,13 @@ def assert_plan_approvable(project_root: Path, approval: dict[str, Any]) -> dict
     current_plan_id = record.get("id") if isinstance(record, Mapping) else None
     current_plan_version = record.get("version") if isinstance(record, Mapping) else None
     current_plan_sha256 = contract_sha256(plan) if isinstance(plan, Mapping) else None
+    current_bound = [
+        review for review in raw_content
+        if review.get("current_plan_id") == current_plan_id
+        and review.get("current_plan_version") == current_plan_version
+        and review.get("current_plan_sha256") == current_plan_sha256
+    ]
+    content = effective_review_results(current_bound or raw_content)
     bound_content = []
     for review in content:
         findings = review.get("findings", [])
@@ -456,12 +463,21 @@ def assert_module_publishable(project_root: Path, module_id: str, artifact: dict
         _fail(PublicationGateError, "module_publishable", deck_id, exc.blockers)
     blockers: list[dict[str, Any]] = []
     assignment_records = _state().load_assignments(project_root)
-    assignments = [record for record in assignment_records.values() if record.get("module_id") == module_id]
-    assignment = assignments[-1] if assignments else None
-    if assignment is None:
+    current_path = module.get("assignment_path")
+    assignments = [
+        record for record in assignment_records.values()
+        if record.get("module_id") == module_id
+        and record.get("assignment_path", record.get("path")) == current_path
+    ] if isinstance(current_path, str) and current_path else []
+    assignment = assignments[0] if len(assignments) == 1 else None
+    if not isinstance(current_path, str) or not current_path:
+        blockers.append({"reason": "missing_current_assignment"})
+    elif not assignments:
         blockers.append({"reason": "missing_assignment"})
-    elif module.get("assignment_path") != assignment.get("assignment_path", assignment.get("path")):
-        blockers.append({"reason": "assignment_binding_mismatch"})
+    elif len(assignments) > 1:
+        blockers.append({"reason": "ambiguous_assignment", "path": current_path})
+    elif assignment.get("status") in {"stale", "superseded", "revoked"} or assignment.get("superseded") is True:
+        blockers.append({"reason": "stale_assignment", "assignment_id": assignment.get("id")})
     if module.get("status") not in {"assigned", "producing", "review_required"}:
         blockers.append({"reason": f"status:{module.get('status')}"})
     if not isinstance(artifact, dict):
@@ -680,6 +696,59 @@ def _verify_artifact_digests(
             blockers.append({"reason": f"{reason_prefix}_digest_mismatch", "path": raw_path, "actual": actual})
 
 
+def _png_paths(value: Any) -> set[str]:
+    """Collect every PNG path named by a visual-review document."""
+    if isinstance(value, str):
+        return {value} if value.lower().endswith(".png") else set()
+    if isinstance(value, Mapping):
+        paths: set[str] = set()
+        for child in value.values():
+            paths.update(_png_paths(child))
+        return paths
+    if isinstance(value, list):
+        paths: set[str] = set()
+        for child in value:
+            paths.update(_png_paths(child))
+        return paths
+    return set()
+
+
+def _verify_persisted_png_records(
+    project_root: Path, deck_id: str, document: Mapping[str, Any], blockers: list[dict[str, Any]]
+) -> None:
+    """Require one persisted, byte-matching artifact record per named PNG."""
+    try:
+        records = load_artifacts(project_root)
+    except Exception as exc:  # noqa: BLE001 - malformed stores are gate blockers
+        blockers.append({"reason": "persisted_artifact_store_invalid", "message": str(exc)})
+        return
+    for raw_path in sorted(_png_paths(document)):
+        path = Path(raw_path)
+        if path.is_absolute() or ".." in path.parts:
+            blockers.append({"reason": "inspected_png_path_invalid", "path": raw_path})
+            continue
+        matches = [
+            record for record in records.values()
+            if record.get("deck_id") == deck_id
+            and record.get("path", record.get("relative_path")) == raw_path
+        ]
+        if not matches:
+            blockers.append({"reason": "missing_persisted_artifact", "path": raw_path})
+            continue
+        if len(matches) != 1:
+            blockers.append({"reason": "ambiguous_persisted_artifact", "path": raw_path})
+            continue
+        record = matches[0]
+        digest = record.get("sha256")
+        resolved = project_root / path
+        if not resolved.is_file():
+            blockers.append({"reason": "missing_persisted_artifact_file", "path": raw_path})
+        elif not isinstance(digest, str) or _SHA256.fullmatch(digest) is None:
+            blockers.append({"reason": "invalid_persisted_artifact_digest", "path": raw_path})
+        elif hashlib.sha256(resolved.read_bytes()).hexdigest() != digest:
+            blockers.append({"reason": "persisted_artifact_digest_mismatch", "path": raw_path})
+
+
 def _final_visual_review(
     project_root: Path, deck_id: str, completion: Mapping[str, Any], blockers: list[dict[str, Any]]
 ) -> dict[str, Any] | None:
@@ -726,6 +795,9 @@ def _final_visual_review(
         return None
     if document.get("deck_id") != deck_id:
         blockers.append({"reason": "visual_review_deck_id_mismatch"})
+    if document.get("output_format") != "pptx":
+        blockers.append({"reason": "output_format_pptx_required"})
+    _verify_persisted_png_records(project_root, deck_id, document, blockers)
     try:
         derived = derive_overall_status(document)
         if derived.status != "passed" or not derived.completion_allowed:
@@ -736,6 +808,10 @@ def _final_visual_review(
     digest_map = completion.get("artifact_digests", document.get("artifact_digests"))
     if not isinstance(digest_map, Mapping):
         blockers.append({"reason": "final_artifact_digests_required"})
+    elif isinstance(document, Mapping):
+        for png_path in sorted(_png_paths(document)):
+            if png_path not in digest_map:
+                blockers.append({"reason": "final_png_digest_required", "path": png_path})
     if isinstance(artifacts, Mapping):
         pptx_path = artifacts.get("pptx")
         if not isinstance(pptx_path, str) or not pptx_path:

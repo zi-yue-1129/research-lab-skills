@@ -24,7 +24,7 @@ from presentation_gates import (
     assert_production_allowed,
 )
 from presentation_state import create_deck, create_slide, create_visual_module, load_visual_modules, record_review, set_deck_status, set_module_status
-from presentation_events import create_assignment_record
+from presentation_events import create_assignment_record, load_events, load_plans, append_event
 from presentation_events import register_plan_record
 
 
@@ -187,6 +187,81 @@ def test_generic_record_review_cannot_bypass_atomic_production_review(tmp_path: 
     assert set(error) == {"error", "predicate", "deck_id", "blockers"}
 
 
+@pytest.mark.parametrize("review_status", ["failed", "blocked"])
+def test_generic_failed_or_blocked_review_cannot_write_low_level_evidence(tmp_path: Path, review_status: str) -> None:
+    """Incomplete generic production reviews fail closed without state events."""
+    project = _project(tmp_path)
+    deck = create_deck(project, "Test deck")
+    slide = create_slide(project, deck["id"], "slide-01", "Evidence")
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--record-review", "--subject-type", "slide",
+         "--subject-id", slide["id"], "--reviewer-id", "reviewer",
+         "--reviewer-role", "scientific", "--status", review_status, "--json"],
+        cwd=project, capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 1
+    error = json.loads(result.stdout)
+    assert error["error"] == "ReviewGateError"
+    assert set(error) == {"error", "predicate", "deck_id", "blockers"}
+    assert load_events(project) == []
+
+
+def test_unknown_generic_slide_pass_returns_exact_gate_json(tmp_path: Path) -> None:
+    """Unknown gated slide pass attempts use the four-key gate contract."""
+    project = _project(tmp_path)
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--set-slide-status", "--slide-id", "sld_missing",
+         "--status", "passed", "--json"],
+        cwd=project, capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 1
+    error = json.loads(result.stdout)
+    assert set(error) == {"error", "predicate", "deck_id", "blockers"}
+    assert error["error"] == "ReviewGateError"
+
+
+def _append_bound_content_review(
+    project: Path,
+    deck_id: str,
+    review_id: str,
+    round_number: int,
+    status: str,
+    plan_id: str,
+    plan_version: int,
+    plan_sha256: str,
+    ts: str,
+) -> None:
+    """Append one content review event with explicit plan identity."""
+    append_event(project, {
+        "event": "review_result", "id": review_id, "subject_type": "deck", "subject_id": deck_id,
+        "reviewer_id": "reviewer-b", "reviewer_role": "content", "identity_verifiable": True,
+        "status": status, "findings": [], "round": round_number, "ts": ts,
+        "current_plan_id": plan_id, "current_plan_version": plan_version,
+        "current_plan_sha256": plan_sha256,
+    })
+
+
+def test_plan_review_selection_filters_current_identity_before_latest_round(tmp_path: Path) -> None:
+    """A stale round two cannot mask a valid current-plan round one."""
+    project, deck_id, plan_path = _registered_plan(tmp_path)
+    current = next(record for record in load_plans(project).values() if record["deck_id"] == deck_id)
+    current_digest = contract_sha256(yaml.safe_load(plan_path.read_text(encoding="utf-8")))
+    _append_bound_content_review(project, deck_id, "rev-current", 1, "passed", current["id"], 1, current_digest, "2026-08-08T00:00:01Z")
+    _append_bound_content_review(project, deck_id, "rev-stale", 2, "failed", current["id"], 1, "f" * 64, "2026-08-08T00:00:02Z")
+    assert assert_plan_approvable(project, _approval(project, deck_id, plan_path))["deck"]["id"] == deck_id
+
+
+def test_plan_review_selection_keeps_current_failure_blocking_against_stale_pass(tmp_path: Path) -> None:
+    """A stale pass cannot mask a failing review bound to the current plan."""
+    project, deck_id, plan_path = _registered_plan(tmp_path)
+    current = next(record for record in load_plans(project).values() if record["deck_id"] == deck_id)
+    current_digest = contract_sha256(yaml.safe_load(plan_path.read_text(encoding="utf-8")))
+    _append_bound_content_review(project, deck_id, "rev-current", 1, "failed", current["id"], 1, current_digest, "2026-08-08T00:00:01Z")
+    _append_bound_content_review(project, deck_id, "rev-stale", 2, "passed", current["id"], 1, "f" * 64, "2026-08-08T00:00:02Z")
+    with pytest.raises(ApprovalGateError, match="content_review:failed"):
+        assert_plan_approvable(project, _approval(project, deck_id, plan_path))
+
+
 def _approved_module_project(tmp_path: Path) -> tuple[Path, str, str, dict, dict]:
     """Create an approved deck and one ready module with a persisted spec."""
     project, deck_id, plan_path = _registered_plan(tmp_path)
@@ -265,3 +340,53 @@ def test_publication_requires_existing_matching_artifact_and_assignment_binding(
     import hashlib
     artifact["sha256"] = hashlib.sha256(output.read_bytes()).hexdigest()
     assert assert_module_publishable(project, module_id, artifact)["artifact"]["module_id"] == module_id
+
+
+def test_publication_resolves_explicit_current_assignment_not_insertion_order(tmp_path: Path) -> None:
+    """A stale later assignment cannot mask the module's explicit current one."""
+    project, deck_id, module_id, module, spec = _approved_module_project(tmp_path)
+    first = create_assignment_record(
+        project, deck_id, module_id=module_id, assignment_path="assignment-current.yaml",
+        worker_id="worker-current", worker_type="architecture", spec_sha256=contract_sha256(spec),
+        dependencies=[], inputs_resolved=True, slide_id=module["slide_id"],
+    )
+    second = create_assignment_record(
+        project, deck_id, module_id=module_id, assignment_path="assignment-stale.yaml",
+        worker_id="worker-stale", worker_type="architecture", spec_sha256=contract_sha256(spec),
+        dependencies=[], inputs_resolved=True, slide_id=module["slide_id"],
+    )
+    modules_path = project / ".research/presentations/state/visual_modules.yaml"
+    modules = yaml.safe_load(modules_path.read_text(encoding="utf-8"))
+    modules["visual_modules"][module_id]["assignment_path"] = "assignment-current.yaml"
+    modules_path.write_text(yaml.safe_dump(modules), encoding="utf-8")
+    set_module_status(project, module_id, "assigned")
+    output = project / "artifacts/current.svg"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text("current", encoding="utf-8")
+    import hashlib
+    artifact = {
+        "module_id": module_id, "assignment_id": first["id"], "producer_id": "worker-current",
+        "spec_sha256": contract_sha256(spec), "path": "artifacts/current.svg",
+        "sha256": hashlib.sha256(output.read_bytes()).hexdigest(),
+    }
+    assert assert_module_publishable(project, module_id, artifact)["assignment"]["id"] == first["id"]
+    assert second["id"] != first["id"]
+
+
+def test_publication_rejects_ambiguous_current_assignment(tmp_path: Path) -> None:
+    """Duplicate current assignment references fail closed."""
+    project, deck_id, module_id, module, spec = _approved_module_project(tmp_path)
+    first = create_assignment_record(
+        project, deck_id, module_id=module_id, assignment_path="same.yaml", worker_id="worker-a",
+        worker_type="architecture", spec_sha256=contract_sha256(spec), dependencies=[], inputs_resolved=True,
+        slide_id=module["slide_id"],
+    )
+    second = create_assignment_record(
+        project, deck_id, module_id=module_id, assignment_path="same.yaml", worker_id="worker-b",
+        worker_type="architecture", spec_sha256=contract_sha256(spec), dependencies=[], inputs_resolved=True,
+        slide_id=module["slide_id"],
+    )
+    set_module_status(project, module_id, "assigned")
+    with pytest.raises(PublicationGateError, match="ambiguous_assignment"):
+        assert_module_publishable(project, module_id, {"module_id": module_id})
+    assert first["id"] != second["id"]
