@@ -14,7 +14,12 @@ from typing import Any
 
 import yaml
 
-from presentation_contracts import contract_sha256, load_contract, validate_schema_version
+from presentation_contracts import (
+    canonical_json_bytes,
+    contract_sha256,
+    load_contract,
+    validate_schema_version,
+)
 
 
 _CANVAS_WIDTH = 1200
@@ -190,11 +195,23 @@ def _validate_protected_digest(
     value = doc.get(value_field)
     if value is None:
         return
+    if not _is_json_compatible(value):
+        errors.append(f"{value_field}: must be JSON-compatible protected content")
+        return
     expected_digest = contract_sha256(value)
     if digest != expected_digest:
         errors.append(
             f"{digest_field}: does not match canonical digest of {value_field}"
         )
+
+
+def _is_json_compatible(value: Any) -> bool:
+    """Return whether a protected value can be canonicalized as JSON."""
+    try:
+        canonical_json_bytes(value)
+    except (TypeError, ValueError):
+        return False
+    return True
 
 
 def _validate_string_list(

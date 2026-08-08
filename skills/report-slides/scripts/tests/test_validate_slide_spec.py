@@ -1,5 +1,6 @@
 """Tests for the strict Slide Specification validator."""
 
+from datetime import date
 import json
 import subprocess
 import sys
@@ -125,6 +126,24 @@ def test_slide_spec_protected_digests_match_approved_content() -> None:
     evidence_mutation["approved_evidence_refs"] = ["E-OBS", "E-LATENT"]
     evidence_errors = validate_slide_spec(evidence_mutation)
     assert any("approved_evidence_sha256" in error for error in evidence_errors)
+
+
+def test_slide_spec_cli_rejects_yaml_date_protected_value_without_traceback(
+    tmp_path: Path,
+) -> None:
+    """Return structured JSON when YAML parses protected content as a date."""
+    spec = valid_slide_spec()
+    spec["approved_takeaway"] = date(2026, 8, 8)
+    path = tmp_path / "date-slide-spec.yaml"
+    path.write_text(yaml.safe_dump(spec), encoding="utf-8")
+
+    result = _run("--spec", str(path), "--json")
+
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    data = json.loads(result.stdout)
+    assert data["valid"] is False
+    assert any("approved_takeaway" in error for error in data["errors"])
 
 
 def test_slide_spec_cli_reports_json_result(tmp_path: Path) -> None:
