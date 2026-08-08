@@ -196,8 +196,8 @@ def load_review_results(
 
     Returns:
         Review result mappings in deterministic chronological order.  Legacy
-        records without ``reviewer_id`` receive their reviewer role as the
-        identity so history remains readable without inventing a new actor.
+        records are returned exactly as persisted so unverifiable evidence is
+        never upgraded into an approval-grade identity.
 
     Raises:
         StateParseError: If any event shard contains malformed JSONL.
@@ -209,18 +209,24 @@ def load_review_results(
 
 
 def effective_review_results(reviews: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Select the latest review round for each subject and reviewer role.
+    """Select the latest review round for each typed subject and reviewer role.
 
     Full history remains available to callers through ``load_review_results``;
     workflow predicates consume only this deterministic effective view.
     """
-    latest: dict[tuple[str, str], dict[str, Any]] = {}
+    latest: dict[tuple[str, str, str], dict[str, Any]] = {}
     for review in reviews:
+        subject_type = review.get("subject_type")
         subject_id = review.get("subject_id")
         role = review.get("reviewer_role")
-        if not isinstance(subject_id, str) or not isinstance(role, str):
+        if (
+            not isinstance(subject_type, str)
+            or not subject_type.strip()
+            or not isinstance(subject_id, str)
+            or not isinstance(role, str)
+        ):
             continue
-        key = (subject_id, role)
+        key = (subject_type, subject_id, role)
         previous = latest.get(key)
         current_order = (
             int(review.get("round", 1)) if isinstance(review.get("round", 1), int) else 1,
@@ -234,7 +240,23 @@ def effective_review_results(reviews: list[dict[str, Any]]) -> list[dict[str, An
         )
         if previous is None or current_order > previous_order:
             latest[key] = review
-    return sorted(latest.values(), key=lambda review: (str(review.get("subject_id", "")), str(review.get("reviewer_role", ""))))
+    return sorted(
+        latest.values(),
+        key=lambda review: (
+            str(review.get("subject_type", "")),
+            str(review.get("subject_id", "")),
+            str(review.get("reviewer_role", "")),
+        ),
+    )
+
+
+def _reviewer_identity_is_verifiable(review: dict[str, Any]) -> bool:
+    """Return whether a persisted review has a canonical reviewer identity."""
+    reviewer_id = review.get("reviewer_id")
+    if not isinstance(reviewer_id, str) or not reviewer_id or reviewer_id != reviewer_id.strip():
+        return False
+    identity_flag = review.get("identity_verifiable")
+    return identity_flag is None or identity_flag is True
 
 
 def workflow_blockers(
@@ -262,7 +284,7 @@ def workflow_blockers(
                 "reason": assignment["blocker"],
             })
     for review in effective_review_results(reviews):
-        if not review.get("reviewer_id"):
+        if not _reviewer_identity_is_verifiable(review):
             blockers.append({"subject_type": review.get("subject_type"), "subject_id": review.get("subject_id"), "reason": "reviewer_identity_unverifiable"})
         if review.get("status") in {"failed", "blocked"}:
             blockers.append({
@@ -286,14 +308,20 @@ def next_actions(
     draft_preview: dict[str, Any] | None,
 ) -> list[str]:
     """Compute legal next workflow actions from effective review outcomes."""
-    roles_by_subject: dict[str, set[str]] = {}
+    roles_by_subject: dict[tuple[str, str], set[str]] = {}
     for review in effective_review_results(reviews):
-        if review.get("status") == "passed" and review.get("reviewer_id"):
-            roles_by_subject.setdefault(str(review.get("subject_id")), set()).add(str(review.get("reviewer_role")))
+        subject_type = review.get("subject_type")
+        subject_id = review.get("subject_id")
+        role = review.get("reviewer_role")
+        if not isinstance(subject_type, str) or not isinstance(subject_id, str) or not isinstance(role, str):
+            continue
+        subject_key = (subject_type, subject_id)
+        if review.get("status") == "passed" and _reviewer_identity_is_verifiable(review):
+            roles_by_subject.setdefault(subject_key, set()).add(role)
         if review.get("status") in {"failed", "blocked"}:
-            roles_by_subject.setdefault(str(review.get("subject_id")), set()).discard(str(review.get("reviewer_role")))
+            roles_by_subject.setdefault(subject_key, set()).discard(role)
     for slide in slides:
-        roles = roles_by_subject.get(slide["id"], set())
+        roles = roles_by_subject.get(("slide", slide["id"]), set())
         if "scientific" in roles and "visual_quality" not in roles:
             return ["record_visual_quality_review"]
         if "visual_quality" in roles and "scientific" not in roles:
@@ -301,7 +329,7 @@ def next_actions(
     if not plans:
         return ["register_plan"]
     if deck.get("status") == "planning":
-        deck_roles = roles_by_subject.get(deck["id"], set())
+        deck_roles = roles_by_subject.get(("deck", deck["id"]), set())
         if "content" not in deck_roles and "content_reviewer" not in deck_roles:
             return ["record_content_review"]
         return ["approve_deck"]

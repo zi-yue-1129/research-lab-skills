@@ -3,6 +3,7 @@ import json
 import subprocess
 import sys
 import yaml
+import pytest
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parent.parent / "presentation_state.py"
@@ -622,6 +623,49 @@ def test_legacy_keyword_review_call_persists_unverifiable_identity(tmp_path: Pat
 
     assert result["reviewer_id"] is None
     assert load_review_results(project)[0]["reviewer_id"] is None
+
+
+@pytest.mark.parametrize("reviewer_id", ["", "   ", 123, object()])
+def test_record_review_rejects_invalid_reviewer_identity(
+    tmp_path: Path, reviewer_id: object
+) -> None:
+    """Invalid reviewer IDs are rejected before an event can be persisted."""
+    project = _make_project(tmp_path)
+    deck_id, _ = _make_deck_and_slide(project)
+    from presentation_state import load_review_results, record_review
+
+    with pytest.raises(ValueError, match="reviewer_id"):
+        record_review(
+            project,
+            "deck",
+            deck_id,
+            reviewer_id=reviewer_id,
+            reviewer_role="content_reviewer",
+            status="passed",
+        )
+
+    assert load_review_results(project) == []
+
+
+def test_plan_review_does_not_satisfy_deck_review_action(tmp_path: Path) -> None:
+    """A plan review cannot satisfy the deck review requirement for its ID."""
+    project = _make_project(tmp_path)
+    deck_id, _ = _make_deck_and_slide(project)
+    from presentation_state import query, record_review, register_plan_record
+
+    register_plan_record(project, deck_id, "plans/plan.yaml", "a" * 64, "planner")
+    record_review(
+        project,
+        "plan",
+        deck_id,
+        reviewer_id="reviewer",
+        reviewer_role="content_reviewer",
+        status="passed",
+    )
+
+    snapshot = query(project, deck_id)
+
+    assert snapshot["next_actions"] == ["record_content_review"]
 
 
 def test_latest_review_round_controls_effective_next_action(tmp_path: Path) -> None:

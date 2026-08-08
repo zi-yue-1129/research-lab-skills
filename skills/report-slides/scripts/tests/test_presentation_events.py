@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from presentation_events import StateParseError, load_review_results
+from presentation_events import StateParseError, effective_review_results, load_review_results
 from presentation_state import (
     create_artifact_record,
     create_assignment_record,
@@ -205,3 +205,127 @@ def test_assignment_failure_before_module_update_persists_no_record(
         )
 
     assert not load_assignments(project)
+
+
+def test_integrity_scan_rejects_cross_slide_assignment_and_artifact_pairing(
+    tmp_path: Path,
+) -> None:
+    """Validation rejects same-deck records pairing a module with another slide."""
+    project = make_project(tmp_path)
+    deck = create_deck(project, "Coherence")
+    first_slide = create_slide(project, deck["id"], "slide-01", "First")
+    second_slide = create_slide(project, deck["id"], "slide-02", "Second")
+    module = create_visual_module(project, first_slide["id"], "module", "architecture")
+    assignment = create_assignment_record(
+        project,
+        deck["id"],
+        slide_id=first_slide["id"],
+        module_id=module["id"],
+        assignment_path="assignments/module.yaml",
+        worker_id="worker",
+        worker_type="architecture",
+        spec_sha256="a" * 64,
+    )
+    artifact = create_artifact_record(
+        project,
+        deck["id"],
+        artifact_kind="slide-svg",
+        artifact_path="slides/module.svg",
+        sha256="b" * 64,
+        producer_id="worker",
+        slide_id=first_slide["id"],
+        module_id=module["id"],
+    )
+
+    state_root = project / ".research" / "presentations" / "state"
+    assignments_path = state_root / "assignments.yaml"
+    assignments_doc = yaml.safe_load(assignments_path.read_text(encoding="utf-8"))
+    assignments_doc["assignments"][assignment["id"]]["slide_id"] = second_slide["id"]
+    assignments_path.write_text(yaml.safe_dump(assignments_doc), encoding="utf-8")
+    artifacts_path = state_root / "artifacts.yaml"
+    artifacts_doc = yaml.safe_load(artifacts_path.read_text(encoding="utf-8"))
+    artifacts_doc["artifacts"][artifact["id"]]["slide_id"] = second_slide["id"]
+    artifacts_path.write_text(yaml.safe_dump(artifacts_doc), encoding="utf-8")
+
+    from presentation_state import validate_referential_integrity
+
+    violations = validate_referential_integrity(project)
+
+    assert any(
+        violation["entity"] == "assignment"
+        and violation["field"] == "slide_id"
+        and violation["missing_id"] == first_slide["id"]
+        for violation in violations
+    )
+    assert any(
+        violation["entity"] == "artifact"
+        and violation["field"] == "slide_id"
+        and violation["missing_id"] == first_slide["id"]
+        for violation in violations
+    )
+
+
+@pytest.mark.parametrize("record_kind", ["assignment", "artifact"])
+def test_records_reject_same_deck_cross_slide_pairing(
+    tmp_path: Path, record_kind: str
+) -> None:
+    """Record writers reject a module paired with a different same-deck slide."""
+    project = make_project(tmp_path)
+    deck = create_deck(project, "Coherence")
+    first_slide = create_slide(project, deck["id"], "slide-01", "First")
+    second_slide = create_slide(project, deck["id"], "slide-02", "Second")
+    module = create_visual_module(project, first_slide["id"], "module", "architecture")
+
+    with pytest.raises(ValueError, match="does not belong to slide"):
+        if record_kind == "assignment":
+            create_assignment_record(
+                project,
+                deck["id"],
+                slide_id=second_slide["id"],
+                module_id=module["id"],
+                assignment_path="assignments/module.yaml",
+                worker_id="worker",
+                worker_type="architecture",
+                spec_sha256="a" * 64,
+            )
+        else:
+            create_artifact_record(
+                project,
+                deck["id"],
+                artifact_kind="slide-svg",
+                artifact_path="slides/module.svg",
+                sha256="b" * 64,
+                producer_id="worker",
+                slide_id=second_slide["id"],
+                module_id=module["id"],
+            )
+
+
+def test_effective_reviews_keep_subject_types_separate() -> None:
+    """Plan and deck reviews sharing an ID do not supersede one another."""
+    reviews = [
+        {
+            "id": "review-plan",
+            "subject_type": "plan",
+            "subject_id": "deck-1",
+            "reviewer_role": "content",
+            "reviewer_id": "reviewer",
+            "status": "passed",
+            "round": 1,
+            "ts": "2026-08-08T00:00:00Z",
+        },
+        {
+            "id": "review-deck",
+            "subject_type": "deck",
+            "subject_id": "deck-1",
+            "reviewer_role": "content",
+            "reviewer_id": "reviewer",
+            "status": "failed",
+            "round": 2,
+            "ts": "2026-08-08T00:01:00Z",
+        },
+    ]
+
+    effective = effective_review_results(reviews)
+
+    assert {review["id"] for review in effective} == {"review-plan", "review-deck"}

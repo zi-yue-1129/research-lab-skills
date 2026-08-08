@@ -584,6 +584,12 @@ def record_review(
         status = legacy_status
         findings = legacy_findings if isinstance(legacy_findings, list) else None
         round_number = legacy_round
+    if reviewer_id is not None:
+        if not isinstance(reviewer_id, str):
+            raise ValueError("reviewer_id must be a non-empty trimmed string or null")
+        reviewer_id = reviewer_id.strip()
+        if not reviewer_id:
+            raise ValueError("reviewer_id must be a non-empty trimmed string or null")
     if not isinstance(reviewer_role, str) or not reviewer_role.strip():
         raise ValueError("reviewer_role is required")
     if subject_type not in _REVIEW_SUBJECT_TYPES:
@@ -830,6 +836,8 @@ def validate_referential_integrity(project_root: Path) -> list:
             module_slide = modules[module_id].get("slide_id")
             if module_slide not in slides or slides[module_slide].get("deck_id") != assignment_deck:
                 violations.append({"entity": "assignment", "id": assignment_id, "field": "module_id", "missing_id": module_id})
+            elif slide_id is not None and module_slide != slide_id:
+                violations.append({"entity": "assignment", "id": assignment_id, "field": "slide_id", "missing_id": module_slide})
         for dependency in assignment.get("dependencies", []):
             if dependency not in modules:
                 violations.append({"entity": "assignment", "id": assignment_id, "field": "dependencies", "missing_id": dependency})
@@ -853,6 +861,8 @@ def validate_referential_integrity(project_root: Path) -> list:
             module_slide = modules[module_id].get("slide_id")
             if module_slide not in slides or slides[module_slide].get("deck_id") != artifact_deck:
                 violations.append({"entity": "artifact", "id": artifact_id, "field": "module_id", "missing_id": module_id})
+            elif slide_id is not None and module_slide != slide_id:
+                violations.append({"entity": "artifact", "id": artifact_id, "field": "slide_id", "missing_id": module_slide})
     return violations
 
 
