@@ -894,3 +894,91 @@ def test_publisher_provenance_registers_current_slide_and_contact_preview(
     registered = register_draft_preview(project, preview)
     assert registered["preview"]["deck_id"] == deck_id
     assert contact_artifact["artifact_kind"] == "review-sheet"
+
+
+def test_review_sheet_publication_verifies_current_source_bytes_before_writes(
+    tmp_path: Path,
+) -> None:
+    """Tampering with a current slide PNG blocks review-sheet publication."""
+    project, deck_id, slide_id, _ = approved_assignment(tmp_path)
+    _configure_slides_role(project)
+    for status in ("ready", "assigned", "producing", "review_required"):
+        set_slide_status(project, slide_id, status)
+    record_review(project, "slide", slide_id, "scientific-reviewer", "scientific", "passed")
+    record_review(project, "slide", slide_id, "visual-reviewer", "visual_quality", "passed")
+    set_slide_status(project, slide_id, "passed")
+    set_deck_status(project, deck_id, "producing")
+    set_deck_status(project, deck_id, "draft_review")
+
+    staged_slide = tmp_path / "staged-slide.png"
+    Image.new("RGB", (40, 20), (10, 40, 90)).save(staged_slide)
+    slide_destination = project / "docs/slides/rendered/slide-01.png"
+    publish_artifact(
+        project,
+        deck_id,
+        staged_slide,
+        slide_destination,
+        "slide-png",
+        slide_id,
+        None,
+        "worker-a",
+        project / "slide-spec.yaml",
+    )
+    staged_contact = tmp_path / "staged-contact.png"
+    compose_review_sheet([slide_destination], staged_contact, columns=1, cell_width=40, cell_height=20)
+    slide_destination.write_bytes(b"tampered-current-slide")
+    contact_destination = project / "docs/slides/rendered/contact-sheet.png"
+    before_artifacts = load_artifacts(project)
+
+    with pytest.raises(PublicationGateError, match="source|digest|provenance"):
+        publish_artifact(
+            project,
+            deck_id,
+            staged_contact,
+            contact_destination,
+            "review-sheet",
+            None,
+            None,
+            "renderer",
+            project / "plan.yaml",
+        )
+
+    assert not contact_destination.exists()
+    assert load_artifacts(project) == before_artifacts
+    assert not list(contact_destination.parent.glob(".*.tmp"))
+
+
+def test_review_sheet_publication_rejects_missing_current_source_without_pollution(
+    tmp_path: Path,
+) -> None:
+    """Deleting the current slide PNG blocks review-sheet publication early."""
+    project, deck_id, slide_id, _ = approved_assignment(tmp_path)
+    _configure_slides_role(project)
+    for status in ("ready", "assigned", "producing", "review_required"):
+        set_slide_status(project, slide_id, status)
+    record_review(project, "slide", slide_id, "scientific-reviewer", "scientific", "passed")
+    record_review(project, "slide", slide_id, "visual-reviewer", "visual_quality", "passed")
+    set_slide_status(project, slide_id, "passed")
+    set_deck_status(project, deck_id, "producing")
+    set_deck_status(project, deck_id, "draft_review")
+    staged_slide = tmp_path / "staged-slide.png"
+    Image.new("RGB", (40, 20), (10, 40, 90)).save(staged_slide)
+    slide_destination = project / "docs/slides/rendered/slide-01.png"
+    publish_artifact(
+        project, deck_id, staged_slide, slide_destination, "slide-png", slide_id,
+        None, "worker-a", project / "slide-spec.yaml",
+    )
+    staged_contact = tmp_path / "staged-contact.png"
+    compose_review_sheet([slide_destination], staged_contact, columns=1, cell_width=40, cell_height=20)
+    slide_destination.unlink()
+    contact_destination = project / "docs/slides/rendered/contact-sheet.png"
+    before_artifacts = load_artifacts(project)
+
+    with pytest.raises(PublicationGateError, match="source|missing|provenance"):
+        publish_artifact(
+            project, deck_id, staged_contact, contact_destination, "review-sheet", None,
+            None, "renderer", project / "plan.yaml",
+        )
+
+    assert not contact_destination.exists()
+    assert load_artifacts(project) == before_artifacts

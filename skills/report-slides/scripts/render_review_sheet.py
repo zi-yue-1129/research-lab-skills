@@ -4,7 +4,6 @@ import argparse
 import hashlib
 import json
 import math
-import os
 import sys
 from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
@@ -41,12 +40,21 @@ def contact_sheet_source_digest(input_paths: Sequence[Path]) -> str:
         raise ValueError("at least one input image is required")
     if len(set(paths)) != len(paths):
         raise ValueError("input image paths must be unique")
-    raw_labels = [path.as_posix() for path in paths]
+    labels: list[str] = []
     if all(path.is_absolute() for path in paths):
-        common_parent = Path(os.path.commonpath([str(path.parent) for path in paths]))
-        labels = [path.relative_to(common_parent).as_posix() for path in paths]
+        try:
+            project_root = find_project_root(paths[0].parent)
+            root = project_root.resolve()
+            for path in paths:
+                labels.append(path.resolve(strict=True).relative_to(root).as_posix())
+        except (OSError, ValueError, RuntimeError) as error:
+            raise ValueError(
+                "absolute input paths must belong to a project with a .git root"
+            ) from error
+    elif any(path.is_absolute() for path in paths):
+        raise ValueError("input paths must be all relative or all absolute")
     else:
-        labels = raw_labels
+        labels = [path.as_posix() for path in paths]
     digests: list[str] = []
     for path in paths:
         if not path.is_file():

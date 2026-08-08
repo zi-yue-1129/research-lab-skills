@@ -6,6 +6,7 @@ cannot drift from the evidence fields consumed by the draft-review gate.
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -118,16 +119,16 @@ def validate_artifact_provenance(
     _require_nonempty_text(deck_id, "deck_id")
     if not isinstance(artifact_kind, str) or not artifact_kind.strip():
         raise ValueError("artifact_kind is required")
+    if artifact_kind == REVIEW_SHEET_KIND and (slide_id is not None or module_id is not None):
+        raise ValueError("review-sheet provenance forbids slide_id/module_id")
+    if artifact_kind == SLIDE_PNG_KIND and module_id is not None:
+        raise ValueError("slide-png provenance forbids module_id")
     if plan_version is not None:
         _require_positive_int(plan_version, "plan_version")
     if plan_sha256 is not None:
         _require_digest(plan_sha256, "plan_sha256")
     if (plan_version is None) != (plan_sha256 is None):
         raise ValueError("plan_version and plan_sha256 must be supplied together")
-    if artifact_kind == REVIEW_SHEET_KIND and (slide_id is not None or module_id is not None):
-        raise ValueError("review-sheet provenance forbids slide_id/module_id")
-    if artifact_kind == SLIDE_PNG_KIND and module_id is not None:
-        raise ValueError("slide-png provenance forbids module_id")
     if slide_record_id is not None:
         _require_nonempty_text(slide_record_id, "slide_record_id")
     if attempt is not None:
@@ -265,7 +266,7 @@ def derive_published_provenance(
         slide = slides[slide_id]
         if slide.get("deck_id") != deck_id or slide.get("status") == "superseded":
             raise ValueError("current slide record is stale")
-        attempt = _require_positive_int(slide.get("attempt", 1), "attempt")
+        attempt = _require_positive_int(slide.get("attempt"), "attempt")
         return validate_artifact_provenance(
             artifact_kind,
             deck_id=deck_id,
@@ -283,7 +284,7 @@ def derive_published_provenance(
     for plan_slide_id in ordered_ids:
         current = by_plan_id[plan_slide_id]
         record_id = current.get("id")
-        attempt = _require_positive_int(current.get("attempt", 1), "attempt")
+        attempt = _require_positive_int(current.get("attempt"), "attempt")
         matches = [
             artifact for artifact in artifacts.values()
             if artifact.get("deck_id") == deck_id
@@ -299,8 +300,30 @@ def derive_published_provenance(
         digest = artifact.get("sha256")
         if not isinstance(raw_path, str) or not isinstance(digest, str):
             raise ValueError("current slide-png provenance is incomplete")
-        paths.append(canonical_relative_path(raw_path))
-        digests.append(_require_digest(digest, "slide-png sha256"))
+        artifact_plan_version = artifact.get("plan_version")
+        if type(artifact_plan_version) is not int or artifact_plan_version != plan_version:
+            raise ValueError("current slide-png plan version mismatch")
+        if artifact.get("plan_sha256") != plan_sha256:
+            raise ValueError("current slide-png plan digest mismatch")
+        producer_id = artifact.get("producer_id")
+        if not isinstance(producer_id, str) or not producer_id.strip():
+            raise ValueError("current slide-png producer identity is required")
+        relative = canonical_relative_path(raw_path)
+        candidate = (project_root / relative).resolve(strict=False)
+        root = project_root.resolve()
+        try:
+            candidate.relative_to(root)
+        except ValueError as exc:
+            raise ValueError("current slide-png path escapes project root") from exc
+        source_path = project_root / relative
+        if source_path.is_symlink() or not source_path.is_file():
+            raise ValueError("current slide-png source file is missing or unsafe")
+        actual_digest = hashlib.sha256(source_path.read_bytes()).hexdigest()
+        expected_digest = _require_digest(digest, "slide-png sha256")
+        if actual_digest != expected_digest:
+            raise ValueError("current slide-png source digest mismatch")
+        paths.append(relative)
+        digests.append(expected_digest)
     source_sha256 = canonical_source_digest(paths, digests)
     return validate_artifact_provenance(
         artifact_kind,

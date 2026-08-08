@@ -187,6 +187,34 @@ def test_slide_png_forbidden_module_subject_precedes_invalid_attempt_without_wri
         assert artifacts_path.read_bytes() == prior_bytes
 
 
+def test_forbidden_review_sheet_subject_precedes_boolean_plan_and_bad_digest(
+    tmp_path: Path,
+) -> None:
+    """Forbidden review-sheet subjects are reported before unrelated fields."""
+    project = make_project(tmp_path)
+    deck = create_deck(project, "Evidence")
+    slide = create_slide(project, deck["id"], "slide-01", "Takeaway")
+    artifacts_path = project / ".research/presentations/state/artifacts.yaml"
+    before = artifacts_path.read_bytes() if artifacts_path.exists() else b""
+
+    with pytest.raises(ValueError, match="review-sheet|slide_id"):
+        create_artifact_record(
+            project,
+            deck["id"],
+            "review-sheet",
+            "renders/contact-sheet.png",
+            "e" * 64,
+            "renderer",
+            slide_id=slide["id"],
+            plan_version=True,
+            plan_sha256="not-a-digest",
+            source_paths=["renders/slide-01.png"],
+            source_sha256="not-a-digest",
+        )
+
+    assert (artifacts_path.read_bytes() if artifacts_path.exists() else b"") == before
+
+
 def test_typed_artifact_provenance_is_persisted_without_aliases(tmp_path: Path) -> None:
     """Valid typed provenance persists canonical fields exactly once."""
     project = make_project(tmp_path)

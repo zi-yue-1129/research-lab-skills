@@ -11,7 +11,12 @@ import pytest
 import yaml
 
 from presentation_contracts import contract_sha256
-from presentation_events import create_artifact_record, load_events, load_revision_requests
+from presentation_events import (
+    create_artifact_record,
+    load_events,
+    load_plans,
+    load_revision_requests,
+)
 from presentation_events import create_assignment_record
 from presentation_state import create_deck, create_slide, create_visual_module, load_decks, load_slides, load_visual_modules, record_review, set_module_status, set_slide_status
 from presentation_workflow import (
@@ -465,6 +470,107 @@ def test_content_review_is_bound_to_current_plan_and_new_plan_invalidates_old_re
     }), encoding="utf-8")
     with pytest.raises(ApprovalGateError):
         approve_deck(project, approval)
+
+
+@pytest.mark.parametrize("fail_at", [1, 2, 3])
+def test_register_plan_failure_restores_plan_destination_and_all_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fail_at: int
+) -> None:
+    """Every register-plan commit position restores exact replacement preimages."""
+    project, deck_id, _ = _approved_project(tmp_path)
+    second = copy.deepcopy(_plan(deck_id))
+    second["plan_version"] = 2
+    second["purpose"] = "Explain the updated result"
+    source = project / "plan-v2.yaml"
+    source.write_text(yaml.safe_dump(second), encoding="utf-8")
+    state_dir = project / ".research/presentations/state"
+    destination = project / "decks" / deck_id / "plans" / "plan-v0002.yaml"
+    tracked = [destination, state_dir / "plans.yaml", state_dir / "decks.yaml"]
+    before = {path: _file_preimage(path) for path in tracked}
+    monkeypatch.setenv("PRESENTATION_TRANSACTION_FAIL_AT", str(fail_at))
+
+    with pytest.raises(RuntimeError, match="injected transaction commit failure"):
+        register_plan(project, deck_id, source, "planner-a")
+
+    assert {path: _file_preimage(path) for path in tracked} == before
+    assert load_plans(project)
+    assert load_events(project)
+    assert load_decks(project)[deck_id]["draft_preview_id"] is None
+
+
+def test_register_plan_replacement_clears_approval_and_draft_pointers_atomically(
+    tmp_path: Path,
+) -> None:
+    """A successful replacement enters planning with no stale approval evidence."""
+    project, deck_id, _ = _approved_project(tmp_path)
+    decks_path = project / ".research/presentations/state/decks.yaml"
+    decks = yaml.safe_load(decks_path.read_text(encoding="utf-8"))
+    decks["decks"][deck_id].update({
+        "draft_preview_id": "preview-old",
+        "draft_approval_id": "approval-old",
+        "status": "validating",
+    })
+    decks_path.write_text(yaml.safe_dump(decks), encoding="utf-8")
+    second = copy.deepcopy(_plan(deck_id))
+    second["plan_version"] = 2
+    second["purpose"] = "Explain the updated result"
+    source = project / "plan-v2.yaml"
+    source.write_text(yaml.safe_dump(second), encoding="utf-8")
+
+    register_plan(project, deck_id, source, "planner-a")
+
+    deck = load_decks(project)[deck_id]
+    assert deck["status"] == "planning"
+    assert deck["draft_preview_id"] is None
+    assert deck["draft_approval_id"] is None
+    assert deck["approval_id"] is None
+    assert deck["approved_plan_version"] is None
+
+
+def test_register_plan_failure_restores_existing_destination_mode_and_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Replacing an existing immutable copy restores its exact mode and bytes."""
+    project, deck_id, _ = _approved_project(tmp_path)
+    second = copy.deepcopy(_plan(deck_id))
+    second["plan_version"] = 2
+    source = project / "plan-v2.yaml"
+    source.write_text(yaml.safe_dump(second), encoding="utf-8")
+    destination = project / "decks" / deck_id / "plans" / "plan-v0002.yaml"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_bytes(b"old-plan-copy")
+    destination.chmod(0o640)
+    before = _file_preimage(destination)
+    monkeypatch.setenv("PRESENTATION_TRANSACTION_FAIL_AT", "3")
+
+    with pytest.raises(RuntimeError, match="injected transaction commit failure"):
+        register_plan(project, deck_id, source, "planner-a")
+
+    assert _file_preimage(destination) == before
+
+
+def test_register_plan_new_failure_removes_created_plan_tree_and_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed first registration leaves no new plan file or empty tree."""
+    project = _project(tmp_path)
+    deck = create_deck(project, "Evidence deck", created_by="planner-a")
+    source = project / "plan.yaml"
+    source.write_text(yaml.safe_dump(_plan(deck["id"])), encoding="utf-8")
+    destination = project / "decks" / deck["id"] / "plans" / "plan-v0001.yaml"
+    state_dir = project / ".research/presentations/state"
+    before = {
+        state_dir / "decks.yaml": _file_preimage(state_dir / "decks.yaml"),
+        state_dir / "plans.yaml": _file_preimage(state_dir / "plans.yaml"),
+    }
+    monkeypatch.setenv("PRESENTATION_TRANSACTION_FAIL_AT", "3")
+
+    with pytest.raises(RuntimeError, match="injected transaction commit failure"):
+        register_plan(project, deck["id"], source, "planner-a")
+
+    assert _file_preimage(destination) == (False, b"", 0)
+    assert not destination.parent.exists()
+    assert {path: _file_preimage(path) for path in before} == before
 
 
 def test_draft_decision_requires_explicit_current_preview_identity(tmp_path: Path) -> None:

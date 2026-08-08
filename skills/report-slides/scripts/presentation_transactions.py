@@ -178,6 +178,7 @@ _ALLOWED_STATE_NAMES = frozenset({
     "assignments.yaml", "artifacts.yaml", "revision_requests.yaml",
 })
 _EVENT_SHARD_PATTERN = re.compile(r"\.research/presentations/events/(\d{4}-\d{2}-\d{2})\.jsonl")
+_PLAN_DESTINATION_PATTERN = re.compile(r"decks/[^/]+/plans/plan-v\d{4}\.yaml")
 _JOURNAL_FILENAME_PATTERN = re.compile(r"[0-9a-f]{32}\.json")
 
 
@@ -208,6 +209,8 @@ def _validate_journal_target(project_root: Path, raw_path: object) -> Path:
         name = relative[len(state_prefix):]
         if name not in _ALLOWED_STATE_NAMES:
             raise TransactionError(f"journal path is not an allowed state store: {relative}")
+    elif _PLAN_DESTINATION_PATTERN.fullmatch(relative):
+        pass
     else:
         match = _EVENT_SHARD_PATTERN.fullmatch(relative)
         if match is None:

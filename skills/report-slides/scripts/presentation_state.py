@@ -336,7 +336,7 @@ def create_slide(
             "id": slide_id, "deck_id": deck_id, "plan_slide_id": plan_slide_id, "title": title,
             "status": "planned", "created_at": now, "updated_at": now, "created_by": created_by,
             "approved_takeaway_sha256": None, "approved_evidence_sha256": None,
-            "slide_spec_path": None, "slide_spec_sha256": None,
+            "slide_spec_path": None, "slide_spec_sha256": None, "attempt": 1,
         }
         slides[slide_id] = record
         _save_yaml_map(path, "slides", slides)

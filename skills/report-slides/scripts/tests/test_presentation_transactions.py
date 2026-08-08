@@ -48,6 +48,57 @@ def test_transaction_order_matches_nested_writer_order(tmp_path: Path) -> None:
     assert transaction.paths == (modules, assignments, artifacts, requests)
 
 
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "decks/../plans/plan-v0001.yaml",
+        "decks/deck-a/plans/plan-v0001.yaml.tmp",
+        "decks/deck-a/plans/not-a-plan.yaml",
+        "decks/deck-a/plans/plan-v1.yaml",
+    ],
+)
+def test_plan_destination_allowlist_rejects_traversal_and_unexpected_names(
+    tmp_path: Path, relative: str
+) -> None:
+    """Plan destination validation fails before sidecar or target creation."""
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / ".git").mkdir()
+    target = project / relative
+
+    with pytest.raises(TransactionError, match="relative|allowed|normalized|journal"):
+        WorkflowTransaction([target], project)
+
+    assert not target.exists()
+    assert not target.with_suffix(target.suffix + ".lock").exists()
+
+
+@pytest.mark.parametrize("layout", ["decks", "plans"])
+def test_plan_destination_allowlist_rejects_symlinked_directories(
+    tmp_path: Path, layout: str
+) -> None:
+    """Symlinked deck/plan directories cannot redirect transaction targets."""
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / ".git").mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "sentinel"
+    sentinel.write_bytes(b"outside")
+    if layout == "decks":
+        (project / "decks").symlink_to(outside, target_is_directory=True)
+    else:
+        (project / "decks" / "deck-a").mkdir(parents=True)
+        (project / "decks" / "deck-a" / "plans").symlink_to(outside, target_is_directory=True)
+    target = project / "decks" / "deck-a" / "plans" / "plan-v0001.yaml"
+
+    with pytest.raises(TransactionError, match="escapes|project|symlink"):
+        WorkflowTransaction([target], project)
+
+    assert sentinel.read_bytes() == b"outside"
+    assert not (outside / "plan-v0001.yaml.lock").exists()
+
+
 def test_transaction_new_file_mode_honors_umask(tmp_path: Path) -> None:
     """A newly committed file follows open(0o666) and the process umask."""
     target = tmp_path / ".research/presentations/state/visual_modules.yaml"

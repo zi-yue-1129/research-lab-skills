@@ -101,6 +101,9 @@ def format_plan_preview(plan: dict[str, Any]) -> str:
         ValueError: If the plan is not a mapping with the required fields.
     """
     document = _require_mapping(plan, "plan")
+    mapping_key_errors = _mapping_key_blockers(document)
+    if mapping_key_errors:
+        raise ValueError("invalid mapping keys: " + "; ".join(str(item) for item in mapping_key_errors))
     errors = validate_deck_plan(dict(document))
     if errors:
         raise ValueError("invalid Deck Plan: " + "; ".join(errors))
@@ -229,6 +232,48 @@ def _raise_draft(deck_id: str, blockers: list[dict[str, Any]]) -> None:
         blockers,
         f"draft_reviewable blocked for deck {deck_id}: {summary}",
     )
+
+
+def validate_draft_decision_flags(decision: Mapping[str, Any], deck_id: str) -> None:
+    """Validate strict boolean fields in one Draft Decision mapping.
+
+    Args:
+        decision: Parsed Draft Decision contract.
+        deck_id: Deck identifier used for structured gate evidence.
+
+    Raises:
+        DraftGateError: If a boolean field has the wrong type or value.
+    """
+    if "yes_draft" in decision and type(decision.get("yes_draft")) is not bool:
+        raise DraftGateError(
+            "draft_approvable", deck_id,
+            [{"reason": "yes_draft must be a boolean"}],
+            f"draft_approvable blocked for deck {deck_id}: yes_draft must be a boolean",
+        )
+    identity_verifiable = decision.get("identity_verifiable")
+    if identity_verifiable is not None and (
+        type(identity_verifiable) is not bool or identity_verifiable is not True
+    ):
+        raise DraftGateError(
+            "draft_approvable", deck_id,
+            [{"reason": "identity_verifiable must be true"}],
+            f"draft_approvable blocked for deck {deck_id}: identity_verifiable must be true",
+        )
+
+
+def _mapping_key_blockers(value: Any, location: str = "preview") -> list[dict[str, Any]]:
+    """Return structured blockers for non-string mapping keys recursively."""
+    blockers: list[dict[str, Any]] = []
+    if isinstance(value, Mapping):
+        for key, nested in value.items():
+            if not isinstance(key, str):
+                blockers.append({"reason": "mapping keys must be strings", "path": location, "key": repr(key)})
+            child_location = f"{location}.{key!s}"
+            blockers.extend(_mapping_key_blockers(nested, child_location))
+    elif isinstance(value, list):
+        for index, nested in enumerate(value):
+            blockers.extend(_mapping_key_blockers(nested, f"{location}[{index}]"))
+    return blockers
 
 
 def _approved_plan(project_root: Path, deck: Mapping[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any] | None, list[dict[str, Any]]]:
@@ -501,10 +546,9 @@ def _binding_blockers(
         )
         if slide_record:
             expected_record_id = slide_record.get("id")
-            expected_attempt = slide_record.get("attempt", 1)
+            expected_attempt = slide_record.get("attempt")
             if type(expected_attempt) is not int or expected_attempt <= 0:
                 blockers.append({"reason": "current slide attempt required", "path": path})
-                expected_attempt = 1
             if not isinstance(entry.get("slide_record_id"), str) or not entry.get("slide_record_id"):
                 blockers.append({"reason": "slide_record_id_required", "path": path})
             if type(entry.get("attempt")) is not int or entry.get("attempt") <= 0:
@@ -643,10 +687,9 @@ def _persisted_artifact_blockers(
                 blockers.append({"reason": "current_slide_record_required", "path": relative})
                 continue
             expected_record_id = slide.get("id")
-            expected_attempt = slide.get("attempt", 1)
+            expected_attempt = slide.get("attempt")
             if type(expected_attempt) is not int or expected_attempt <= 0:
                 blockers.append({"reason": "persisted_artifact_attempt_required", "path": relative})
-                expected_attempt = 1
             if not isinstance(record.get("slide_record_id"), str) or not record.get("slide_record_id"):
                 blockers.append({"reason": "persisted_artifact_slide_record_required", "path": relative})
             if type(record.get("attempt")) is not int or record.get("attempt") <= 0:
@@ -683,6 +726,9 @@ def validate_draft_preview(
     if not isinstance(preview, Mapping):
         _raise_draft(deck_id, [{"reason": "preview must be a mapping"}])
     blockers: list[dict[str, Any]] = []
+    key_blockers = _mapping_key_blockers(preview)
+    if key_blockers:
+        _raise_draft(deck_id, key_blockers)
     allowed_fields = _PERSISTED_PREVIEW_FIELDS if preview.get("event") == "draft_preview" else _PREVIEW_FIELDS
     unexpected_fields = set(preview) - allowed_fields
     if unexpected_fields:

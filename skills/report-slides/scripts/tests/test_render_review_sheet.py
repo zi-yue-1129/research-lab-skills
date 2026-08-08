@@ -41,6 +41,7 @@ def approved_deck_project(tmp_path: Path) -> Tuple[Path, str]:
 @pytest.fixture
 def source_images(tmp_path: Path) -> Tuple[Path, Path]:
     """Create red and blue PNG fixtures for review-sheet tests."""
+    (tmp_path / ".git").mkdir()
     first = tmp_path / "first.png"
     second = tmp_path / "second.png"
     Image.new("RGB", (120, 68), (255, 0, 0)).save(first)
@@ -119,6 +120,30 @@ def test_contact_sheet_source_digest_uses_preview_canonical_helper(
     ]
 
     assert contact_sheet_source_digest([first, second]) == _canonical_source_digest(paths, digests)
+
+
+def test_contact_sheet_source_digest_uses_canonical_project_relative_nested_paths(
+    tmp_path: Path,
+) -> None:
+    """Nested absolute inputs hash their ordered project-relative paths."""
+    project = tmp_path / "project"
+    (project / ".git").mkdir(parents=True)
+    render_dir = project / "renders" / "nested"
+    render_dir.mkdir(parents=True)
+    first = render_dir / "slide-01.png"
+    second = render_dir / "slide-02.png"
+    Image.new("RGB", (10, 10), (10, 20, 30)).save(first)
+    Image.new("RGB", (10, 10), (40, 50, 60)).save(second)
+    digests = [
+        __import__("hashlib").sha256(first.read_bytes()).hexdigest(),
+        __import__("hashlib").sha256(second.read_bytes()).hexdigest(),
+    ]
+
+    expected = _canonical_source_digest(
+        ["renders/nested/slide-01.png", "renders/nested/slide-02.png"],
+        digests,
+    )
+    assert contact_sheet_source_digest([first, second]) == expected
 
 
 def test_compose_review_sheet_rejects_duplicate_or_overwritten_inputs(

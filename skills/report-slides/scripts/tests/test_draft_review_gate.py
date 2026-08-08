@@ -11,7 +11,7 @@ import yaml
 from PIL import Image
 
 from presentation_contracts import contract_sha256
-from presentation_events import create_artifact_record, load_events
+from presentation_events import create_artifact_record, events_shard_path, load_events
 from presentation_gates import DraftGateError
 from presentation_state import (
     create_deck,
@@ -29,6 +29,13 @@ from presentation_workflow import (
 )
 from render_review_sheet import compose_review_sheet
 from render_plan_preview import _canonical_source_digest
+
+
+def _file_preimage(path: Path) -> tuple[bool, bytes, int]:
+    """Capture exact existence, bytes, and mode for rollback assertions."""
+    if not path.exists():
+        return False, b"", 0
+    return True, path.read_bytes(), path.stat().st_mode & 0o777
 
 
 def _project(tmp_path: Path) -> Path:
@@ -667,3 +674,145 @@ def test_draft_reregistration_failure_restores_preview_and_approval(
 
     assert load_decks(project)[deck_id] == before_deck
     assert load_events(project) == before_events
+
+
+def test_draft_reregistration_failure_restores_exact_deck_and_event_preimages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Re-registration rollback preserves bytes, modes, and old approval identity."""
+    project, deck_id, plan = _approved_project(tmp_path)
+    preview_path, _ = _preview(project, deck_id, plan)
+    first = register_draft_preview(project, preview_path)
+    decision_path = project / "decision.yaml"
+    decision_path.write_text(yaml.safe_dump({
+        "schema_version": 1,
+        "deck_id": deck_id,
+        "preview_id": first["preview"]["id"],
+        "preview_sha256": first["preview"]["preview_sha256"],
+        "decision": "approve",
+        "approved_by": "reviewer",
+    }), encoding="utf-8")
+    approve_draft(project, decision_path)
+    state_dir = project / ".research/presentations/state"
+    tracked = [state_dir / "decks.yaml", events_shard_path(project)]
+    before = {path: _file_preimage(path) for path in tracked}
+    before_deck = load_decks(project)[deck_id]
+    before_events = load_events(project)
+    monkeypatch.setenv("PRESENTATION_TRANSACTION_FAIL_AT", "1")
+
+    with pytest.raises(RuntimeError, match="injected transaction commit failure"):
+        register_draft_preview(project, preview_path)
+
+    assert {path: _file_preimage(path) for path in tracked} == before
+    assert load_decks(project)[deck_id] == before_deck
+    assert load_events(project) == before_events
+
+
+def test_missing_current_slide_attempt_fails_closed_without_state_change(tmp_path: Path) -> None:
+    """A current slide record without an explicit attempt cannot pass the gate."""
+    project, deck_id, plan = _approved_project(tmp_path)
+    preview_path, _ = _preview(project, deck_id, plan)
+    slides_path = project / ".research/presentations/state/slides.yaml"
+    slides = yaml.safe_load(slides_path.read_text(encoding="utf-8"))
+    slide_record = next(record for record in slides["slides"].values() if record["deck_id"] == deck_id)
+    slide_record.pop("attempt", None)
+    slides_path.write_text(yaml.safe_dump(slides), encoding="utf-8")
+    decks_path = project / ".research/presentations/state/decks.yaml"
+    before = _file_preimage(decks_path)
+
+    with pytest.raises(DraftGateError, match="attempt"):
+        register_draft_preview(project, preview_path)
+
+    assert _file_preimage(decks_path) == before
+
+
+def test_derivation_requires_explicit_current_slide_attempt(tmp_path: Path) -> None:
+    """Publisher provenance derivation must not invent a missing attempt."""
+    from presentation_artifact_provenance import derive_published_provenance
+
+    project, deck_id, plan = _approved_project(tmp_path)
+    _preview(project, deck_id, plan)
+    slides_path = project / ".research/presentations/state/slides.yaml"
+    slides = yaml.safe_load(slides_path.read_text(encoding="utf-8"))
+    slide_record = next(record for record in slides["slides"].values() if record["deck_id"] == deck_id)
+    slide_record.pop("attempt", None)
+    slides_path.write_text(yaml.safe_dump(slides), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="attempt"):
+        derive_published_provenance(project, deck_id, "slide-png", slide_record["id"])
+
+
+@pytest.mark.parametrize("mutation", ["top_level", "bindings", "digests", "slide_metadata"])
+def test_mixed_mapping_keys_return_structured_gate_error(
+    tmp_path: Path, mutation: str
+) -> None:
+    """Mixed mapping key types fail as DraftGateError rather than TypeError."""
+    project, deck_id, plan = _approved_project(tmp_path)
+    preview_path, preview = _preview(project, deck_id, plan)
+    if mutation == "top_level":
+        preview[1] = "legacy"
+    elif mutation == "bindings":
+        preview["artifact_bindings"][1] = {}
+    elif mutation == "digests":
+        preview["artifact_digests"][1] = "0" * 64
+    else:
+        preview["slides"][0][1] = "legacy"
+    preview_path.write_text(yaml.safe_dump(preview), encoding="utf-8")
+    decks_path = project / ".research/presentations/state/decks.yaml"
+    before = _file_preimage(decks_path)
+
+    with pytest.raises(DraftGateError):
+        register_draft_preview(project, preview_path)
+
+    assert _file_preimage(decks_path) == before
+
+
+def test_yes_draft_argument_requires_exact_bool_and_ignores_yaml_authorization(
+    tmp_path: Path,
+) -> None:
+    """Integer yes_draft authorization is rejected without mutating the deck."""
+    project, deck_id, plan = _approved_project(tmp_path)
+    preview_path, _ = _preview(project, deck_id, plan)
+    registered = register_draft_preview(project, preview_path)
+    decision_path = project / "decision.yaml"
+    decision_path.write_text(yaml.safe_dump({
+        "schema_version": 1,
+        "deck_id": deck_id,
+        "preview_id": registered["preview"]["id"],
+        "preview_sha256": registered["preview"]["preview_sha256"],
+        "decision": "approve",
+        "approval_mode": "explicit_noninteractive",
+        "yes_draft": True,
+    }), encoding="utf-8")
+    decks_path = project / ".research/presentations/state/decks.yaml"
+    before = _file_preimage(decks_path)
+
+    with pytest.raises(DraftGateError, match="yes_draft"):
+        approve_draft(project, decision_path, yes_draft=1)  # type: ignore[arg-type]
+
+    assert _file_preimage(decks_path) == before
+
+
+def test_identity_verifiable_requires_exact_true_boolean(tmp_path: Path) -> None:
+    """Integer identity_verifiable values cannot authorize a reviewer decision."""
+    project, deck_id, plan = _approved_project(tmp_path)
+    preview_path, _ = _preview(project, deck_id, plan)
+    registered = register_draft_preview(project, preview_path)
+    decision_path = project / "decision.yaml"
+    decision_path.write_text(yaml.safe_dump({
+        "schema_version": 1,
+        "deck_id": deck_id,
+        "preview_id": registered["preview"]["id"],
+        "preview_sha256": registered["preview"]["preview_sha256"],
+        "decision": "approve",
+        "approval_mode": "interactive",
+        "approved_by": "reviewer",
+        "identity_verifiable": 1,
+    }), encoding="utf-8")
+    decks_path = project / ".research/presentations/state/decks.yaml"
+    before = _file_preimage(decks_path)
+
+    with pytest.raises(DraftGateError, match="identity_verifiable"):
+        approve_draft(project, decision_path)
+
+    assert _file_preimage(decks_path) == before

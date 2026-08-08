@@ -30,9 +30,9 @@ from presentation_events import (
     load_events,
     load_review_results,
     load_plans,
-    register_plan_record,
 )
 from presentation_transactions import transaction
+from presentation_plan_transactions import register_plan_transaction
 from presentation_gates import (
     ApprovalGateError,
     CompletionGateError,
@@ -48,7 +48,7 @@ from presentation_gates import (
     review_result_blockers,
 )
 from validate_deck_plan import validate_deck_plan
-from render_plan_preview import validate_draft_preview
+from render_plan_preview import validate_draft_decision_flags, validate_draft_preview
 
 
 WORKFLOW_LOCK_RELATIVE_PATH = Path(".research/presentations/state/workflow.lock")
@@ -267,22 +267,14 @@ def register_plan(
         if blockers:
             raise PlanGateError("plan_registerable", deck_id, blockers, f"plan_registerable blocked for deck {deck_id}: " + "; ".join(str(item["reason"]) for item in blockers))
         destination = Path("decks") / deck_id / "plans" / f"plan-v{next_version:04d}.yaml"
-        _save_document(project_root / destination, document)
-        record = register_plan_record(project_root, deck_id, destination, contract_sha256(document), authored_by.strip())
-        if existing:
-            _save_deck(
-                project_root,
-                deck_id,
-                {
-                    "status": "planning", "approved_plan_version": None,
-                    "approved_plan_sha256": None, "approval_id": None,
-                    "approved_by": None, "approved_at": None, "approval_mode": None,
-                    "draft_preview_id": None, "draft_approval_id": None,
-                    "plan_revision_required": False,
-                    "required_plan_id": None, "required_plan_revision_id": None,
-                },
-            )
-        return record
+        return register_plan_transaction(
+            project_root,
+            deck_id,
+            document,
+            authored_by.strip(),
+            destination,
+            next_version,
+        )
 
 
 def record_content_review(
@@ -703,6 +695,9 @@ def request_targeted_revision(project_root: Path, revision_path: Path) -> dict[s
             supersedes = revision.get("supersedes", revision.get("superseded_subject_id", subject_id))
             if supersedes != subject_id:
                 blockers.append({"reason": "supersedes_target_mismatch", "expected": subject_id, "actual": supersedes})
+            source_attempt = source.get("attempt")
+            if subject_type in {"slide", "module"} and (type(source_attempt) is not int or source_attempt <= 0):
+                blockers.append({"reason": "current slide attempt required"})
             if source.get("status") not in {"review_required", "revision_required", "passed"}:
                 blockers.append({"reason": f"status:{source.get('status')}:not_revisionable"})
             if revision_kind == "slide_retry" and subject_type != "slide":
@@ -740,7 +735,8 @@ def request_targeted_revision(project_root: Path, revision_path: Path) -> dict[s
             replacement = dict(source)
             replacement["id"] = _id("sld" if subject_type == "slide" else "mod")
             replacement["status"] = "planned"
-            replacement["attempt"] = int(source.get("attempt", 1)) + 1
+            if subject_type in {"slide", "module"}:
+                replacement["attempt"] = source["attempt"] + 1
             replacement["supersedes_slide_id" if subject_type == "slide" else "supersedes_module_id"] = subject_id
             replacement["revision_request_id"] = record["id"]
             replacement["revision_kind"] = revision_kind
@@ -887,6 +883,8 @@ def approve_draft(
     Raises:
         DraftGateError: If the current preview or decision is incomplete.
     """
+    if type(yes_draft) is not bool:
+        validate_draft_decision_flags({"yes_draft": yes_draft}, "<unknown>")
     with _workflow_lock(project_root):
         decision = _action_document(decision_path, DraftGateError, "draft_approvable", "<unknown>")
         deck_id = decision.get("deck_id")
@@ -913,16 +911,7 @@ def approve_draft(
                     [{"reason": "unexpected_decision_field", "field": field} for field in unexpected],
                     f"draft_approvable blocked for deck {deck_id}: unexpected decision field",
                 )
-            if "yes_draft" in decision and type(decision.get("yes_draft")) is not bool:
-                raise DraftGateError(
-                    "draft_approvable", deck_id,
-                    [{"reason": "yes_draft must be a boolean"}],
-                )
-            if decision.get("identity_verifiable") not in {None, True}:
-                raise DraftGateError(
-                    "draft_approvable", deck_id,
-                    [{"reason": "identity_verifiable must be true"}],
-                )
+            validate_draft_decision_flags(decision, deck_id)
             preview_id = decision.get("preview_id")
             if not isinstance(preview_id, str) or not preview_id:
                 raise DraftGateError("draft_approvable", deck_id, [{"reason": "preview_id_required"}])
