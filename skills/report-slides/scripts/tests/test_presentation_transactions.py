@@ -140,6 +140,48 @@ def test_transaction_journal_recovers_after_process_death(tmp_path: Path, monkey
     assert not list((tmp_path / ".research/presentations/transactions").glob("*.json"))
 
 
+def test_transaction_rollback_restores_exact_mtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An injected replacement failure restores bytes, mode, and mtime."""
+    project = tmp_path / "project"
+    target = project / ".research/presentations/state/slides.yaml"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"before")
+    target.chmod(0o640)
+    original_mtime = target.stat().st_mtime_ns - 1_234_567
+    os.utime(target, ns=(original_mtime, original_mtime))
+    before = (target.read_bytes(), target.stat().st_mode & 0o777, target.stat().st_mtime_ns)
+    monkeypatch.setenv("PRESENTATION_TRANSACTION_FAIL_AT", "1")
+    with pytest.raises(RuntimeError, match="transaction commit failed"):
+        with WorkflowTransaction([target], project) as transaction:
+            transaction.stage_bytes(target, b"after")
+            transaction.commit()
+    assert (target.read_bytes(), target.stat().st_mode & 0o777, target.stat().st_mtime_ns) == before
+
+
+def test_transaction_journal_recovery_restores_exact_mtime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A process-death journal restores the original mtime on recovery."""
+    project = tmp_path / "project"
+    target = project / ".research/presentations/state/slides.yaml"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"before")
+    target.chmod(0o600)
+    original_mtime = target.stat().st_mtime_ns - 2_345_678
+    os.utime(target, ns=(original_mtime, original_mtime))
+    monkeypatch.setenv("PRESENTATION_TRANSACTION_CRASH_AT", "1")
+    with pytest.raises(SimulatedProcessDeath, match="simulated process death"):
+        with WorkflowTransaction([target], project) as transaction:
+            transaction.stage_bytes(target, b"after")
+            transaction.commit()
+    monkeypatch.delenv("PRESENTATION_TRANSACTION_CRASH_AT")
+    with WorkflowTransaction([], project):
+        pass
+    assert target.read_bytes() == b"before"
+    assert target.stat().st_mode & 0o777 == 0o600
+    assert target.stat().st_mtime_ns == original_mtime
+
+
 def _write_journal(project: Path, entries: list[dict[str, object]]) -> Path:
     """Write a crafted durable journal for recovery validation tests."""
     journal_dir = project / ".research/presentations/transactions"
@@ -161,6 +203,21 @@ def _journal_entry(path: str, *, exists: bool = False, mode: int = 0o644) -> dic
         "mode": mode,
         "content": base64.b64encode(b"before").decode("ascii"),
     }
+
+
+def test_legacy_journal_without_mtime_metadata_remains_recoverable(tmp_path: Path) -> None:
+    """Older journals without ``mtime_ns`` are accepted without invention."""
+    target = tmp_path / ".research/presentations/state/slides.yaml"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"after")
+    _write_journal(
+        tmp_path,
+        [_journal_entry(".research/presentations/state/slides.yaml", exists=True, mode=0o644)],
+    )
+    with WorkflowTransaction([], tmp_path):
+        pass
+    assert target.read_bytes() == b"before"
+    assert target.stat().st_mode & 0o777 == 0o644
 
 
 def _write_malformed_journal(project: Path) -> Path:

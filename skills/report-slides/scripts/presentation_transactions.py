@@ -40,12 +40,15 @@ class SimulatedProcessDeath(BaseException):
 
 
 class _FileSnapshot:
-    """Immutable bytes, existence, and mode captured under a sidecar lock."""
+    """Immutable bytes, mode, and optional mtime captured under a sidecar lock."""
 
-    def __init__(self, exists: bool, content: bytes, mode: int) -> None:
+    def __init__(
+        self, exists: bool, content: bytes, mode: int, mtime_ns: int | None = None
+    ) -> None:
         self.exists = exists
         self.content = content
         self.mode = mode
+        self.mtime_ns = mtime_ns
 
 
 class _FileStage:
@@ -285,12 +288,15 @@ def _journal_path(project_root: Path, transaction_id: str) -> Path:
 
 def _encode_snapshot(project_root: Path, path: Path, snapshot: _FileSnapshot) -> dict[str, Any]:
     """Encode one exact preimage for durable recovery."""
-    return {
+    encoded = {
         "path": _project_relative_path(project_root, path),
         "exists": snapshot.exists,
         "mode": snapshot.mode,
         "content": base64.b64encode(snapshot.content).decode("ascii"),
     }
+    if snapshot.mtime_ns is not None:
+        encoded["mtime_ns"] = snapshot.mtime_ns
+    return encoded
 
 
 def _decode_journal(project_root: Path, path: Path) -> tuple[str, list[tuple[Path, _FileSnapshot]]]:
@@ -327,7 +333,12 @@ def _decode_journal(project_root: Path, path: Path) -> tuple[str, list[tuple[Pat
         mode = entry.get("mode")
         if not isinstance(exists, bool):
             raise TransactionError(f"invalid transaction journal metadata: {path}")
-        decoded.append((target, _FileSnapshot(exists, content, _validate_mode(mode, path))))
+        mtime_ns = entry.get("mtime_ns")
+        if mtime_ns is not None and (
+            isinstance(mtime_ns, bool) or not isinstance(mtime_ns, int) or mtime_ns < 0
+        ):
+            raise TransactionError(f"invalid transaction journal metadata: {path}")
+        decoded.append((target, _FileSnapshot(exists, content, _validate_mode(mode, path), mtime_ns)))
     return transaction_id, decoded
 
 
@@ -413,7 +424,9 @@ class WorkflowTransaction:
             for path in self.paths:
                 if path.is_file():
                     stat_result = path.stat()
-                    self._snapshots[path] = _FileSnapshot(True, path.read_bytes(), stat_result.st_mode & 0o777)
+                    self._snapshots[path] = _FileSnapshot(
+                        True, path.read_bytes(), stat_result.st_mode & 0o777, stat_result.st_mtime_ns
+                    )
                 else:
                     self._snapshots[path] = _FileSnapshot(False, b"", 0)
             if self.paths or journals:
@@ -596,6 +609,9 @@ class WorkflowTransaction:
         os.chmod(temporary, snapshot.mode)
         os.replace(temporary, path)
         _directory_fsync(path.parent)
+        if snapshot.mtime_ns is not None:
+            os.utime(path, ns=(snapshot.mtime_ns, snapshot.mtime_ns), follow_symlinks=False)
+            _directory_fsync(path.parent)
 
     def _write_journal(self, stages: Sequence[_FileStage]) -> None:
         """Persist exact preimages before the first visible replacement."""
