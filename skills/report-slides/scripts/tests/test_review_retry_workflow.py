@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+import threading
+import time
 
 import pytest
 import yaml
 
 from presentation_contracts import contract_sha256
-from presentation_events import load_events, load_revision_requests
+from presentation_events import create_assignment_record, load_assignments, load_events, load_revision_requests
 from presentation_state import (
     create_slide,
     create_visual_module,
@@ -257,6 +259,151 @@ def test_module_retry_redirects_current_dependents_and_unblocks_after_pass(tmp_p
         record_production_review(project, review)
     set_module_status(project, downstream["id"], "assigned")
     set_module_status(project, downstream["id"], "producing")
+
+
+def test_module_retry_redirects_only_current_dependents_and_assignments(tmp_path: Path) -> None:
+    """Historical-slide modules and assignments retain their source dependency."""
+    project, deck_id, _ = _approved_project(tmp_path)
+    current_slide = create_slide(project, deck_id, "slide-current", "Current")
+    historical_slide = create_slide(project, deck_id, "slide-historical", "Historical")
+    source = create_visual_module(project, current_slide["id"], "source", "architecture")
+    current = create_visual_module(project, current_slide["id"], "current", "architecture", [source["id"]])
+    historical = create_visual_module(project, historical_slide["id"], "historical", "architecture", [source["id"]])
+    for status in ("ready", "assigned", "producing", "review_required", "passed"):
+        set_module_status(project, source["id"], status)
+    for module_id in (current["id"], historical["id"]):
+        for status in ("ready", "assigned", "producing", "review_required"):
+            if status == "producing":
+                break
+            set_module_status(project, module_id, status)
+    for status in ("ready", "assigned", "producing", "review_required", "superseded"):
+        set_slide_status(project, historical_slide["id"], status)
+    spec_digest = "a" * 64
+    current_assignment = create_assignment_record(
+        project, deck_id, module_id=current["id"], assignment_path="assignments/current.yaml",
+        worker_id="worker-current", worker_type="architecture", spec_sha256=spec_digest,
+        dependencies=[source["id"]],
+    )
+    historical_assignment = create_assignment_record(
+        project, deck_id, module_id=historical["id"], assignment_path="assignments/historical.yaml",
+        worker_id="worker-historical", worker_type="architecture", spec_sha256=spec_digest,
+        dependencies=[source["id"]],
+    )
+    revision = _review_file(project, "current-module-revision", {
+        "subject_type": "module", "subject_id": source["id"],
+        "requested_by": "reviewer", "instructions": "Retry the source.",
+        "revision_kind": "module_retry",
+    })
+    result = request_targeted_revision(project, revision)
+    replacement_id = result["replacement"]["id"]
+    modules = load_visual_modules(project)
+    assignments = load_assignments(project)
+    assert modules[current["id"]]["dependencies"] == [replacement_id]
+    assert modules[historical["id"]]["dependencies"] == [source["id"]]
+    assert assignments[current_assignment["id"]]["dependencies"] == [replacement_id]
+    assert assignments[historical_assignment["id"]]["dependencies"] == [source["id"]]
+
+
+@pytest.mark.parametrize("commit_position", [1, 2, 3])
+def test_failed_review_transaction_rolls_back_each_commit_position(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, commit_position: int
+) -> None:
+    """Every failed-review commit position leaves no event, request, or status change."""
+    project, deck_id, _ = _approved_project(tmp_path)
+    slide = create_slide(project, deck_id, "slide-01", "Evidence changes decisions")
+    for status in ("ready", "assigned", "producing", "review_required"):
+        set_slide_status(project, slide["id"], status)
+    review = _review_file(project, "injected-review", {
+        "subject_type": "slide", "subject_id": slide["id"],
+        "reviewer_id": "scientific-reviewer", "reviewer_role": "scientific",
+        "status": "failed", "findings": [{"code": "unsupported-claim"}], "round": 1,
+    })
+    monkeypatch.setenv("PRESENTATION_TRANSACTION_FAIL_AT", str(commit_position))
+    with pytest.raises(RuntimeError, match="transaction commit"):
+        record_production_review(project, review)
+    assert not [event for event in load_events(project, "review_result") if event.get("subject_id") == slide["id"]]
+    assert load_revision_requests(project) == {}
+    assert load_slides(project)[slide["id"]]["status"] == "review_required"
+
+
+@pytest.mark.parametrize("commit_position", [1, 2])
+def test_targeted_revision_transaction_rolls_back_each_commit_position(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, commit_position: int
+) -> None:
+    """Every targeted-revision commit position leaves source and request unchanged."""
+    project, failed_id, _, _ = _reviewed_modules(tmp_path)
+    revision = _review_file(project, "injected-revision", {
+        "subject_type": "module", "subject_id": failed_id,
+        "requested_by": "reviewer", "instructions": "Retry the module.",
+        "revision_kind": "module_retry",
+    })
+    before = load_visual_modules(project)
+    monkeypatch.setenv("PRESENTATION_TRANSACTION_FAIL_AT", str(commit_position))
+    with pytest.raises(RuntimeError, match="transaction commit"):
+        request_targeted_revision(project, revision)
+    assert load_revision_requests(project) == {}
+    assert load_visual_modules(project)[failed_id] == before[failed_id]
+
+
+def test_transaction_rollback_releases_sidecar_for_waiting_writer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A low-level writer waits through rollback and persists afterward."""
+    project, deck_id, _ = _approved_project(tmp_path)
+    slide = create_slide(project, deck_id, "slide-01", "Evidence changes decisions")
+    for status in ("ready", "assigned", "producing", "review_required"):
+        set_slide_status(project, slide["id"], status)
+    review = _review_file(project, "concurrent-review", {
+        "subject_type": "slide", "subject_id": slide["id"],
+        "reviewer_id": "scientific-reviewer", "reviewer_role": "scientific",
+        "status": "failed", "findings": [{"code": "unsupported-claim"}], "round": 1,
+    })
+    import presentation_state
+    import presentation_transactions
+
+    locked = threading.Event()
+    original_notify = presentation_transactions.WorkflowTransaction._notify_locked
+
+    def notify_locked(handle: object) -> None:
+        """Signal the action has acquired all sidecar locks."""
+        original_notify(handle)
+        locked.set()
+
+    monkeypatch.setattr(presentation_transactions.WorkflowTransaction, "_notify_locked", notify_locked)
+    writer_started = threading.Event()
+    writer_finished = threading.Event()
+
+    def write_after_lock() -> None:
+        """Persist an unrelated low-level state update once the sidecar is free."""
+        writer_started.set()
+        presentation_state.set_slide_status(project, slide["id"], "blocked")
+        writer_finished.set()
+
+    action_error: list[BaseException] = []
+
+    def run_action() -> None:
+        """Run the gated action while the sidecar writer contends."""
+        try:
+            record_production_review(project, review)
+        except BaseException as exc:  # noqa: BLE001 - test captures injected failure
+            action_error.append(exc)
+
+    action = threading.Thread(target=run_action)
+    monkeypatch.setenv("PRESENTATION_TRANSACTION_FAIL_AT", "2")
+    action.start()
+    assert locked.wait(timeout=2)
+    writer = threading.Thread(target=write_after_lock)
+    writer.start()
+    writer_started.wait(timeout=2)
+    time.sleep(0.1)
+    assert not writer_finished.is_set()
+    action.join(timeout=3)
+    writer.join(timeout=3)
+    assert action_error and "transaction commit" in str(action_error[0])
+    assert writer_finished.is_set()
+    assert load_slides(project)[slide["id"]]["status"] == "blocked"
+    assert load_revision_requests(project) == {}
+    assert not [event for event in load_events(project, "review_result") if event.get("subject_id") == slide["id"]]
 
 
 def test_plan_revision_requires_current_plan_and_validates_digest(tmp_path: Path) -> None:

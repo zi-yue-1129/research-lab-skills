@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import errno
 import fcntl
+import json
 import os
 import time
 import uuid
@@ -24,11 +25,14 @@ import yaml
 from presentation_contracts import contract_sha256, load_contract
 from presentation_events import (
     append_event,
-    create_revision_request,
+    events_shard_path,
+    effective_review_results,
     load_events,
+    load_review_results,
     load_plans,
     register_plan_record,
 )
+from presentation_transactions import transaction
 from presentation_gates import (
     ApprovalGateError,
     CompletionGateError,
@@ -42,8 +46,6 @@ from presentation_gates import (
     assert_plan_approvable,
     assert_plan_reviewable,
     assert_production_allowed,
-    assert_module_passable,
-    assert_slide_passable,
     review_result_blockers,
 )
 from validate_deck_plan import validate_deck_plan
@@ -317,6 +319,18 @@ def record_content_review(
         return event
 
 
+def _update_revision_request(
+    project_root: Path, request_id: str, updates: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Normalize request updates without reacquiring a transaction lock.
+
+    The legacy private hook remains available for deterministic failure
+    injection; callers own the in-memory request map and stage it atomically.
+    """
+    del project_root, request_id
+    return dict(updates)
+
+
 def _record_review_event(
     project_root: Path,
     subject_type: str,
@@ -339,123 +353,77 @@ def _record_review_event(
     return event
 
 
-def _update_revision_request(
-    project_root: Path, request_id: str, updates: Mapping[str, Any]
-) -> dict[str, Any]:
-    """Annotate one persisted Revision Request under its state lock."""
-    import presentation_events
-
-    path = project_root / presentation_events.REVISION_REQUESTS_RELATIVE_PATH
-    with presentation_events._locked_file(project_root, path):
-        records = presentation_events._load_yaml_map(path, "revision_requests")
-        if request_id not in records:
-            raise ValueError(f"Unknown revision request: {request_id}")
-        records[request_id].update(dict(updates))
-        presentation_events._save_yaml_map(path, "revision_requests", records)
-        return records[request_id]
-
-
-def _workflow_snapshot_paths(project_root: Path) -> list[Path]:
-    """Return state/event paths touched by gated review transitions."""
-    state_dir = project_root / ".research/presentations/state"
-    events_dir = project_root / ".research/presentations/events"
-    paths = (
-        list(state_dir.glob("*.yaml")) + list(state_dir.glob("*.tmp"))
-        + list(events_dir.glob("*.jsonl")) + list(events_dir.glob("*.tmp"))
-    )
-    paths.extend((state_dir / name for name in ("decks.yaml", "slides.yaml", "visual_modules.yaml", "plans.yaml", "revision_requests.yaml", "assignments.yaml", "artifacts.yaml")))
-    paths.append(project_root / ".research/presentations/.gitignore")
-    paths.append(events_dir / f"{datetime.now(timezone.utc):%Y-%m-%d}.jsonl")
-    return sorted(set(paths))
-
-
-def _snapshot_workflow_files(project_root: Path) -> dict[Path, tuple[bool, bytes, int]]:
-    """Capture affected file bytes, existence, and permission modes."""
-    snapshot: dict[Path, tuple[bool, bytes, int]] = {}
-    for path in _workflow_snapshot_paths(project_root):
-        if path.is_file():
-            stat_result = path.stat()
-            snapshot[path] = (True, path.read_bytes(), stat_result.st_mode & 0o777)
-        else:
-            snapshot[path] = (False, b"", 0)
-    return snapshot
-
-
-def _restore_workflow_files(snapshot: Mapping[Path, tuple[bool, bytes, int]]) -> list[str]:
-    """Restore a workflow snapshot and return explicit recovery failures."""
-    failures: list[str] = []
-    for path, (exists, content, mode) in snapshot.items():
-        try:
-            if exists:
-                current = path.read_bytes() if path.is_file() else None
-                current_mode = path.stat().st_mode & 0o777 if path.is_file() else None
-                if current != content or current_mode != mode:
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                    temporary = path.with_suffix(path.suffix + ".rollback.tmp")
-                    temporary.write_bytes(content)
-                    os.chmod(temporary, mode)
-                    temporary.replace(path)
-            elif path.exists():
-                path.unlink()
-        except Exception as exc:  # noqa: BLE001 - rollback must report every failure
-            failures.append(f"{path}: {exc}")
-    for path in set(snapshot):
-        for temporary in path.parent.glob(f"{path.name}*.tmp"):
-            prior = snapshot.get(temporary)
-            if prior is not None and prior[0]:
-                continue
-            try:
-                temporary.unlink()
-            except Exception as exc:  # noqa: BLE001 - aggregate cleanup failures
-                failures.append(f"{temporary}: {exc}")
-    return failures
-
-
-@contextmanager
-def _workflow_transaction(project_root: Path) -> Iterator[None]:
-    """Restore all affected workflow files when a gated action fails."""
-    snapshot = _snapshot_workflow_files(project_root)
-    try:
-        yield
-    except BaseException as exc:
-        failures = _restore_workflow_files(snapshot)
-        if failures:
-            detail = "; ".join(failures)
-            if isinstance(exc, GateError):
-                blockers = [*exc.blockers, {"reason": "rollback_failed", "message": detail}]
-                raise type(exc)(exc.predicate, exc.deck_id, blockers, f"{exc}; rollback_failed: {detail}") from exc
-            raise RuntimeError(f"{exc}; rollback_failed: {detail}") from exc
-        raise
-
-
-def _write_replacement_records(
-    project_root: Path, subject_type: str, source_id: str, replacement: Mapping[str, Any]
-) -> dict[str, Any]:
-    """Supersede one source and atomically add its replacement/dependency redirects."""
+def _transaction_paths(project_root: Path, action: Mapping[str, Any], review: bool) -> list[Path]:
+    """Select only stores an action can mutate before acquiring sidecar locks."""
     state = _state()
-    path = project_root / (state.SLIDES_RELATIVE_PATH if subject_type == "slide" else state.VISUAL_MODULES_RELATIVE_PATH)
-    top = "slides" if subject_type == "slide" else "visual_modules"
-    with state._locked_file(project_root, path):
-        records = state._load_yaml_map(path, top)
-        source = records.get(source_id)
-        if source is None:
-            raise ValueError(f"Unknown {subject_type}_id: {source_id}")
-        source["status"] = "superseded"
-        source["updated_at"] = _now()
-        if subject_type == "module":
-            for dependent in records.values():
-                if dependent.get("status") == "superseded" or source_id not in list(dependent.get("dependencies") or []):
-                    continue
-                redirected: list[str] = []
-                for dependency in dependent.get("dependencies") or []:
-                    target = replacement["id"] if dependency == source_id else dependency
-                    if target not in redirected:
-                        redirected.append(target)
-                dependent["dependencies"] = redirected
-                dependent["updated_at"] = _now()
-        records[replacement["id"]] = dict(replacement)
-        state._save_yaml_map(path, top, records)
-        return records[replacement["id"]]
+    state_dir = project_root / ".research/presentations/state"
+    paths = [project_root / ".research/presentations/.gitignore"]
+    subject_type = action.get("subject_type")
+    if review:
+        paths.extend((state_dir / "decks.yaml", state_dir / "plans.yaml", state_dir / "assignments.yaml", state_dir / "artifacts.yaml"))
+        if subject_type == "slide":
+            paths.append(project_root / state.SLIDES_RELATIVE_PATH)
+        elif subject_type == "module":
+            paths.extend((project_root / state.VISUAL_MODULES_RELATIVE_PATH, project_root / state.SLIDES_RELATIVE_PATH))
+        paths.append(project_root / events_shard_path(project_root).relative_to(project_root))
+        if action.get("status") in {"failed", "blocked"}:
+            paths.append(state_dir / "revision_requests.yaml")
+    elif subject_type == "deck" or subject_type == "plan":
+        paths.extend((state_dir / "decks.yaml", state_dir / "plans.yaml", state_dir / "revision_requests.yaml"))
+    elif subject_type == "slide":
+        paths.extend((project_root / state.SLIDES_RELATIVE_PATH, state_dir / "revision_requests.yaml"))
+    elif subject_type == "module":
+        paths.extend((
+            project_root / state.VISUAL_MODULES_RELATIVE_PATH,
+            project_root / state.SLIDES_RELATIVE_PATH,
+            state_dir / "assignments.yaml",
+            state_dir / "revision_requests.yaml",
+        ))
+    return sorted(set(paths), key=lambda path: str(path))
+
+
+def _revision_record(
+    project_root: Path, records: dict[str, Any], subject_type: str, subject_id: str,
+    requested_by: str, instructions: str, supersedes: str | None = None,
+) -> dict[str, Any]:
+    """Create one validated revision record in an in-memory request map."""
+    if subject_type not in {"deck", "plan", "slide", "module"}:
+        raise ValueError(f"invalid revision subject_type: {subject_type}")
+    if requested_by not in {"user", "reviewer"}:
+        raise ValueError(f"invalid revision requester: {requested_by}")
+    if not isinstance(instructions, str) or not instructions.strip():
+        raise ValueError("instructions is required")
+    record = {
+        "id": _id("rvq"), "subject_type": subject_type, "subject_id": subject_id,
+        "requested_by": requested_by, "instructions": instructions,
+        "supersedes": supersedes, "created_at": _now(),
+    }
+    records[record["id"]] = record
+    return record
+
+
+def _review_event(
+    review: Mapping[str, Any], subject_type: str, subject_id: str,
+    revision_request_id: str | None = None,
+) -> dict[str, Any]:
+    """Normalize a production review event without performing I/O."""
+    event: dict[str, Any] = {
+        "event": "review_result", "id": _id("rev"), "subject_type": subject_type,
+        "subject_id": subject_id, "reviewer_id": review.get("reviewer_id"),
+        "reviewer_role": review.get("reviewer_role", "content"),
+        "identity_verifiable": review.get("identity_verifiable", True),
+        "status": review.get("status"), "findings": review.get("findings", []),
+        "round": review.get("round", 1), "ts": review.get("reviewed_at", _now()),
+    }
+    if revision_request_id is not None:
+        event["revision_request_id"] = revision_request_id
+    return event
+
+
+def _stage_gitignore(transaction_handle: Any, path: Path) -> None:
+    """Stage the presentation ignore file only when this action creates it."""
+    if not path.is_file():
+        transaction_handle.stage_bytes(path, b"state/*.lock\nstate/*.tmp\nevents/\ncache/\n")
 
 
 def approve_deck(project_root: Path, approval_path: Path) -> dict[str, Any]:
@@ -521,7 +489,12 @@ def record_production_review(project_root: Path, review_path: Path) -> dict[str,
     Raises:
         ReviewGateError: If the review target or role is invalid.
     """
-    with _workflow_lock(project_root), _workflow_transaction(project_root):
+    try:
+        hint = _document(review_path)
+    except Exception:
+        hint = {}
+    paths = _transaction_paths(project_root, hint, review=True)
+    with _workflow_lock(project_root), transaction(paths) as tx:
         review = _action_document(review_path, ReviewGateError, "production_review_recordable", "<unknown>")
         subject_type = review.get("subject_type")
         subject_id = review.get("subject_id")
@@ -540,66 +513,74 @@ def record_production_review(project_root: Path, review_path: Path) -> dict[str,
         except ProductionGateError as exc:
             raise ReviewGateError("production_review_recordable", deck_id, exc.blockers) from exc
         blockers = review_result_blockers(project_root, subject_type, subject_id, review)
+        for persisted in load_review_results(project_root, {subject_id}):
+            blockers.extend(review_result_blockers(
+                project_root, subject_type, subject_id, persisted, str(persisted.get("id"))
+            ))
         if target.get("status") != "review_required":
             blockers.append({"reason": f"status:{target.get('status')}:review_required_expected"})
         if blockers:
             reasons = "; ".join(str(item.get("reason", item)) for item in blockers)
             raise ReviewGateError("production_review_recordable", deck_id, blockers, f"production_review_recordable blocked for deck {deck_id}: {reasons}")
+        state_path = project_root / (state.SLIDES_RELATIVE_PATH if subject_type == "slide" else state.VISUAL_MODULES_RELATIVE_PATH)
+        top_key = "slides" if subject_type == "slide" else "visual_modules"
+        target_records = tx.read_yaml(state_path, top_key)
+        request_path = project_root / ".research/presentations/state/revision_requests.yaml"
+        event_path = project_root / events_shard_path(project_root).relative_to(project_root)
         revision_request: dict[str, Any] | None = None
         if review["status"] in {"failed", "blocked"}:
+            request_records = tx.read_yaml(request_path, "revision_requests")
             try:
-                revision_request = create_revision_request(
-                    project_root,
-                    subject_type,
-                    subject_id,
-                    "reviewer",
+                revision_request = _revision_record(
+                    project_root, request_records, subject_type, subject_id, "reviewer",
                     str(review.get("instructions") or "Address production review findings"),
                 )
             except Exception as exc:  # noqa: BLE001 - expose typed gate evidence
                 raise ReviewGateError(
-                    "production_review_recordable",
-                    deck_id,
+                    "production_review_recordable", deck_id,
                     [{"reason": "revision_request_creation_failed", "message": str(exc)}],
                 ) from exc
-        event = _record_review_event(
-            project_root,
-            subject_type,
-            subject_id,
-            review,
-            {"revision_request_id": revision_request["id"]} if revision_request else None,
-        )
+        event = _review_event(review, subject_type, subject_id, revision_request["id"] if revision_request else None)
         if revision_request is not None:
-            revision_request = _update_revision_request(
-                project_root,
-                revision_request["id"],
-                {
-                    "revision_kind": "review_finding",
-                    "target_type": subject_type,
-                    "target_id": subject_id,
-                    "review_id": event["id"],
-                },
-            )
+            revision_updates = {
+                "revision_kind": "review_finding", "target_type": subject_type,
+                "target_id": subject_id, "review_id": event["id"],
+            }
+            revision_request.update(_update_revision_request(project_root, revision_request["id"], revision_updates))
+            tx.stage_yaml(request_path, "revision_requests", request_records)
+        tx.stage_append(event_path, json.dumps(event, sort_keys=True, ensure_ascii=False).encode("utf-8"))
         if review["status"] in {"failed", "blocked"}:
-            _save_unit(project_root, subject_type, subject_id, {"status": "revision_required"})
+            target_records[subject_id].update({"status": "revision_required", "updated_at": _now()})
+            tx.stage_yaml(state_path, top_key, target_records)
         elif subject_type == "slide":
-            try:
-                assert_slide_passable(project_root, subject_id)
-            except ReviewGateError:
-                pass
-            else:
-                _save_unit(project_root, "slide", subject_id, {"status": "passed"})
+            raw_reviews = load_review_results(project_root, {subject_id}) + [event]
+            roles = {item.get("reviewer_role") for item in effective_review_results(raw_reviews) if item.get("status") == "passed"}
+            if roles >= {"scientific", "visual_quality"}:
+                target_records[subject_id].update({"status": "passed", "updated_at": _now()})
+                tx.stage_yaml(state_path, top_key, target_records)
         else:
-            try:
-                assert_module_passable(project_root, subject_id)
-            except ReviewGateError:
-                pass
-            else:
-                _save_unit(project_root, "module", subject_id, {"status": "passed"})
+            raw_reviews = load_review_results(project_root, {subject_id}) + [event]
+            roles = {item.get("reviewer_role") for item in effective_review_results(raw_reviews) if item.get("status") == "passed"}
+            if roles >= {"scientific", "visual_quality"}:
+                target_records[subject_id].update({"status": "passed", "updated_at": _now()})
+                tx.stage_yaml(state_path, top_key, target_records)
+        _stage_gitignore(tx, project_root / ".research/presentations/.gitignore")
+        tx.commit()
         return {
             "review": event,
             "revision_request": revision_request,
             "target": _state().load_slides(project_root).get(subject_id) if subject_type == "slide" else _state().load_visual_modules(project_root).get(subject_id),
         }
+
+
+def _redirect_dependency_ids(dependencies: list[Any], source_id: str, replacement_id: str) -> list[str]:
+    """Replace one dependency while preserving order and removing duplicates."""
+    redirected: list[str] = []
+    for dependency in dependencies:
+        value = replacement_id if dependency == source_id else dependency
+        if value not in redirected:
+            redirected.append(value)
+    return redirected
 
 
 def request_targeted_revision(project_root: Path, revision_path: Path) -> dict[str, Any]:
@@ -615,7 +596,12 @@ def request_targeted_revision(project_root: Path, revision_path: Path) -> dict[s
     Raises:
         ReviewGateError: If the request target or revision kind is invalid.
     """
-    with _workflow_lock(project_root), _workflow_transaction(project_root):
+    try:
+        hint = _document(revision_path)
+    except Exception:
+        hint = {}
+    paths = _transaction_paths(project_root, hint, review=False)
+    with _workflow_lock(project_root), transaction(paths) as tx:
         revision = _action_document(revision_path, ReviewGateError, "revision_requestable", "<unknown>")
         subject_type = revision.get("subject_type")
         subject_id = revision.get("subject_id")
@@ -634,26 +620,36 @@ def request_targeted_revision(project_root: Path, revision_path: Path) -> dict[s
         if subject_type in {"deck", "plan"} and requested_by == "user" and revision_kind not in _USER_PLAN_REVISION_KINDS:
             raise ReviewGateError("revision_requestable", deck_id, [{"reason": "invalid_user_plan_revision_kind"}])
         state = _state()
+        state_dir = project_root / ".research/presentations/state"
+        decks_path = state_dir / "decks.yaml"
+        slides_path = project_root / state.SLIDES_RELATIVE_PATH
+        modules_path = project_root / state.VISUAL_MODULES_RELATIVE_PATH
+        assignments_path = state_dir / "assignments.yaml"
+        request_path = state_dir / "revision_requests.yaml"
+        decks = tx.read_yaml(decks_path, "decks") if subject_type in {"deck", "plan"} else {}
+        slides = tx.read_yaml(slides_path, "slides") if subject_type in {"slide", "module"} else {}
+        modules = tx.read_yaml(modules_path, "visual_modules") if subject_type == "module" else {}
+        assignments = tx.read_yaml(assignments_path, "assignments") if subject_type == "module" else {}
         source: dict[str, Any] | None = None
         if subject_type == "deck":
             deck_id = subject_id
-            if deck_id not in state.load_decks(project_root):
+            if deck_id not in decks:
                 raise ReviewGateError("revision_requestable", deck_id, [{"reason": "unknown_subject"}])
         elif subject_type == "plan":
-            plan_record = load_plans(project_root).get(subject_id)
+            plan_record = tx.read_yaml(state_dir / "plans.yaml", "plans").get(subject_id)
             if plan_record is None:
                 raise ReviewGateError("revision_requestable", deck_id, [{"reason": "unknown_subject"}])
             deck_id = str(plan_record.get("deck_id"))
         elif subject_type == "slide":
-            source = state.load_slides(project_root).get(subject_id)
+            source = slides.get(subject_id)
             if source is None:
                 raise ReviewGateError("revision_requestable", deck_id, [{"reason": "unknown_subject"}])
             deck_id = str(source["deck_id"])
         else:
-            source = state.load_visual_modules(project_root).get(subject_id)
+            source = modules.get(subject_id)
             if source is None:
                 raise ReviewGateError("revision_requestable", deck_id, [{"reason": "unknown_subject"}])
-            deck_id = str(state.load_slides(project_root)[source["slide_id"]]["deck_id"])
+            deck_id = str(slides[source["slide_id"]]["deck_id"])
         blockers: list[dict[str, Any]] = []
         plan_binding: dict[str, Any] = {}
         if subject_type in {"deck", "plan"}:
@@ -696,6 +692,8 @@ def request_targeted_revision(project_root: Path, revision_path: Path) -> dict[s
                 blockers.append({"reason": "slide_retry_requires_slide_subject"})
             if revision_kind == "module_retry" and subject_type != "module":
                 blockers.append({"reason": "module_retry_requires_module_subject"})
+            if subject_type == "module" and slides.get(source.get("slide_id"), {}).get("status") == "superseded":
+                blockers.append({"reason": "historical_slide_not_revisionable"})
         if blockers:
             summary = "; ".join(str(item.get("reason", item)) for item in blockers)
             raise ReviewGateError(
@@ -704,28 +702,22 @@ def request_targeted_revision(project_root: Path, revision_path: Path) -> dict[s
             )
         request_subject_type = "deck" if subject_type == "plan" else subject_type
         request_subject_id = deck_id if subject_type == "plan" else subject_id
+        request_records = tx.read_yaml(request_path, "revision_requests")
         try:
-            record = create_revision_request(
-                project_root, request_subject_type, request_subject_id, requested_by,
-                revision.get("instructions", "Targeted revision"), supersedes=None,
+            record = _revision_record(
+                project_root, request_records, request_subject_type, request_subject_id,
+                requested_by, revision.get("instructions", "Targeted revision"), supersedes=None,
             )
         except Exception as exc:  # noqa: BLE001 - map low-level rejection to gate JSON
             raise ReviewGateError(
                 "revision_requestable", deck_id,
                 [{"reason": "invalid_revision_request", "message": str(exc)}],
             ) from exc
-        record = _update_revision_request(
-            project_root,
-            record["id"],
-            {
-                "revision_kind": revision_kind,
-                "target_type": subject_type,
-                "target_id": subject_id,
-                "requested_subject_type": subject_type,
-                "requested_subject_id": subject_id,
-                **plan_binding,
-            },
-        )
+        record.update({
+            "revision_kind": revision_kind, "target_type": subject_type,
+            "target_id": subject_id, "requested_subject_type": subject_type,
+            "requested_subject_id": subject_id, **plan_binding,
+        })
         replacement: dict[str, Any] | None = None
         if subject_type in {"slide", "module"} and source is not None:
             replacement = dict(source)
@@ -743,22 +735,55 @@ def request_targeted_revision(project_root: Path, revision_path: Path) -> dict[s
                 replacement["artifact_manifest_path"] = None
             replacement.pop("updated_at", None)
             replacement["created_at"] = _now()
-            record = _update_revision_request(project_root, record["id"], {"supersedes": subject_id})
-            _write_replacement_records(project_root, subject_type, subject_id, replacement)
+            record["supersedes"] = subject_id
+            if subject_type == "slide":
+                slides[subject_id].update({"status": "superseded", "updated_at": _now()})
+                slides[replacement["id"]] = replacement
+                tx.stage_yaml(slides_path, "slides", slides)
+            else:
+                modules[subject_id].update({"status": "superseded", "updated_at": _now()})
+                for dependent_id, dependent in modules.items():
+                    if dependent_id == subject_id or dependent.get("status") == "superseded":
+                        continue
+                    dependent_slide = slides.get(dependent.get("slide_id"), {})
+                    if not dependent_slide or dependent_slide.get("status") == "superseded":
+                        continue
+                    dependencies = list(dependent.get("dependencies") or [])
+                    if subject_id not in dependencies:
+                        continue
+                    redirected = _redirect_dependency_ids(dependencies, subject_id, replacement["id"])
+                    dependent["dependencies"] = redirected
+                    dependent["updated_at"] = _now()
+                    for assignment in assignments.values():
+                        if (
+                            assignment.get("module_id") == dependent_id
+                            and assignment.get("assignment_path", assignment.get("path")) == dependent.get("assignment_path")
+                            and assignment.get("status") not in {"stale", "superseded", "revoked"}
+                            and assignment.get("superseded") is not True
+                        ):
+                            if "dependencies" in assignment:
+                                assignment["dependencies"] = list(redirected)
+                            if "dependency_ids" in assignment:
+                                assignment["dependency_ids"] = list(redirected)
+                modules[replacement["id"]] = replacement
+                tx.stage_yaml(modules_path, "visual_modules", modules)
+                original_assignments = tx.read_yaml(assignments_path, "assignments")
+                if assignments != original_assignments:
+                    tx.stage_yaml(assignments_path, "assignments", assignments)
         else:
-            _save_deck(
-                project_root,
-                deck_id,
-                {
-                    "status": "planning", "approved_plan_version": None,
-                    "approved_plan_sha256": None, "approval_id": None,
-                    "approved_by": None, "approved_at": None, "approval_mode": None,
-                    "draft_preview_id": None, "draft_approval_id": None,
-                    "plan_revision_required": True,
-                    "required_plan_id": plan_binding.get("plan_id"),
-                    "required_plan_revision_id": record["id"],
-                },
-            )
+            decks[deck_id].update({
+                "status": "planning", "approved_plan_version": None,
+                "approved_plan_sha256": None, "approval_id": None,
+                "approved_by": None, "approved_at": None, "approval_mode": None,
+                "draft_preview_id": None, "draft_approval_id": None,
+                "plan_revision_required": True,
+                "required_plan_id": plan_binding.get("plan_id"),
+                "required_plan_revision_id": record["id"], "updated_at": _now(),
+            })
+            tx.stage_yaml(decks_path, "decks", decks)
+        tx.stage_yaml(request_path, "revision_requests", request_records)
+        _stage_gitignore(tx, project_root / ".research/presentations/.gitignore")
+        tx.commit()
         result: dict[str, Any] = {"revision": record, "replacement": replacement, "revision_kind": revision_kind, **plan_binding}
         if replacement is not None:
             result.update(replacement)
