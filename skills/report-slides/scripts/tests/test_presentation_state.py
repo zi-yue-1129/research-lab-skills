@@ -556,6 +556,33 @@ def test_query_after_reinvocation_reflects_durable_state_with_no_duplicates(tmp_
     assert second["slides"][0]["status"] == "ready"
 
 
+def test_query_includes_review_history_and_next_actions(tmp_path: Path) -> None:
+    """Query exposes role-specific review history and the next legal action."""
+    project = _make_project(tmp_path)
+    deck_id, slide_id = _make_deck_and_slide(project)
+
+    review = _run(
+        project,
+        "--record-review",
+        "--subject-type",
+        "slide",
+        "--subject-id",
+        slide_id,
+        "--reviewer-id",
+        "scientific-reviewer",
+        "--reviewer-role",
+        "scientific",
+        "--status",
+        "passed",
+        "--json",
+    )
+    assert review.returncode == 0, review.stderr
+
+    resumed = json.loads(_run(project, "--query", "--deck-id", deck_id, "--json").stdout)
+    assert resumed["review_results"][0]["reviewer_role"] == "scientific"
+    assert resumed["next_actions"] == ["record_visual_quality_review"]
+
+
 def test_validate_on_clean_project_reports_no_violations(tmp_path: Path) -> None:
     project = _make_project(tmp_path)
     _make_deck_and_slide(project)
