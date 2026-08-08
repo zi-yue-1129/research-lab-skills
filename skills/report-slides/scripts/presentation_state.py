@@ -927,8 +927,8 @@ def _dispatch(args: argparse.Namespace, project_root: Path) -> Dict[str, Any]:
                 from presentation_workflow import record_production_review
                 return record_production_review(project_root, args.review_path or args.generic_path)
             from presentation_gates import ReviewGateError
-            target = (load_slides(project_root) if args.subject_type == "slide" else load_visual_modules(project_root)).get(args.subject_id, {})
-            raise ReviewGateError("production_review_recordable", str(target.get("deck_id", "<unknown>")), [{"reason": "production review evidence document is required"}])
+            target = (load_slides(project_root).get(load_visual_modules(project_root).get(args.subject_id, {}).get("slide_id"), {}) if args.subject_type == "module" else load_slides(project_root).get(args.subject_id, {}))
+            raise ReviewGateError("production_review_recordable", str(target.get("deck_id", "<unknown>")), [{"reason": "production review evidence document is required" if target.get("deck_id") else "module slide/deck link is required"}])
         findings = json.loads(args.findings_json) if args.findings_json else None
         return record_review(
             project_root, args.subject_type, args.subject_id,

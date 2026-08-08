@@ -187,6 +187,31 @@ def test_generic_record_review_cannot_bypass_atomic_production_review(tmp_path: 
     assert set(error) == {"error", "predicate", "deck_id", "blockers"}
 
 
+@pytest.mark.parametrize("review_status", ["passed", "failed", "blocked"])
+def test_generic_module_review_gate_reports_known_deck_without_mutation(
+    tmp_path: Path, review_status: str
+) -> None:
+    """Generic module review gates identify the module's owning deck."""
+    project = _project(tmp_path)
+    deck = create_deck(project, "Test deck")
+    slide = create_slide(project, deck["id"], "slide-01", "Evidence")
+    module = create_visual_module(project, slide["id"], "module-a", "architecture")
+    before = load_visual_modules(project)[module["id"]]
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--record-review", "--subject-type", "module",
+         "--subject-id", module["id"], "--reviewer-id", "reviewer",
+         "--reviewer-role", "visual_quality", "--status", review_status, "--json"],
+        cwd=project, capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 1
+    error = json.loads(result.stdout)
+    assert error["error"] == "ReviewGateError"
+    assert set(error) == {"error", "predicate", "deck_id", "blockers"}
+    assert error["deck_id"] == deck["id"]
+    assert load_events(project) == []
+    assert load_visual_modules(project)[module["id"]] == before
+
+
 @pytest.mark.parametrize("review_status", ["failed", "blocked"])
 def test_generic_failed_or_blocked_review_cannot_write_low_level_evidence(tmp_path: Path, review_status: str) -> None:
     """Incomplete generic production reviews fail closed without state events."""
@@ -355,6 +380,14 @@ def test_publication_resolves_explicit_current_assignment_not_insertion_order(tm
         worker_id="worker-stale", worker_type="architecture", spec_sha256=contract_sha256(spec),
         dependencies=[], inputs_resolved=True, slide_id=module["slide_id"],
     )
+    assignments_path = project / ".research/presentations/state/assignments.yaml"
+    assignment_document = yaml.safe_load(assignments_path.read_text(encoding="utf-8"))
+    assignment_document["assignments"] = {
+        "asn_0001_current": dict(assignment_document["assignments"][first["id"]], id="asn_0001_current"),
+        "asn_9999_stale": dict(assignment_document["assignments"][second["id"]], id="asn_9999_stale"),
+    }
+    assignments_path.write_text(yaml.safe_dump(assignment_document), encoding="utf-8")
+    first["id"], second["id"] = "asn_0001_current", "asn_9999_stale"
     modules_path = project / ".research/presentations/state/visual_modules.yaml"
     modules = yaml.safe_load(modules_path.read_text(encoding="utf-8"))
     modules["visual_modules"][module_id]["assignment_path"] = "assignment-current.yaml"
