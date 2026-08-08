@@ -118,6 +118,9 @@ def test_artifact_provenance_rejects_boolean_versions_and_forbidden_subjects(
     project = make_project(tmp_path)
     deck = create_deck(project, "Evidence")
     slide = create_slide(project, deck["id"], "slide-01", "Takeaway")
+    artifacts_path = project / ".research/presentations/state/artifacts.yaml"
+    prior_exists = artifacts_path.exists()
+    prior_bytes = artifacts_path.read_bytes() if prior_exists else b""
 
     with pytest.raises((TypeError, ValueError), match="plan_version"):
         create_artifact_record(
@@ -148,6 +151,40 @@ def test_artifact_provenance_rejects_boolean_versions_and_forbidden_subjects(
             source_paths=["renders/slide-01.png"],
             source_sha256="s" * 64,
         )
+    assert artifacts_path.exists() is prior_exists
+    if prior_exists:
+        assert artifacts_path.read_bytes() == prior_bytes
+
+
+def test_slide_png_forbidden_module_subject_precedes_invalid_attempt_without_writes(
+    tmp_path: Path,
+) -> None:
+    """Forbidden slide-PNG subjects fail before invalid provenance or state writes."""
+    project = make_project(tmp_path)
+    deck = create_deck(project, "Evidence")
+    slide = create_slide(project, deck["id"], "slide-01", "Takeaway")
+    artifacts_path = project / ".research/presentations/state/artifacts.yaml"
+    prior_exists = artifacts_path.exists()
+    prior_bytes = artifacts_path.read_bytes() if prior_exists else b""
+
+    with pytest.raises(ValueError, match="module_id"):
+        create_artifact_record(
+            project,
+            deck["id"],
+            "slide-png",
+            "renders/slide-01.png",
+            "d" * 64,
+            "renderer",
+            slide_id=slide["id"],
+            module_id="mod-forbidden",
+            plan_version=1,
+            plan_sha256="a" * 64,
+            slide_record_id=slide["id"],
+            attempt=True,
+        )
+    assert artifacts_path.exists() is prior_exists
+    if prior_exists:
+        assert artifacts_path.read_bytes() == prior_bytes
 
 
 def test_typed_artifact_provenance_is_persisted_without_aliases(tmp_path: Path) -> None:

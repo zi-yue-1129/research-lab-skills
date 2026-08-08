@@ -124,6 +124,10 @@ def validate_artifact_provenance(
         _require_digest(plan_sha256, "plan_sha256")
     if (plan_version is None) != (plan_sha256 is None):
         raise ValueError("plan_version and plan_sha256 must be supplied together")
+    if artifact_kind == REVIEW_SHEET_KIND and (slide_id is not None or module_id is not None):
+        raise ValueError("review-sheet provenance forbids slide_id/module_id")
+    if artifact_kind == SLIDE_PNG_KIND and module_id is not None:
+        raise ValueError("slide-png provenance forbids module_id")
     if slide_record_id is not None:
         _require_nonempty_text(slide_record_id, "slide_record_id")
     if attempt is not None:
