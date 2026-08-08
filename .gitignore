@@ -8,6 +8,7 @@ __pycache__/
 !examples/report-slides/visual-authoring/**/*.png
 !tests/fixtures/report-slides-pptx-visual-review/**/*.png
 node_modules/
+.worktrees/
 .claude/worktrees/
 
 # ARS local working context
