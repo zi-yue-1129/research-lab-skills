@@ -15,13 +15,22 @@ import sys
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+import yaml
+
 from presentation_contracts import contract_sha256, load_contract
 from presentation_events import load_artifacts, load_plans
 from presentation_gates import DraftGateError, assert_draft_reviewable
 from presentation_state import load_slides
+from validate_deck_plan import validate_deck_plan
 
 
 _SHA256_LENGTH = 64
+_PREVIEW_FIELDS = frozenset({
+    "schema_version", "deck_id", "plan_version", "plan_sha256",
+    "rendered_slide_paths", "contact_sheet_path", "slides",
+    "artifact_digests", "artifact_bindings",
+})
+_PERSISTED_PREVIEW_FIELDS = _PREVIEW_FIELDS | frozenset({"event", "id", "preview_sha256", "ts"})
 _PLAN_FIELDS: tuple[tuple[str, str], ...] = (
     ("schema_version", "Schema version"),
     ("deck_id", "Deck ID"),
@@ -82,6 +91,9 @@ def format_plan_preview(plan: dict[str, Any]) -> str:
         ValueError: If the plan is not a mapping with the required fields.
     """
     document = _require_mapping(plan, "plan")
+    errors = validate_deck_plan(dict(document))
+    if errors:
+        raise ValueError("invalid Deck Plan: " + "; ".join(errors))
     lines = ["Deck Plan Preview"]
     for field, label in _PLAN_FIELDS:
         value = _require_plan_field(document, field)
@@ -157,7 +169,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
     try:
         plan = load_contract(parsed.plan)
         sys.stdout.write(format_plan_preview(plan))
-    except (OSError, UnicodeError, ValueError, TypeError) as error:
+    except (OSError, UnicodeError, ValueError, TypeError, yaml.YAMLError, json.JSONDecodeError) as error:
         print(json.dumps({"error": type(error).__name__, "message": str(error)}), file=sys.stderr)
         return 1
     return 0
@@ -244,6 +256,7 @@ def _approved_plan(project_root: Path, deck: Mapping[str, Any]) -> tuple[dict[st
         blockers.append({"reason": "approved_plan_digest_stale"})
     if record.get("sha256", record.get("plan_sha256")) != plan_sha:
         blockers.append({"reason": "plan_digest_mismatch"})
+    blockers.extend({"reason": error} for error in validate_deck_plan(plan))
     return record, plan, blockers
 
 
@@ -294,21 +307,19 @@ def _normalize_rendered_paths(
     slide_for_path: dict[str, str] = {}
     entries: list[dict[str, Any]] = []
     for index, raw_entry in enumerate(rendered):
-        if isinstance(raw_entry, str):
-            raw_path = raw_entry
-            raw_slide_id = expected_ids[index] if index < len(expected_ids) else None
-            entry: dict[str, Any] = {"slide_id": raw_slide_id, "path": raw_path}
-        elif isinstance(raw_entry, Mapping):
+        if isinstance(raw_entry, Mapping):
             raw_path = raw_entry.get("path")
-            raw_slide_id = raw_entry.get("slide_id", raw_entry.get("plan_slide_id"))
+            raw_slide_id = raw_entry.get("slide_id")
             entry = dict(raw_entry)
+            if set(entry) != {"slide_id", "path", "slide_record_id", "attempt"}:
+                blockers.append({"reason": "rendered slide entry has non-canonical fields", "index": index})
         else:
             blockers.append({"reason": "rendered slide entry must be a mapping", "index": index})
             continue
-        if not isinstance(raw_slide_id, str) or raw_slide_id not in lookup:
+        if not isinstance(raw_slide_id, str) or raw_slide_id not in expected_ids:
             blockers.append({"reason": "rendered slide set contains unknown slide", "slide_id": raw_slide_id})
             continue
-        plan_slide_id = str(lookup[raw_slide_id].get("plan_slide_id", raw_slide_id))
+        plan_slide_id = raw_slide_id
         if plan_slide_id not in expected_ids:
             blockers.append({"reason": "rendered slide set contains extra slide", "slide_id": raw_slide_id})
         relative, resolved = _relative_path(project_root, raw_path, "rendered_slide_path")
@@ -348,7 +359,10 @@ def _check_extra_pngs(
     for folder in sorted(folders, key=str):
         if not folder.is_dir():
             continue
-        for candidate in sorted(folder.rglob("*.png"), key=str):
+        for candidate in sorted(
+            (item for item in folder.rglob("*") if item.is_file() and item.suffix.lower() == ".png"),
+            key=str,
+        ):
             try:
                 relative = candidate.resolve().relative_to(project_root.resolve()).as_posix()
             except ValueError:
@@ -433,23 +447,51 @@ def _binding_blockers(
             "slide_id": slide_id,
             "plan_version": plan_version,
             "plan_sha256": plan_sha256,
-            "producer_id": binding.get("producer_id", binding.get("producer", "renderer")),
+            "producer_id": binding.get("producer_id"),
         })
         if strict:
-            for field, expected in (("kind", "rendered_slide"), ("deck_id", deck_id), ("slide_id", slide_id), ("plan_version", plan_version), ("plan_sha256", plan_sha256)):
+            for field, expected in (
+                ("kind", "rendered_slide"), ("deck_id", deck_id), ("slide_id", slide_id),
+                ("plan_version", plan_version), ("plan_sha256", plan_sha256),
+            ):
                 if binding.get(field) != expected:
                     blockers.append({"reason": "artifact_binding_mismatch", "path": path, "field": field})
-            producer = binding.get("producer_id", binding.get("producer"))
+            producer = binding.get("producer_id")
             if not isinstance(producer, str) or not producer.strip():
                 blockers.append({"reason": "artifact_binding_producer_required", "path": path})
-        slide_record = next((slide for slide in load_slides(project_root).values() if slide.get("deck_id") == deck_id and slide.get("plan_slide_id") == slide_id and slide.get("status") != "superseded"), None)
+        slide_record = next(
+            (
+                slide for slide in load_slides(project_root).values()
+                if slide.get("deck_id") == deck_id
+                and slide.get("plan_slide_id") == slide_id
+                and slide.get("status") != "superseded"
+            ),
+            None,
+        )
         if slide_record:
+            expected_record_id = slide_record.get("id")
+            expected_attempt = int(slide_record.get("attempt", 1))
+            if not isinstance(entry.get("slide_record_id"), str) or not entry.get("slide_record_id"):
+                blockers.append({"reason": "slide_record_id_required", "path": path})
+            if type(entry.get("attempt")) is not int or entry.get("attempt") <= 0:
+                blockers.append({"reason": "slide_attempt_required", "path": path})
+            if entry.get("slide_record_id") != expected_record_id:
+                blockers.append({"reason": "slide_record_id_mismatch", "path": path})
+            if entry.get("attempt") != expected_attempt:
+                blockers.append({"reason": "slide_attempt_mismatch", "path": path})
+            if binding.get("slide_record_id") != expected_record_id:
+                blockers.append({"reason": "artifact_binding_mismatch", "path": path, "field": "slide_record_id"})
+            if binding.get("attempt") != expected_attempt:
+                blockers.append({"reason": "artifact_binding_mismatch", "path": path, "field": "attempt"})
+            normalized_binding.update({"slide_record_id": expected_record_id, "attempt": expected_attempt})
             for field in ("slide_spec_sha256", "approved_takeaway_sha256", "approved_evidence_sha256"):
                 expected_value = slide_record.get(field)
                 if expected_value is not None and binding.get(field) != expected_value:
                     blockers.append({"reason": "artifact_binding_mismatch", "path": path, "field": field})
                 if expected_value is not None:
                     normalized_binding[field] = expected_value
+        else:
+            blockers.append({"reason": "current_slide_record_required", "path": path, "slide_id": slide_id})
         normalized[path] = normalized_binding
     source_digests = [actual_digests.get(path, "") for path in paths]
     source_sha256 = _canonical_source_digest(paths, source_digests)
@@ -462,7 +504,7 @@ def _binding_blockers(
         "deck_id": deck_id,
         "plan_version": plan_version,
         "plan_sha256": plan_sha256,
-        "producer_id": contact_binding.get("producer_id", contact_binding.get("producer", "renderer")),
+        "producer_id": contact_binding.get("producer_id"),
         "source_paths": list(paths),
         "source_sha256": source_sha256,
     })
@@ -472,14 +514,106 @@ def _binding_blockers(
                 blockers.append({"reason": "contact_sheet_binding_mismatch", "field": field})
         if contact_binding.get("source_paths") != list(paths):
             blockers.append({"reason": "contact_sheet_source_set_mismatch"})
-        supplied_source_sha = contact_binding.get("source_sha256", contact_binding.get("source_set_sha256"))
+        supplied_source_sha = contact_binding.get("source_sha256")
         if supplied_source_sha != source_sha256:
             blockers.append({"reason": "contact_sheet_source_digest_mismatch"})
-        producer = contact_binding.get("producer_id", contact_binding.get("producer"))
+        producer = contact_binding.get("producer_id")
         if not isinstance(producer, str) or not producer.strip():
             blockers.append({"reason": "contact_sheet_binding_producer_required"})
     normalized[contact_path] = normalized_contact
     return blockers, normalized
+
+
+def _persisted_artifact_blockers(
+    project_root: Path,
+    deck_id: str,
+    plan: Mapping[str, Any],
+    entries: Sequence[Mapping[str, Any]],
+    paths: Sequence[str],
+    contact_path: str,
+    actual_digests: Mapping[str, str],
+    bindings: Mapping[str, Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Require one current persisted artifact record for each preview path.
+
+    Args:
+        project_root: Project root containing state and rendered files.
+        deck_id: Deck identifier under validation.
+        plan: Current approved plan mapping.
+        entries: Ordered rendered-slide entries from the preview.
+        paths: Ordered rendered-slide paths.
+        contact_path: Contact-sheet path.
+        actual_digests: Digests computed from current files.
+        bindings: Canonical caller bindings already checked by the gate.
+
+    Returns:
+        Structured blockers for missing, ambiguous, stale, or mismatched records.
+    """
+    try:
+        records = load_artifacts(project_root)
+    except Exception as error:  # noqa: BLE001 - malformed state is fail-closed
+        return [{"reason": "artifact_store_invalid", "message": str(error)}]
+    expected_paths = list(paths) + [contact_path]
+    blockers: list[dict[str, Any]] = []
+    current_slides = {
+        str(slide.get("plan_slide_id")): slide
+        for slide in load_slides(project_root).values()
+        if slide.get("deck_id") == deck_id and slide.get("status") != "superseded"
+    }
+    entry_by_path = {str(entry["path"]): entry for entry in entries}
+    for relative in expected_paths:
+        matches = [
+            record for record in records.values()
+            if record.get("deck_id") == deck_id and record.get("path") == relative
+        ]
+        if not matches:
+            blockers.append({"reason": "missing_persisted_artifact", "path": relative})
+            continue
+        if len(matches) != 1:
+            blockers.append({"reason": "ambiguous_persisted_artifact", "path": relative})
+            continue
+        record = matches[0]
+        expected_kind = "contact_sheet" if relative == contact_path else "rendered_slide"
+        if record.get("artifact_kind") != expected_kind:
+            blockers.append({"reason": "persisted_artifact_kind_mismatch", "path": relative})
+        if record.get("sha256") != actual_digests.get(relative):
+            blockers.append({"reason": "persisted_artifact_digest_mismatch", "path": relative})
+        if record.get("plan_version") != plan.get("plan_version"):
+            blockers.append({"reason": "persisted_artifact_plan_version_mismatch", "path": relative})
+        if record.get("plan_sha256") != contract_sha256(plan):
+            blockers.append({"reason": "persisted_artifact_plan_digest_mismatch", "path": relative})
+        producer = record.get("producer_id")
+        binding = bindings.get(relative, {})
+        if not isinstance(producer, str) or not producer.strip():
+            blockers.append({"reason": "persisted_artifact_producer_required", "path": relative})
+        elif binding.get("producer_id") != producer:
+            blockers.append({"reason": "persisted_artifact_producer_mismatch", "path": relative})
+        if relative == contact_path:
+            if record.get("source_paths") != list(paths):
+                blockers.append({"reason": "persisted_contact_source_set_mismatch"})
+            source_sha = _canonical_source_digest(paths, [actual_digests.get(path, "") for path in paths])
+            if record.get("source_sha256") != source_sha:
+                blockers.append({"reason": "persisted_contact_source_digest_mismatch"})
+        else:
+            entry = entry_by_path.get(relative, {})
+            slide_id = str(entry.get("slide_id", ""))
+            slide = current_slides.get(slide_id)
+            if slide is None:
+                blockers.append({"reason": "current_slide_record_required", "path": relative})
+                continue
+            expected_record_id = slide.get("id")
+            expected_attempt = int(slide.get("attempt", 1))
+            if not isinstance(record.get("slide_record_id"), str) or not record.get("slide_record_id"):
+                blockers.append({"reason": "persisted_artifact_slide_record_required", "path": relative})
+            if type(record.get("attempt")) is not int or record.get("attempt") <= 0:
+                blockers.append({"reason": "persisted_artifact_attempt_required", "path": relative})
+            if record.get("slide_record_id") != expected_record_id:
+                blockers.append({"reason": "persisted_artifact_slide_record_mismatch", "path": relative})
+            if record.get("attempt") != expected_attempt:
+                blockers.append({"reason": "persisted_artifact_attempt_mismatch", "path": relative})
+            if binding.get("slide_record_id") != expected_record_id or binding.get("attempt") != expected_attempt:
+                blockers.append({"reason": "artifact_binding_current_slide_mismatch", "path": relative})
+    return blockers
 
 
 def validate_draft_preview(
@@ -505,6 +639,13 @@ def validate_draft_preview(
     if not isinstance(preview, Mapping):
         _raise_draft(deck_id, [{"reason": "preview must be a mapping"}])
     blockers: list[dict[str, Any]] = []
+    allowed_fields = _PERSISTED_PREVIEW_FIELDS if preview.get("event") == "draft_preview" else _PREVIEW_FIELDS
+    unexpected_fields = set(preview) - allowed_fields
+    if unexpected_fields:
+        blockers.extend(
+            {"reason": "unexpected_preview_field", "field": field}
+            for field in sorted(unexpected_fields)
+        )
     try:
         checked = assert_draft_reviewable(project_root, deck_id, dict(preview))
         deck = checked["deck"]
@@ -518,7 +659,7 @@ def validate_draft_preview(
     if plan is None:
         _raise_draft(deck_id, blockers)
     strict = True
-    if preview.get("schema_version") != 1:
+    if type(preview.get("schema_version")) is not int or preview.get("schema_version") != 1:
         blockers.append({"reason": "schema_version_required"})
     if preview.get("deck_id") != deck_id:
         blockers.append({"reason": "deck_id_mismatch"})
@@ -528,7 +669,12 @@ def validate_draft_preview(
         if preview.get("plan_sha256") != contract_sha256(plan):
             blockers.append({"reason": "preview_plan_digest_mismatch"})
     ordered_slides, expected_ids, lookup = _current_slide_order(project_root, deck_id, plan)
-    if len(ordered_slides) != len(expected_ids):
+    active_records = [
+        slide for slide in load_slides(project_root).values()
+        if slide.get("deck_id") == deck_id and slide.get("status") != "superseded"
+    ]
+    active_plan_ids = [slide.get("plan_slide_id") for slide in active_records]
+    if len(active_records) != len(expected_ids) or len(set(active_plan_ids)) != len(active_plan_ids) or set(active_plan_ids) != set(expected_ids):
         blockers.append({"reason": "current slide set does not match approved plan"})
     for slide in ordered_slides:
         if slide.get("status") != "passed":
@@ -540,7 +686,7 @@ def validate_draft_preview(
         lookup,
         blockers,
     )
-    contact_value = preview.get("contact_sheet_path", preview.get("contact_sheet"))
+    contact_value = preview.get("contact_sheet_path")
     contact_path, _ = _relative_path(project_root, contact_value, "contact_sheet_path")
     if contact_path is None or Path(contact_path).suffix.lower() != ".png":
         blockers.append({"reason": "contact sheet path must be a project-relative PNG"})
@@ -555,7 +701,7 @@ def validate_draft_preview(
         for slide in plan.get("slides", [])
         if isinstance(slide, Mapping) and isinstance(slide.get("slide_id"), str)
     }
-    preview_slides = preview.get("slides", preview.get("rendered_slides", []))
+    preview_slides = preview.get("slides")
     if strict and (not isinstance(preview_slides, list) or len(preview_slides) != len(expected_ids)):
         blockers.append({"reason": "preview slide set mismatch"})
     seen_preview_ids: set[str] = set()
@@ -564,7 +710,7 @@ def validate_draft_preview(
             if not isinstance(entry, Mapping):
                 blockers.append({"reason": "preview slide must be a mapping"})
                 continue
-            slide_id = entry.get("slide_id", entry.get("plan_slide_id"))
+            slide_id = entry.get("slide_id")
             expected = plan_slides.get(slide_id)
             if expected is None:
                 blockers.append({"reason": "preview slide is not in approved plan", "slide_id": slide_id})
@@ -572,7 +718,7 @@ def validate_draft_preview(
             seen_preview_ids.add(str(slide_id))
             if entry.get("title") != expected.get("title"):
                 blockers.append({"reason": "preview title/takeaway mismatch", "slide_id": slide_id})
-            if entry.get("key_takeaway", entry.get("takeaway")) != expected.get("key_takeaway"):
+            if entry.get("key_takeaway") != expected.get("key_takeaway"):
                 blockers.append({"reason": "preview title/takeaway mismatch", "slide_id": slide_id})
             if "evidence_refs" in entry and entry.get("evidence_refs") != expected.get("evidence_refs"):
                 blockers.append({"reason": "preview evidence mismatch", "slide_id": slide_id})
@@ -582,7 +728,7 @@ def validate_draft_preview(
         project_root,
         paths,
         contact_path,
-        preview.get("artifact_digests", preview.get("artifacts")),
+        preview.get("artifact_digests"),
         strict,
         blockers,
     )
@@ -599,18 +745,18 @@ def validate_draft_preview(
         strict,
     )
     blockers.extend(binding_blockers)
-    try:
-        persisted_artifacts = load_artifacts(project_root)
-    except Exception as error:  # noqa: BLE001 - malformed stores are gate blockers
-        blockers.append({"reason": "artifact_store_invalid", "message": str(error)})
-        persisted_artifacts = {}
-    for relative, digest in actual_digests.items():
-        matches = [
-            artifact for artifact in persisted_artifacts.values()
-            if artifact.get("deck_id") == deck_id and artifact.get("path", artifact.get("relative_path")) == relative
-        ]
-        if matches and any(artifact.get("sha256") != digest for artifact in matches):
-            blockers.append({"reason": "persisted_artifact_digest_mismatch", "path": relative})
+    blockers.extend(
+        _persisted_artifact_blockers(
+            project_root,
+            deck_id,
+            plan,
+            entries,
+            paths,
+            contact_path,
+            actual_digests,
+            normalized_bindings,
+        )
+    )
     if blockers:
         _raise_draft(deck_id, blockers)
     normalized = dict(preview)

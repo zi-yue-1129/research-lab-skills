@@ -11,11 +11,12 @@ import yaml
 from PIL import Image
 
 from presentation_contracts import contract_sha256
-from presentation_events import load_events
+from presentation_events import create_artifact_record, load_events
 from presentation_gates import DraftGateError
 from presentation_state import (
     create_deck,
     create_slide,
+    load_slides,
     load_decks,
     record_review,
     set_slide_status,
@@ -124,12 +125,44 @@ def _preview(project: Path, deck_id: str, plan: dict[str, Any]) -> tuple[Path, d
     slide_digest = hashlib.sha256(slide_path.read_bytes()).hexdigest()
     contact_digest = hashlib.sha256(contact_path.read_bytes()).hexdigest()
     source_sha256 = _canonical_source_digest(["renders/slide-01.png"], [slide_digest])
+    slide_record = next(
+        record for record in load_slides(project).values()
+        if record.get("deck_id") == deck_id
+        and record.get("plan_slide_id") == "slide-01"
+        and record.get("status") != "superseded"
+    )
+    create_artifact_record(
+        project, deck_id, "rendered_slide", "renders/slide-01.png", slide_digest, "renderer",
+        slide_id=slide_record["id"],
+    )
+    create_artifact_record(
+        project, deck_id, "contact_sheet", "renders/contact-sheet.png", contact_digest, "renderer",
+    )
+    artifacts_path = project / ".research/presentations/state/artifacts.yaml"
+    artifacts_document = yaml.safe_load(artifacts_path.read_text(encoding="utf-8"))
+    for artifact in artifacts_document["artifacts"].values():
+        artifact.update({"plan_version": 1, "plan_sha256": contract_sha256(plan)})
+        if artifact["path"] == "renders/slide-01.png":
+            artifact.update({
+                "slide_record_id": slide_record["id"],
+                "attempt": int(slide_record.get("attempt", 1)),
+            })
+        else:
+            artifact.update({
+                "source_paths": ["renders/slide-01.png"],
+                "source_sha256": source_sha256,
+            })
+    artifacts_path.write_text(yaml.safe_dump(artifacts_document), encoding="utf-8")
     preview: dict[str, Any] = {
         "schema_version": 1,
         "deck_id": deck_id,
         "plan_version": 1,
         "plan_sha256": contract_sha256(plan),
-        "rendered_slide_paths": [{"slide_id": "slide-01", "path": "renders/slide-01.png"}],
+        "rendered_slide_paths": [{
+            "slide_id": "slide-01", "path": "renders/slide-01.png",
+            "slide_record_id": slide_record["id"],
+            "attempt": int(slide_record.get("attempt", 1)),
+        }],
         "contact_sheet_path": "renders/contact-sheet.png",
         "slides": [{
             "slide_id": "slide-01",
@@ -144,6 +177,8 @@ def _preview(project: Path, deck_id: str, plan: dict[str, Any]) -> tuple[Path, d
             "renders/slide-01.png": {
                 "slide_id": "slide-01", "kind": "rendered_slide", "deck_id": deck_id,
                 "plan_version": 1, "plan_sha256": contract_sha256(plan), "producer_id": "renderer",
+                "slide_record_id": slide_record["id"],
+                "attempt": int(slide_record.get("attempt", 1)),
             },
             "renders/contact-sheet.png": {
                 "deck_id": deck_id, "kind": "contact_sheet", "source_paths": ["renders/slide-01.png"],
@@ -226,8 +261,9 @@ def test_draft_registration_is_atomic_on_transaction_failure(
     assert not [event for event in load_events(project, "draft_preview") if event.get("deck_id") == deck_id]
 
 
+@pytest.mark.parametrize("fail_at", [1, 2])
 def test_draft_approval_is_atomic_on_transaction_failure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fail_at: int
 ) -> None:
     """A failed draft-decision commit leaves status, pointer, and event history unchanged."""
     project, deck_id, plan = _approved_project(tmp_path)
@@ -243,7 +279,7 @@ def test_draft_approval_is_atomic_on_transaction_failure(
         "approval_mode": "interactive",
         "approved_by": "reviewer",
     }), encoding="utf-8")
-    monkeypatch.setenv("PRESENTATION_TRANSACTION_FAIL_AT", "2")
+    monkeypatch.setenv("PRESENTATION_TRANSACTION_FAIL_AT", str(fail_at))
 
     with pytest.raises(RuntimeError, match="injected transaction commit failure"):
         approve_draft(project, decision_path)
@@ -287,5 +323,209 @@ def test_draft_approval_requires_identity_or_explicit_noninteractive_flag(tmp_pa
         "approval_mode": "explicit_noninteractive",
         "yes_draft": True,
     }), encoding="utf-8")
-    approve_draft(project, decision_path)
+    approve_draft(project, decision_path, yes_draft=True)
     assert load_decks(project)[deck_id]["status"] == "validating"
+
+
+def test_yes_draft_in_yaml_cannot_authorize_direct_api(tmp_path: Path) -> None:
+    """Only the explicit API/CLI flag may authorize non-interactive approval."""
+    project, deck_id, plan = _approved_project(tmp_path)
+    preview_path, _ = _preview(project, deck_id, plan)
+    registered = register_draft_preview(project, preview_path)
+    decision_path = project / "draft-decision.yaml"
+    decision_path.write_text(yaml.safe_dump({
+        "schema_version": 1,
+        "deck_id": deck_id,
+        "preview_id": registered["preview"]["id"],
+        "preview_sha256": registered["preview"]["preview_sha256"],
+        "decision": "approve",
+        "approval_mode": "explicit_noninteractive",
+        "yes_draft": True,
+    }), encoding="utf-8")
+
+    with pytest.raises(DraftGateError, match="explicit --yes-draft"):
+        approve_draft(project, decision_path)
+    assert load_decks(project)[deck_id]["status"] == "draft_review"
+
+
+def test_draft_decision_schema_version_rejects_bool(tmp_path: Path) -> None:
+    """Draft decisions require integer schema version one, never boolean true."""
+    project, deck_id, plan = _approved_project(tmp_path)
+    preview_path, _ = _preview(project, deck_id, plan)
+    registered = register_draft_preview(project, preview_path)
+    decision_path = project / "draft-decision.yaml"
+    decision_path.write_text(yaml.safe_dump({
+        "schema_version": True,
+        "deck_id": deck_id,
+        "preview_id": registered["preview"]["id"],
+        "preview_sha256": registered["preview"]["preview_sha256"],
+        "decision": "approve",
+        "approval_mode": "interactive",
+        "approved_by": "reviewer",
+    }), encoding="utf-8")
+
+    with pytest.raises(DraftGateError, match="schema_version"):
+        approve_draft(project, decision_path)
+
+
+def test_interactive_draft_identity_is_trimmed_before_persisting(tmp_path: Path) -> None:
+    """Interactive approval records a canonical trimmed identity."""
+    project, deck_id, plan = _approved_project(tmp_path)
+    preview_path, _ = _preview(project, deck_id, plan)
+    registered = register_draft_preview(project, preview_path)
+    decision_path = project / "draft-decision.yaml"
+    decision_path.write_text(yaml.safe_dump({
+        "schema_version": 1,
+        "deck_id": deck_id,
+        "preview_id": registered["preview"]["id"],
+        "preview_sha256": registered["preview"]["preview_sha256"],
+        "decision": "approve",
+        "approval_mode": "interactive",
+        "approved_by": "  reviewer  ",
+    }), encoding="utf-8")
+
+    result = approve_draft(project, decision_path)
+
+    assert result["decision"]["approved_by"] == "reviewer"
+
+
+def test_preview_requires_current_generated_slide_record_binding(tmp_path: Path) -> None:
+    """A plan-slide ID alone cannot bind a stale generated slide render."""
+    project, deck_id, plan = _approved_project(tmp_path)
+    preview_path, preview = _preview(project, deck_id, plan)
+    preview["rendered_slide_paths"][0]["slide_record_id"] = "sld_stale"
+    preview["rendered_slide_paths"][0]["attempt"] = 1
+    preview["artifact_bindings"]["renders/slide-01.png"].update({
+        "slide_record_id": "sld_stale", "attempt": 1,
+    })
+    preview_path.write_text(yaml.safe_dump(preview), encoding="utf-8")
+
+    with pytest.raises(DraftGateError, match="slide_record_id"):
+        register_draft_preview(project, preview_path)
+
+
+def test_preview_schema_version_rejects_boolean(tmp_path: Path) -> None:
+    """Canonical preview schema version is an integer, never a YAML boolean."""
+    project, deck_id, plan = _approved_project(tmp_path)
+    preview_path, preview = _preview(project, deck_id, plan)
+    preview["schema_version"] = True
+    preview_path.write_text(yaml.safe_dump(preview), encoding="utf-8")
+
+    with pytest.raises(DraftGateError, match="schema_version_required"):
+        register_draft_preview(project, preview_path)
+
+
+def test_preview_requires_mapping_rendered_paths_without_aliases(tmp_path: Path) -> None:
+    """Rendered paths and contact sheet use only canonical mapping fields."""
+    project, deck_id, plan = _approved_project(tmp_path)
+    preview_path, preview = _preview(project, deck_id, plan)
+    preview["rendered_slide_paths"] = ["renders/slide-01.png"]
+    preview["contact_sheet"] = preview.pop("contact_sheet_path")
+    preview_path.write_text(yaml.safe_dump(preview), encoding="utf-8")
+
+    with pytest.raises(DraftGateError, match="rendered slide entry must be a mapping"):
+        register_draft_preview(project, preview_path)
+
+
+def test_preview_rejects_legacy_aliases_and_ambiguous_metadata(tmp_path: Path) -> None:
+    """Legacy field aliases cannot be upgraded into approval-grade evidence."""
+    project, deck_id, plan = _approved_project(tmp_path)
+    preview_path, preview = _preview(project, deck_id, plan)
+    preview["rendered_slides"] = preview.pop("slides")
+    preview["rendered_slides"][0]["takeaway"] = preview["rendered_slides"][0].pop("key_takeaway")
+    preview["artifact_bindings"]["renders/contact-sheet.png"]["source_set_sha256"] = preview[
+        "artifact_bindings"
+    ]["renders/contact-sheet.png"].pop("source_sha256")
+    preview_path.write_text(yaml.safe_dump(preview), encoding="utf-8")
+
+    with pytest.raises(DraftGateError):
+        register_draft_preview(project, preview_path)
+
+
+def test_preview_rejects_uppercase_extra_png(tmp_path: Path) -> None:
+    """The exact rendered set rejects extra PNG files regardless of case."""
+    project, deck_id, plan = _approved_project(tmp_path)
+    preview_path, _ = _preview(project, deck_id, plan)
+    (project / "renders/extra.PNG").write_bytes(b"extra")
+
+    with pytest.raises(DraftGateError, match="extra rendered PNG"):
+        register_draft_preview(project, preview_path)
+
+
+def test_preview_rejects_symlink_escape(tmp_path: Path) -> None:
+    """Rendered evidence may not resolve through a symlink outside the project."""
+    project, deck_id, plan = _approved_project(tmp_path)
+    preview_path, preview = _preview(project, deck_id, plan)
+    outside = tmp_path / "outside.png"
+    outside.write_bytes(b"outside")
+    rendered = project / "renders/escape.png"
+    rendered.symlink_to(outside)
+    preview["rendered_slide_paths"][0]["path"] = "renders/escape.png"
+    preview["artifact_digests"]["renders/escape.png"] = hashlib.sha256(outside.read_bytes()).hexdigest()
+    preview["artifact_digests"].pop("renders/slide-01.png")
+    preview["artifact_bindings"]["renders/escape.png"] = preview["artifact_bindings"].pop("renders/slide-01.png")
+    preview["artifact_bindings"]["renders/escape.png"]["slide_id"] = "slide-01"
+    preview_path.write_text(yaml.safe_dump(preview), encoding="utf-8")
+
+    with pytest.raises(DraftGateError, match="project-relative PNG"):
+        register_draft_preview(project, preview_path)
+
+
+def test_preview_requires_exactly_one_current_persisted_artifact_record(tmp_path: Path) -> None:
+    """Every current slide and contact sheet must have one matching record."""
+    project, deck_id, plan = _approved_project(tmp_path)
+    preview_path, _ = _preview(project, deck_id, plan)
+    artifacts_path = project / ".research/presentations/state/artifacts.yaml"
+    document = yaml.safe_load(artifacts_path.read_text(encoding="utf-8"))
+    document["artifacts"] = {
+        key: value for key, value in document["artifacts"].items()
+        if value.get("path") != "renders/contact-sheet.png"
+    }
+    artifacts_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    with pytest.raises(DraftGateError, match="persisted_artifact"):
+        register_draft_preview(project, preview_path)
+
+
+def test_preview_rejects_ambiguous_persisted_artifact_records(tmp_path: Path) -> None:
+    """Duplicate current artifact records fail closed rather than selecting one."""
+    project, deck_id, plan = _approved_project(tmp_path)
+    preview_path, _ = _preview(project, deck_id, plan)
+    artifacts_path = project / ".research/presentations/state/artifacts.yaml"
+    document = yaml.safe_load(artifacts_path.read_text(encoding="utf-8"))
+    original = next(value for value in document["artifacts"].values() if value["path"] == "renders/slide-01.png")
+    duplicate = dict(original, id="art_duplicate")
+    document["artifacts"][duplicate["id"]] = duplicate
+    artifacts_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    with pytest.raises(DraftGateError, match="ambiguous_persisted_artifact"):
+        register_draft_preview(project, preview_path)
+
+
+@pytest.mark.parametrize("fail_at", [1, 2])
+def test_draft_reregistration_failure_restores_preview_and_approval(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fail_at: int
+) -> None:
+    """Every staged registration replacement restores exact pointers/events on failure."""
+    project, deck_id, plan = _approved_project(tmp_path)
+    preview_path, _ = _preview(project, deck_id, plan)
+    first = register_draft_preview(project, preview_path)
+    decision_path = project / "decision.yaml"
+    decision_path.write_text(yaml.safe_dump({
+        "schema_version": 1,
+        "deck_id": deck_id,
+        "preview_id": first["preview"]["id"],
+        "preview_sha256": first["preview"]["preview_sha256"],
+        "decision": "approve",
+        "approved_by": "reviewer",
+    }), encoding="utf-8")
+    approve_draft(project, decision_path)
+    before_deck = load_decks(project)[deck_id]
+    before_events = load_events(project)
+    monkeypatch.setenv("PRESENTATION_TRANSACTION_FAIL_AT", str(fail_at))
+
+    with pytest.raises(RuntimeError, match="injected transaction commit failure"):
+        register_draft_preview(project, preview_path)
+
+    assert load_decks(project)[deck_id] == before_deck
+    assert load_events(project) == before_events

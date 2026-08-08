@@ -379,9 +379,10 @@ def _transaction_paths(project_root: Path, action: Mapping[str, Any], review: bo
     elif subject_type == "deck" or subject_type == "plan":
         paths.extend((state_dir / "decks.yaml", state_dir / "plans.yaml", state_dir / "revision_requests.yaml"))
     elif subject_type == "slide":
-        paths.extend((project_root / state.SLIDES_RELATIVE_PATH, state_dir / "revision_requests.yaml"))
+        paths.extend((state_dir / "decks.yaml", project_root / state.SLIDES_RELATIVE_PATH, state_dir / "revision_requests.yaml"))
     elif subject_type == "module":
         paths.extend((
+            state_dir / "decks.yaml",
             project_root / state.VISUAL_MODULES_RELATIVE_PATH,
             project_root / state.SLIDES_RELATIVE_PATH,
             state_dir / "assignments.yaml",
@@ -633,7 +634,7 @@ def request_targeted_revision(project_root: Path, revision_path: Path) -> dict[s
         modules_path = project_root / state.VISUAL_MODULES_RELATIVE_PATH
         assignments_path = state_dir / "assignments.yaml"
         request_path = state_dir / "revision_requests.yaml"
-        decks = tx.read_yaml(decks_path, "decks") if subject_type in {"deck", "plan"} else {}
+        decks = tx.read_yaml(decks_path, "decks")
         slides = tx.read_yaml(slides_path, "slides") if subject_type in {"slide", "module"} else {}
         modules = tx.read_yaml(modules_path, "visual_modules") if subject_type == "module" else {}
         assignments = tx.read_yaml(assignments_path, "assignments") if subject_type == "module" else {}
@@ -782,6 +783,16 @@ def request_targeted_revision(project_root: Path, revision_path: Path) -> dict[s
                 original_assignments = tx.read_yaml(assignments_path, "assignments")
                 if assignments != original_assignments:
                     tx.stage_yaml(assignments_path, "assignments", assignments)
+            deck = decks.get(deck_id)
+            if not isinstance(deck, dict):
+                raise ReviewGateError("revision_requestable", deck_id, [{"reason": "unknown_subject"}])
+            deck.update({
+                "status": "producing",
+                "draft_preview_id": None,
+                "draft_approval_id": None,
+                "updated_at": _now(),
+            })
+            tx.stage_yaml(decks_path, "decks", decks)
         else:
             decks[deck_id].update({
                 "status": "planning", "approved_plan_version": None,
@@ -839,7 +850,12 @@ def register_draft_preview(project_root: Path, preview_path: Path) -> dict[str, 
             deck = decks.get(deck_id)
             if not isinstance(deck, dict):
                 raise DraftGateError("draft_reviewable", deck_id, [{"reason": "unknown_deck"}])
-            deck.update({"draft_preview_id": event["id"], "draft_approval_id": None, "updated_at": _now()})
+            deck.update({
+                "draft_preview_id": event["id"],
+                "draft_approval_id": None,
+                "status": "draft_review",
+                "updated_at": _now(),
+            })
             tx.stage_yaml(decks_path, "decks", decks)
             tx.commit()
             return {"deck": deck, "preview": event, "slides": checked["slides"]}
@@ -856,6 +872,7 @@ def approve_draft(
     Args:
         project_root: Project root containing presentation state.
         decision_path: Source Draft Decision contract.
+        yes_draft: Explicit caller authorization for non-interactive approval.
 
     Returns:
         The updated deck, decision event, and reviewed preview.
@@ -876,6 +893,12 @@ def approve_draft(
             deck = decks.get(deck_id)
             if not isinstance(deck, dict):
                 raise DraftGateError("draft_approvable", deck_id, [{"reason": "unknown_deck"}])
+            if type(decision.get("schema_version")) is not int or decision.get("schema_version") != 1:
+                raise DraftGateError(
+                    "draft_approvable", deck_id,
+                    [{"reason": "schema_version_required"}],
+                    f"draft_approvable blocked for deck {deck_id}: schema_version_required",
+                )
             preview_id = decision.get("preview_id")
             if not isinstance(preview_id, str) or not preview_id:
                 raise DraftGateError("draft_approvable", deck_id, [{"reason": "preview_id_required"}])
@@ -891,14 +914,17 @@ def approve_draft(
                 blockers.append({"reason": "preview_digest_mismatch"})
             if decision.get("decision") != "approve":
                 blockers.append({"reason": "decision must be approve"})
-            mode = "explicit_noninteractive" if yes_draft else decision.get("approval_mode", "interactive")
-            if mode not in {"interactive", "explicit_noninteractive"}:
+            declared_mode = decision.get("approval_mode", "interactive")
+            if declared_mode not in {"interactive", "explicit_noninteractive"}:
                 blockers.append({"reason": "invalid approval_mode"})
+            mode = "explicit_noninteractive" if yes_draft else declared_mode
             approved_by = decision.get("approved_by")
             if mode == "interactive":
                 if not isinstance(approved_by, str) or not approved_by.strip():
                     blockers.append({"reason": "approved_by_required"})
-            elif not (yes_draft or decision.get("yes_draft") is True):
+                else:
+                    approved_by = approved_by.strip()
+            elif not yes_draft:
                 blockers.append({"reason": "explicit --yes-draft is required"})
             if blockers:
                 summary = "; ".join(str(item.get("reason", item)) for item in blockers)

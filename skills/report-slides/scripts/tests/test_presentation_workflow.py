@@ -118,12 +118,45 @@ def _write_draft_preview(
     compose_review_sheet([slide_path], contact_path, columns=1, cell_width=40, cell_height=20)
     slide_digest = hashlib.sha256(slide_path.read_bytes()).hexdigest()
     contact_digest = hashlib.sha256(contact_path.read_bytes()).hexdigest()
+    slide_record = next(
+        record for record in load_slides(project).values()
+        if record.get("deck_id") == deck_id
+        and record.get("plan_slide_id") == "slide-01"
+        and record.get("status") != "superseded"
+    )
+    create_artifact_record(
+        project, deck_id, "rendered_slide", slide_relative, slide_digest, "renderer",
+        slide_id=slide_record["id"],
+    )
+    create_artifact_record(project, deck_id, "contact_sheet", contact_relative, contact_digest, "renderer")
+    artifacts_path = project / ".research/presentations/state/artifacts.yaml"
+    artifacts_document = yaml.safe_load(artifacts_path.read_text(encoding="utf-8"))
+    source_sha256 = _canonical_source_digest([slide_relative], [slide_digest])
+    for artifact in artifacts_document["artifacts"].values():
+        if artifact.get("path") not in {slide_relative, contact_relative}:
+            continue
+        artifact.update({
+            "plan_version": plan["plan_version"],
+            "plan_sha256": contract_sha256(plan),
+        })
+        if artifact["path"] == slide_relative:
+            artifact.update({
+                "slide_record_id": slide_record["id"],
+                "attempt": int(slide_record.get("attempt", 1)),
+            })
+        else:
+            artifact.update({"source_paths": [slide_relative], "source_sha256": source_sha256})
+    artifacts_path.write_text(yaml.safe_dump(artifacts_document), encoding="utf-8")
     document = {
         "schema_version": 1,
         "deck_id": deck_id,
         "plan_version": plan["plan_version"],
         "plan_sha256": contract_sha256(plan),
-        "rendered_slide_paths": [{"slide_id": "slide-01", "path": slide_relative}],
+        "rendered_slide_paths": [{
+            "slide_id": "slide-01", "path": slide_relative,
+            "slide_record_id": slide_record["id"],
+            "attempt": int(slide_record.get("attempt", 1)),
+        }],
         "contact_sheet_path": contact_relative,
         "slides": [{
             "slide_id": "slide-01",
@@ -136,12 +169,14 @@ def _write_draft_preview(
                 "kind": "rendered_slide", "deck_id": deck_id, "slide_id": "slide-01",
                 "plan_version": plan["plan_version"], "plan_sha256": contract_sha256(plan),
                 "producer_id": "renderer",
+                "slide_record_id": slide_record["id"],
+                "attempt": int(slide_record.get("attempt", 1)),
             },
             contact_relative: {
                 "kind": "contact_sheet", "deck_id": deck_id,
                 "plan_version": plan["plan_version"], "plan_sha256": contract_sha256(plan),
                 "producer_id": "renderer", "source_paths": [slide_relative],
-                "source_sha256": _canonical_source_digest([slide_relative], [slide_digest]),
+                "source_sha256": source_sha256,
             },
         },
     }
@@ -194,6 +229,7 @@ def test_draft_and_completion_actions_require_persisted_current_evidence(tmp_pat
     registered = register_draft_preview(project, preview)
     decision = project / "decision.yaml"
     decision.write_text(yaml.safe_dump({
+        "schema_version": 1,
         "deck_id": deck_id, "preview_id": registered["preview"]["id"],
         "preview_sha256": registered["preview"]["preview_sha256"],
         "decision": "approve", "approved_by": "user",
@@ -321,6 +357,7 @@ def _complete_fixture(tmp_path: Path) -> tuple[Path, str, Path, Path, str, dict]
     registered = register_draft_preview(project, preview)
     decision = project / "decision.yaml"
     decision.write_text(yaml.safe_dump({
+        "schema_version": 1,
         "deck_id": deck_id, "preview_id": registered["preview"]["id"], "preview_sha256": registered["preview"]["preview_sha256"],
         "decision": "approve", "approved_by": "reviewer",
     }), encoding="utf-8")
@@ -476,6 +513,7 @@ def test_new_preview_clears_old_approval_and_stale_decision_cannot_apply(tmp_pat
     first = register_draft_preview(project, preview)
     first_decision = project / "first-decision.yaml"
     first_decision.write_text(yaml.safe_dump({
+        "schema_version": 1,
         "deck_id": deck_id, "preview_id": first["preview"]["id"], "preview_sha256": first["preview"]["preview_sha256"],
         "decision": "approve", "approved_by": "reviewer",
     }), encoding="utf-8")
@@ -483,14 +521,151 @@ def test_new_preview_clears_old_approval_and_stale_decision_cannot_apply(tmp_pat
     # A new preview must clear the previous approval and require its exact digest.
     second = register_draft_preview(project, preview)
     assert load_decks(project)[deck_id]["draft_approval_id"] is None
+    assert load_decks(project)[deck_id]["status"] == "draft_review"
     stale = project / "stale.yaml"
     stale.write_text(yaml.safe_dump({
+        "schema_version": 1,
         "deck_id": deck_id, "preview_id": first["preview"]["id"], "preview_sha256": first["preview"]["preview_sha256"],
         "decision": "approve", "approved_by": "reviewer",
     }), encoding="utf-8")
     with pytest.raises(DraftGateError):
         approve_draft(project, stale)
     assert second["preview"]["id"] != first["preview"]["id"]
+
+
+def test_targeted_revision_invalidates_draft_and_requires_replacement_preview_and_approval(
+    tmp_path: Path,
+) -> None:
+    """A targeted slide replacement invalidates stale full-deck evidence atomically."""
+    project, deck_id, plan = _approved_project(tmp_path)
+    slide = create_slide(project, deck_id, "slide-01", "Evidence changes decisions")
+    for status in ("ready", "assigned", "producing", "review_required"):
+        set_slide_status(project, slide["id"], status)
+    record_review(project, "slide", slide["id"], "scientific-reviewer", "scientific", "passed")
+    record_review(project, "slide", slide["id"], "visual-reviewer", "visual_quality", "passed")
+    set_slide_status(project, slide["id"], "passed")
+    decks_path = project / ".research/presentations/state/decks.yaml"
+    decks = yaml.safe_load(decks_path.read_text(encoding="utf-8"))
+    decks["decks"][deck_id]["status"] = "draft_review"
+    decks_path.write_text(yaml.safe_dump(decks), encoding="utf-8")
+    from PIL import Image
+
+    original_slide = project / "renders/original.png"
+    original_contact = project / "renders/original-contact.png"
+    original_slide.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (20, 20), (1, 2, 3)).save(original_slide)
+    Image.new("RGB", (20, 20), (1, 2, 3)).save(original_contact)
+    preview_path = _write_draft_preview(project, deck_id, original_slide, original_contact)
+    registered = register_draft_preview(project, preview_path)
+    decision_path = project / "decision.yaml"
+    decision_path.write_text(yaml.safe_dump({
+        "schema_version": 1,
+        "deck_id": deck_id,
+        "preview_id": registered["preview"]["id"],
+        "preview_sha256": registered["preview"]["preview_sha256"],
+        "decision": "approve",
+        "approved_by": "reviewer",
+    }), encoding="utf-8")
+    approve_draft(project, decision_path)
+    revision_path = project / "revision.yaml"
+    revision_path.write_text(yaml.safe_dump({
+        "deck_id": deck_id,
+        "subject_type": "slide",
+        "subject_id": slide["id"],
+        "requested_by": "reviewer",
+        "instructions": "Fix the evidence framing.",
+        "revision_kind": "slide_retry",
+    }), encoding="utf-8")
+    result = request_targeted_revision(project, revision_path)
+    replacement = result["replacement"]
+    current_deck = load_decks(project)[deck_id]
+    assert current_deck["draft_preview_id"] is None
+    assert current_deck["draft_approval_id"] is None
+    assert current_deck["status"] == "producing"
+    assert result["revision"]["id"] in load_revision_requests(project)
+    completion = project / "completion.yaml"
+    completion.write_text(yaml.safe_dump({}), encoding="utf-8")
+    with pytest.raises(CompletionGateError):
+        complete_deck(project, deck_id, completion)
+
+    replacement_id = replacement["id"]
+    for status in ("ready", "assigned", "producing", "review_required"):
+        set_slide_status(project, replacement_id, status)
+    record_review(project, "slide", replacement_id, "scientific-reviewer", "scientific", "passed")
+    record_review(project, "slide", replacement_id, "visual-reviewer", "visual_quality", "passed")
+    set_slide_status(project, replacement_id, "passed")
+    decks = yaml.safe_load(decks_path.read_text(encoding="utf-8"))
+    decks["decks"][deck_id]["status"] = "draft_review"
+    decks_path.write_text(yaml.safe_dump(decks), encoding="utf-8")
+    for artifact in (original_slide, original_contact):
+        artifact.unlink()
+    artifacts_path = project / ".research/presentations/state/artifacts.yaml"
+    artifacts = yaml.safe_load(artifacts_path.read_text(encoding="utf-8"))
+    artifacts["artifacts"] = {
+        key: value for key, value in artifacts["artifacts"].items()
+        if value.get("path") not in {"renders/original.png", "renders/original-contact.png"}
+    }
+    artifacts_path.write_text(yaml.safe_dump(artifacts), encoding="utf-8")
+    replacement_slide = project / "renders/replacement.png"
+    replacement_contact = project / "renders/replacement-contact.png"
+    Image.new("RGB", (20, 20), (9, 8, 7)).save(replacement_slide)
+    Image.new("RGB", (20, 20), (9, 8, 7)).save(replacement_contact)
+    replacement_preview = _write_draft_preview(project, deck_id, replacement_slide, replacement_contact)
+    register_draft_preview(project, replacement_preview)
+    assert load_decks(project)[deck_id]["draft_approval_id"] is None
+    with pytest.raises(CompletionGateError):
+        complete_deck(project, deck_id, completion)
+
+
+def test_targeted_module_revision_invalidates_approved_draft_and_completion(
+    tmp_path: Path,
+) -> None:
+    """Module retries invalidate the full-deck preview and approval pointers."""
+    project, deck_id, _, completion, _, module = _complete_fixture(tmp_path)
+    revision_path = project / "module-revision.yaml"
+    revision_path.write_text(yaml.safe_dump({
+        "deck_id": deck_id,
+        "subject_type": "module",
+        "subject_id": module["id"],
+        "requested_by": "reviewer",
+        "instructions": "Retry the visual module.",
+        "revision_kind": "module_retry",
+    }), encoding="utf-8")
+
+    result = request_targeted_revision(project, revision_path)
+    assert result["replacement"]["supersedes_module_id"] == module["id"]
+    deck = load_decks(project)[deck_id]
+    assert deck["draft_preview_id"] is None
+    assert deck["draft_approval_id"] is None
+    assert deck["status"] == "producing"
+    with pytest.raises(CompletionGateError):
+        complete_deck(project, deck_id, completion)
+
+
+def test_plan_revision_invalidates_approved_draft_pointers(
+    tmp_path: Path,
+) -> None:
+    """Plan-level revisions clear draft evidence before planning restarts."""
+    project, deck_id, _, _, _, _ = _complete_fixture(tmp_path)
+    decks_path = project / ".research/presentations/state/decks.yaml"
+    decks = yaml.safe_load(decks_path.read_text(encoding="utf-8"))
+    decks["decks"][deck_id]["status"] = "content_review"
+    decks_path.write_text(yaml.safe_dump(decks), encoding="utf-8")
+    revision_path = project / "plan-revision.yaml"
+    revision_path.write_text(yaml.safe_dump({
+        "deck_id": deck_id,
+        "subject_type": "deck",
+        "subject_id": deck_id,
+        "requested_by": "reviewer",
+        "instructions": "Change the emphasis.",
+        "revision_kind": "change_emphasis",
+    }), encoding="utf-8")
+
+    request_targeted_revision(project, revision_path)
+    deck = load_decks(project)[deck_id]
+    assert deck["draft_preview_id"] is None
+    assert deck["draft_approval_id"] is None
+    assert deck["status"] == "planning"
 
 
 def test_failed_production_review_links_revision_and_targeted_revision_supersedes_exact_source(tmp_path: Path) -> None:
