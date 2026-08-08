@@ -257,7 +257,10 @@ def _validate_record_paths(project_root: Path, value: object, key: str | None = 
                     continue
                 if isinstance(child_value, list):
                     for item in child_value:
-                        _canonical_project_relative(project_root, item)
+                        if isinstance(item, Mapping):
+                            _validate_record_paths(project_root, item)
+                        else:
+                            _canonical_project_relative(project_root, item)
                 else:
                     _canonical_project_relative(project_root, child_value)
             _validate_record_paths(project_root, child_value, str(child_key))
@@ -351,7 +354,9 @@ def _parse_event_line(path: Path, line_number: int, line: str) -> dict[str, Any]
     return value
 
 
-def _validate_events(event_files: Mapping[Path, tuple[bytes, int]]) -> list[dict[str, Any]]:
+def _validate_events(
+    project_root: Path, event_files: Mapping[Path, tuple[bytes, int]]
+) -> list[dict[str, Any]]:
     """Parse all event shards and reject duplicate immutable event IDs."""
     events: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
@@ -371,6 +376,7 @@ def _validate_events(event_files: Mapping[Path, tuple[bytes, int]]) -> list[dict
                 if event_id in seen_ids:
                     raise MigrationError(f"duplicate event id {event_id!r}")
                 seen_ids.add(event_id)
+            _validate_record_paths(project_root, event)
             events.append(event)
     return events
 
@@ -658,7 +664,7 @@ def migrate_state(project_root: Path | str, dry_run: bool = False) -> dict[str, 
         versions.add(version)
     if len(versions) > 1:
         raise MigrationError("mixed schema versions across presentation state stores")
-    events = _validate_events(event_files)
+    events = _validate_events(root, event_files)
     source_version = next(iter(versions), STATE_VERSION)
     report: dict[str, Any] = {
         "source_schema_version": source_version,

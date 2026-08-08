@@ -494,3 +494,63 @@ def test_path_traversal_and_symlink_escape_are_rejected(tmp_path: Path) -> None:
     )
     with pytest.raises(Exception, match="symlink|escape|path"):
         _migrate(project)
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+@pytest.mark.parametrize(
+    ("nested_path", "expected"),
+    [("../outside.yaml", "traversal"), ("safe/nested.yaml", "symlink")],
+)
+def test_nested_path_mapping_rejects_escape_before_mutation(
+    tmp_path: Path, dry_run: bool, nested_path: str, expected: str
+) -> None:
+    """Nested path-bearing mappings fail closed before backup or locks."""
+    project, deck_id = _legacy_project(tmp_path)
+    outside = tmp_path / "outside.yaml"
+    outside.write_text("outside", encoding="utf-8")
+    if expected == "symlink":
+        (project / "safe").symlink_to(outside)
+    _write_store(
+        project,
+        "artifacts.yaml",
+        {
+            "artifact-legacy": {
+                "id": "artifact-legacy",
+                "deck_id": deck_id,
+                "rendered_slide_paths": [{"path": nested_path}],
+            }
+        },
+    )
+    presentations = project / ".research" / "presentations"
+    before = _snapshot_tree(presentations)
+    with pytest.raises(Exception, match=expected):
+        _migrate(project, dry_run=dry_run)
+    assert _snapshot_tree(presentations) == before
+    assert outside.read_text(encoding="utf-8") == "outside"
+    assert not list(presentations.glob("state.backup-*"))
+    assert not (presentations / "transactions").exists()
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+@pytest.mark.parametrize(
+    ("event_path", "expected"),
+    [("../outside.yaml", "traversal"), ("safe.yaml", "symlink")],
+)
+def test_event_payload_path_rejects_escape_before_mutation(
+    tmp_path: Path, dry_run: bool, event_path: str, expected: str
+) -> None:
+    """Event payload paths fail closed before migration side effects."""
+    project, _ = _legacy_project(tmp_path)
+    outside = tmp_path / "outside.yaml"
+    outside.write_text("outside", encoding="utf-8")
+    if expected == "symlink":
+        (project / "safe.yaml").symlink_to(outside)
+    _write_events(project, [{"event": "artifact_registered", "id": "event-legacy", "path": event_path}])
+    presentations = project / ".research" / "presentations"
+    before = _snapshot_tree(presentations)
+    with pytest.raises(Exception, match=expected):
+        _migrate(project, dry_run=dry_run)
+    assert _snapshot_tree(presentations) == before
+    assert outside.read_text(encoding="utf-8") == "outside"
+    assert not list(presentations.glob("state.backup-*"))
+    assert not (presentations / "transactions").exists()
