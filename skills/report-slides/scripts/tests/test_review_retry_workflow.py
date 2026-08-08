@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 import threading
-import time
 
 import pytest
 import yaml
@@ -326,12 +325,21 @@ def test_failed_review_transaction_rolls_back_each_commit_position(
     assert load_slides(project)[slide["id"]]["status"] == "review_required"
 
 
-@pytest.mark.parametrize("commit_position", [1, 2])
+@pytest.mark.parametrize("commit_position", [1, 2, 3])
 def test_targeted_revision_transaction_rolls_back_each_commit_position(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, commit_position: int
 ) -> None:
     """Every targeted-revision commit position leaves source and request unchanged."""
     project, failed_id, _, _ = _reviewed_modules(tmp_path)
+    sibling = next(module for module in load_visual_modules(project).values() if module["id"] != failed_id)
+    dependent = create_visual_module(
+        project, sibling["slide_id"], "dependent", "architecture", [failed_id]
+    )
+    create_assignment_record(
+        project, load_slides(project)[dependent["slide_id"]]["deck_id"], module_id=dependent["id"],
+        assignment_path="assignments/dependent.yaml", worker_id="worker-dependent",
+        worker_type="architecture", spec_sha256="a" * 64, dependencies=[failed_id],
+    )
     revision = _review_file(project, "injected-revision", {
         "subject_type": "module", "subject_id": failed_id,
         "requested_by": "reviewer", "instructions": "Retry the module.",
@@ -362,6 +370,7 @@ def test_transaction_rollback_releases_sidecar_for_waiting_writer(
     import presentation_transactions
 
     locked = threading.Event()
+    allow_commit = threading.Event()
     original_notify = presentation_transactions.WorkflowTransaction._notify_locked
 
     def notify_locked(handle: object) -> None:
@@ -370,6 +379,12 @@ def test_transaction_rollback_releases_sidecar_for_waiting_writer(
         locked.set()
 
     monkeypatch.setattr(presentation_transactions.WorkflowTransaction, "_notify_locked", notify_locked)
+
+    def before_commit(handle: object) -> None:
+        """Pause commit until the competing writer has attempted its lock."""
+        assert allow_commit.wait(timeout=3)
+
+    monkeypatch.setattr(presentation_transactions.WorkflowTransaction, "_before_commit", before_commit)
     writer_started = threading.Event()
     writer_finished = threading.Event()
 
@@ -395,8 +410,8 @@ def test_transaction_rollback_releases_sidecar_for_waiting_writer(
     writer = threading.Thread(target=write_after_lock)
     writer.start()
     writer_started.wait(timeout=2)
-    time.sleep(0.1)
     assert not writer_finished.is_set()
+    allow_commit.set()
     action.join(timeout=3)
     writer.join(timeout=3)
     assert action_error and "transaction commit" in str(action_error[0])

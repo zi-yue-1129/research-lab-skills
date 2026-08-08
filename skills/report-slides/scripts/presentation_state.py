@@ -4,13 +4,10 @@ Independent implementation (no import from skills/agent-state/) that follows the
 replace, id-keyed maps for mutable records, append-only JSONL for immutable facts, and write-time referential-integrity checks. Bootstraps
 its own .research/presentations/.gitignore rather than touching .research/.gitignore, since agent-state may independently manage that
 file in the same project.
-Usage:
     python presentation_state.py --create-deck --title "..." [--skill NAME] [--json]
     python presentation_state.py --set-deck-status --deck-id DECK_ID \
         --status planning|content_review|awaiting_approval|approved|producing| \
         draft_review|revising|validating|completed|blocked [--json]
-    python presentation_state.py --create-slide --deck-id DECK_ID \
-        --plan-slide-id "slide-01" --title "..." [--skill NAME] [--json]
     python presentation_state.py --set-slide-status --slide-id SLIDE_ID \
         --status planned|ready|assigned|producing|review_required| \
         revision_required|passed|blocked|superseded [--json]
@@ -27,28 +24,29 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterator, Optional
+from presentation_transactions import incomplete_transaction_journals
 from presentation_events import (
     LockTimeoutError,
     StateParseError,
     append_event,
-    canonical_relative_path,
-    create_artifact_record,
-    EVENTS_RELATIVE_DIR,
-    create_assignment_record,
+    canonical_relative_path,  # noqa: F401
+    create_artifact_record,  # noqa: F401
+    EVENTS_RELATIVE_DIR,  # noqa: F401
+    create_assignment_record,  # noqa: F401
     load_events,
     load_artifacts,
     load_assignments,
     load_plans,
     load_review_results,
     load_revision_requests,
-    register_artifact_record,
-    register_assignment_record,
-    register_plan_record,
+    register_artifact_record,  # noqa: F401
+    register_assignment_record,  # noqa: F401
+    register_plan_record,  # noqa: F401
     create_revision_request,
-    effective_review_results,
+    effective_review_results,  # noqa: F401
     next_actions,
     workflow_blockers,
-)
+)  # noqa: F401
 try:
     import yaml
 except ImportError:
@@ -77,7 +75,6 @@ _DECK_TRANSITIONS: Dict[str, frozenset] = {
     }),
 }
 _DECK_STATUSES = frozenset(_DECK_TRANSITIONS.keys())
-# defines one 9-state enum for "Slide or visual module", not two.
 _PRODUCTION_UNIT_TRANSITIONS: Dict[str, frozenset] = {
     "planned": frozenset({"ready", "blocked"}),
     "ready": frozenset({"assigned", "blocked"}),
@@ -644,6 +641,9 @@ def query(project_root: Path, deck_id: str) -> Dict[str, Any]:
     approval = _approval_snapshot(deck)
     draft_preview, draft_decision = _draft_snapshots(project_root, deck_id, deck)
     blockers = workflow_blockers(deck, slides, modules, assignments, reviews, draft_preview, draft_decision)
+    journals = incomplete_transaction_journals(project_root)
+    if journals:
+        blockers.append({"reason": "incomplete_transaction", "journals": [str(path) for path in journals]})
     next_action_list = next_actions(deck, plans, slides, modules, reviews, approval, draft_preview)
     return {
         "deck": deck,

@@ -81,24 +81,24 @@ def _state() -> Any:
 
 def _fail(error_type: type[GateError], predicate: str, deck_id: str, blockers: list[dict[str, Any]]) -> None:
     """Raise one gate exception with a deterministic blocker message."""
-    summary = "; ".join(str(blocker.get("reason", blocker)) for blocker in blockers)
+    summary = "; ".join(f"{blocker.get('reason', blocker)}{': ' + str(blocker['message']) if isinstance(blocker, dict) and blocker.get('message') else ''}" for blocker in blockers)
     raise error_type(
         predicate,
         deck_id,
         blockers,
         f"{predicate} blocked for deck {deck_id}: {summary or 'missing evidence'}",
     )
-
-
 def _deck(project_root: Path, deck_id: str) -> dict[str, Any]:
     """Return a persisted deck or raise its typed not-found error."""
+    from presentation_transactions import incomplete_transaction_journals
+
+    if incomplete_transaction_journals(project_root):
+        raise RuntimeError("incomplete_transaction journal requires recovery")
     state = _state()
     decks = state.load_decks(project_root)
     if deck_id not in decks:
         raise state.DeckNotFoundError(f"Unknown deck_id: {deck_id}")
     return decks[deck_id]
-
-
 def _plan_for_deck(project_root: Path, deck: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any] | None, list[dict[str, Any]]]:
     """Load the current plan record and contract without inventing one."""
     records = load_plans(project_root)
@@ -332,9 +332,9 @@ def _module_context(project_root: Path, module_id: str) -> tuple[dict[str, Any],
     if slide_id not in slides:
         raise state.SlideNotFoundError(f"Unknown slide_id: {slide_id}")
     slide = slides[slide_id]
-    return module, slide, str(slide.get("deck_id"))
-
-
+    deck_id = str(slide.get("deck_id"))
+    _deck(project_root, deck_id)
+    return module, slide, deck_id
 def assert_module_assignable(project_root: Path, module_id: str, assignment: dict[str, Any]) -> dict[str, Any]:
     """Assert that a module has a valid specification and worker assignment.
 
@@ -602,6 +602,7 @@ def assert_slide_passable(project_root: Path, slide_id: str) -> dict[str, Any]:
         _fail(ReviewGateError, "slide_passable", "<unknown>", [{"reason": "unknown_slide", "slide_id": slide_id}])
     slide = slides[slide_id]
     deck_id = str(slide.get("deck_id"))
+    _deck(project_root, deck_id)
     blockers: list[dict[str, Any]] = []
     raw_reviews = load_review_results(project_root, {slide_id})
     for review in raw_reviews:
@@ -629,6 +630,7 @@ def assert_module_passable(project_root: Path, module_id: str) -> dict[str, Any]
         _fail(ReviewGateError, "module_passable", "<unknown>", [{"reason": "unknown_module", "module_id": module_id}])
     slides = _state().load_slides(project_root)
     deck_id = str(slides.get(module.get("slide_id"), {}).get("deck_id"))
+    _deck(project_root, deck_id)
     blockers: list[dict[str, Any]] = []
     raw_reviews = load_review_results(project_root, {module_id})
     for review in raw_reviews:

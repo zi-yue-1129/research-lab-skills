@@ -128,6 +128,10 @@ def _workflow_lock(project_root: Path) -> Iterator[None]:
                 if time.monotonic() >= deadline:
                     raise RuntimeError(f"Could not acquire workflow lock {path} within {timeout}s")
                 time.sleep(0.05)
+        from presentation_transactions import WorkflowTransaction
+
+        with WorkflowTransaction([], project_root):
+            pass
         yield
     finally:
         fcntl.flock(descriptor, fcntl.LOCK_UN)
@@ -494,7 +498,7 @@ def record_production_review(project_root: Path, review_path: Path) -> dict[str,
     except Exception:
         hint = {}
     paths = _transaction_paths(project_root, hint, review=True)
-    with _workflow_lock(project_root), transaction(paths) as tx:
+    with _workflow_lock(project_root), transaction(paths, project_root) as tx:
         review = _action_document(review_path, ReviewGateError, "production_review_recordable", "<unknown>")
         subject_type = review.get("subject_type")
         subject_id = review.get("subject_id")
@@ -601,7 +605,7 @@ def request_targeted_revision(project_root: Path, revision_path: Path) -> dict[s
     except Exception:
         hint = {}
     paths = _transaction_paths(project_root, hint, review=False)
-    with _workflow_lock(project_root), transaction(paths) as tx:
+    with _workflow_lock(project_root), transaction(paths, project_root) as tx:
         revision = _action_document(revision_path, ReviewGateError, "revision_requestable", "<unknown>")
         subject_type = revision.get("subject_type")
         subject_id = revision.get("subject_id")
@@ -668,7 +672,9 @@ def request_targeted_revision(project_root: Path, revision_path: Path) -> dict[s
                 current_plan = checked_plan["plan"]
                 if subject_type == "plan" and subject_id != current_plan_id:
                     blockers.append({"reason": "current_plan_id_required", "expected": current_plan_id, "actual": subject_id})
-                if revision.get("target_id") not in {None, current_plan_id}:
+                if subject_type == "plan" and revision.get("target_id") != current_plan_id:
+                    blockers.append({"reason": "target_id_required", "expected": current_plan_id, "actual": revision.get("target_id")})
+                elif revision.get("target_id") not in {None, current_plan_id}:
                     blockers.append({"reason": "target_id_mismatch", "expected": current_plan_id, "actual": revision.get("target_id")})
                 plan_binding = {
                     "plan_scoped": True,
@@ -748,11 +754,14 @@ def request_targeted_revision(project_root: Path, revision_path: Path) -> dict[s
                     dependent_slide = slides.get(dependent.get("slide_id"), {})
                     if not dependent_slide or dependent_slide.get("status") == "superseded":
                         continue
-                    dependencies = list(dependent.get("dependencies") or [])
+                    dependencies = list(dependent.get("dependencies", dependent.get("dependency_ids", [])) or [])
                     if subject_id not in dependencies:
                         continue
                     redirected = _redirect_dependency_ids(dependencies, subject_id, replacement["id"])
-                    dependent["dependencies"] = redirected
+                    if "dependencies" in dependent or "dependency_ids" not in dependent:
+                        dependent["dependencies"] = list(redirected)
+                    if "dependency_ids" in dependent:
+                        dependent["dependency_ids"] = list(redirected)
                     dependent["updated_at"] = _now()
                     for assignment in assignments.values():
                         if (
