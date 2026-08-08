@@ -83,9 +83,10 @@ def _write_journal(project: Path, entries: list[dict[str, object]]) -> Path:
     """Write a crafted durable journal for recovery validation tests."""
     journal_dir = project / ".research/presentations/transactions"
     journal_dir.mkdir(parents=True, exist_ok=True)
-    journal = journal_dir / "crafted.json"
+    transaction_id = "a" * 32
+    journal = journal_dir / f"{transaction_id}.json"
     journal.write_text(
-        json.dumps({"transaction_id": "crafted", "paths": entries}),
+        json.dumps({"transaction_id": transaction_id, "paths": entries}),
         encoding="utf-8",
     )
     return journal
@@ -247,4 +248,203 @@ def test_crash_split_state_blocks_writes_then_workflow_recovers_exact_preimages(
     assert not list((project / ".research/presentations/transactions").glob("*.json"))
 
     set_module_status(project, module["id"], "ready")
+    append_event(project, {"event": "recovered", "id": "recovered"})
+
+
+def test_non_directory_transaction_path_fails_before_target_lock(tmp_path: Path) -> None:
+    """A transactions path that is a file blocks before any target lock."""
+    target = tmp_path / ".research/presentations/state/slides.yaml"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"target-before")
+    journal_path = tmp_path / ".research/presentations/transactions"
+    journal_path.parent.mkdir(parents=True, exist_ok=True)
+    journal_path.write_bytes(b"not-a-directory")
+
+    with pytest.raises(TransactionError, match="journal|directory"):
+        with WorkflowTransaction([target], tmp_path):
+            pass
+
+    assert target.read_bytes() == b"target-before"
+    assert not target.with_suffix(target.suffix + ".lock").exists()
+
+
+@pytest.mark.parametrize(
+    "entry_name",
+    [
+        "unexpected.txt",
+        "a" * 32 + ".json.tmp",
+        "A" * 32 + ".json",
+        "a" * 31 + ".json",
+        "g" * 32 + ".json",
+    ],
+)
+def test_unexpected_journal_children_fail_before_target_lock(
+    tmp_path: Path, entry_name: str
+) -> None:
+    """Every unexpected journal child is rejected rather than ignored."""
+    target = tmp_path / ".research/presentations/state/slides.yaml"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"target-before")
+    journal_dir = tmp_path / ".research/presentations/transactions"
+    journal_dir.mkdir(parents=True)
+    (journal_dir / entry_name).write_text("unexpected", encoding="utf-8")
+
+    with pytest.raises(TransactionError, match="journal|filename|regular|directory|suffix"):
+        with WorkflowTransaction([target], tmp_path):
+            pass
+
+    assert target.read_bytes() == b"target-before"
+    assert not target.with_suffix(target.suffix + ".lock").exists()
+    assert (journal_dir / entry_name).read_text(encoding="utf-8") == "unexpected"
+
+
+def test_journal_subdirectory_fails_before_target_lock(tmp_path: Path) -> None:
+    """A subdirectory in the journal directory cannot be skipped."""
+    target = tmp_path / ".research/presentations/state/slides.yaml"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"target-before")
+    journal_dir = tmp_path / ".research/presentations/transactions"
+    journal_dir.mkdir(parents=True)
+    child = journal_dir / ("b" * 32 + ".json")
+    child.mkdir()
+
+    with pytest.raises(TransactionError, match="journal|regular|directory"):
+        with WorkflowTransaction([target], tmp_path):
+            pass
+
+    assert target.read_bytes() == b"target-before"
+    assert child.is_dir()
+    assert not target.with_suffix(target.suffix + ".lock").exists()
+
+
+def test_journal_symlink_fails_before_target_lock(tmp_path: Path) -> None:
+    """A symlink journal child is rejected even when its name is valid."""
+    target = tmp_path / ".research/presentations/state/slides.yaml"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"target-before")
+    journal_dir = tmp_path / ".research/presentations/transactions"
+    journal_dir.mkdir(parents=True)
+    outside = tmp_path / "outside-journal.json"
+    outside.write_text("outside", encoding="utf-8")
+    child = journal_dir / ("c" * 32 + ".json")
+    child.symlink_to(outside)
+
+    with pytest.raises(TransactionError, match="journal|symlink|regular"):
+        with WorkflowTransaction([target], tmp_path):
+            pass
+
+    assert target.read_bytes() == b"target-before"
+    assert child.is_symlink()
+    assert outside.read_text(encoding="utf-8") == "outside"
+    assert not target.with_suffix(target.suffix + ".lock").exists()
+
+
+def test_journal_transaction_id_must_match_filename_stem(tmp_path: Path) -> None:
+    """A valid journal filename cannot carry a different transaction ID."""
+    journal = _write_journal(tmp_path, [_journal_entry(".research/presentations/state/slides.yaml")])
+    document = json.loads(journal.read_text(encoding="utf-8"))
+    document["transaction_id"] = "b" * 32
+    journal.write_text(json.dumps(document), encoding="utf-8")
+
+    with pytest.raises(TransactionError, match="transaction_id|journal"):
+        with WorkflowTransaction([], tmp_path):
+            pass
+
+
+def test_unexpected_journal_entry_blocks_query_gate_and_low_level_writer(tmp_path: Path) -> None:
+    """An ignored-looking journal child cannot bypass any workflow guard."""
+    from presentation_gates import ProductionGateError, assert_production_allowed
+    from presentation_state import query, set_deck_status
+
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / ".git").mkdir()
+    deck = create_deck(project, "Malformed journal")
+    decks_path = project / ".research/presentations/state/decks.yaml"
+    decks_before = decks_path.read_bytes()
+    journal_dir = project / ".research/presentations/transactions"
+    journal_dir.mkdir(parents=True)
+    unexpected = journal_dir / "ignored.json.tmp"
+    unexpected.write_bytes(b"unexpected")
+
+    with pytest.raises(TransactionError, match="journal|filename|suffix"):
+        query(project, deck["id"])
+    with pytest.raises(ProductionGateError, match="journal|recovery"):
+        assert_production_allowed(project, deck["id"])
+    with pytest.raises(TransactionError, match="journal|filename|suffix"):
+        set_deck_status(project, deck["id"], "content_review")
+
+    assert decks_path.read_bytes() == decks_before
+    assert unexpected.read_bytes() == b"unexpected"
+
+
+def test_real_three_target_crash_blocks_writes_and_recovers_exact_preimages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A BaseException after two replaces leaves a real split journal to recover."""
+    from presentation_gates import ProductionGateError, assert_production_allowed
+    from presentation_state import query, set_deck_status
+
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / ".git").mkdir()
+    deck = create_deck(project, "Three targets")
+
+    state_dir = project / ".research/presentations/state"
+    assignments = state_dir / "assignments.yaml"
+    artifacts = state_dir / "artifacts.yaml"
+    revision_requests = state_dir / "revision_requests.yaml"
+    artifacts_before = b"artifacts-before"
+    revisions_before = b"revisions-before"
+    artifacts.write_bytes(artifacts_before)
+    revision_requests.write_bytes(revisions_before)
+    artifacts.chmod(0o640)
+    revision_requests.chmod(0o600)
+    artifacts_mode = artifacts.stat().st_mode & 0o777
+    revisions_mode = revision_requests.stat().st_mode & 0o777
+
+    monkeypatch.setenv("PRESENTATION_TRANSACTION_CRASH_AT", "2")
+    with pytest.raises(BaseException, match="simulated process death"):
+        with WorkflowTransaction([assignments, artifacts, revision_requests], project) as transaction:
+            transaction.stage_bytes(assignments, b"assignments-created", mode=0o600)
+            transaction.stage_bytes(artifacts, b"artifacts-after", mode=0o644)
+            transaction.stage_bytes(revision_requests, b"revisions-after", mode=0o644)
+            transaction.commit()
+    monkeypatch.delenv("PRESENTATION_TRANSACTION_CRASH_AT")
+
+    assert assignments.read_bytes() == b"assignments-created"
+    assert artifacts.read_bytes() == b"artifacts-after"
+    assert revision_requests.read_bytes() == revisions_before
+    assert (artifacts.stat().st_mode & 0o777) == 0o644
+    assert (revision_requests.stat().st_mode & 0o777) == revisions_mode
+    journals = list((project / ".research/presentations/transactions").iterdir())
+    assert len(journals) == 1
+    assert query(project, deck["id"])["blockers"][0]["reason"] == "incomplete_transaction"
+    with pytest.raises(ProductionGateError, match="incomplete_transaction|recovery"):
+        assert_production_allowed(project, deck["id"])
+
+    decks_path = project / ".research/presentations/state/decks.yaml"
+    decks_before = decks_path.read_bytes()
+    event_path = events_shard_path(project, datetime.now(timezone.utc))
+    event_before_exists = event_path.exists()
+    event_before = event_path.read_bytes() if event_before_exists else b""
+    with pytest.raises(TransactionRecoveryRequiredError, match="recovery required"):
+        set_deck_status(project, deck["id"], "content_review")
+    with pytest.raises(TransactionRecoveryRequiredError, match="recovery required"):
+        append_event(project, {"event": "blocked", "id": "blocked"})
+    assert decks_path.read_bytes() == decks_before
+    assert event_path.exists() is event_before_exists
+    if event_before_exists:
+        assert event_path.read_bytes() == event_before
+
+    with WorkflowTransaction([], project):
+        pass
+    assert not assignments.exists()
+    assert artifacts.read_bytes() == artifacts_before
+    assert revision_requests.read_bytes() == revisions_before
+    assert (artifacts.stat().st_mode & 0o777) == artifacts_mode
+    assert (revision_requests.stat().st_mode & 0o777) == revisions_mode
+    assert not list((project / ".research/presentations/transactions").iterdir())
+
+    set_deck_status(project, deck["id"], "content_review")
     append_event(project, {"event": "recovered", "id": "recovered"})

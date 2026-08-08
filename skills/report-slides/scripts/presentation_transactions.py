@@ -140,6 +140,7 @@ _ALLOWED_STATE_NAMES = frozenset({
     "assignments.yaml", "artifacts.yaml", "revision_requests.yaml",
 })
 _EVENT_SHARD_PATTERN = re.compile(r"\.research/presentations/events/(\d{4}-\d{2}-\d{2})\.jsonl")
+_JOURNAL_FILENAME_PATTERN = re.compile(r"[0-9a-f]{32}\.json")
 
 
 def _validate_mode(mode: object, source: Path) -> int:
@@ -201,14 +202,31 @@ def _project_relative_path(project_root: Path, path: Path) -> str:
     return relative
 
 
+def _validate_journal_filename(path: Path) -> None:
+    """Reject journal names that do not use the generated transaction ID form."""
+    if _JOURNAL_FILENAME_PATTERN.fullmatch(path.name) is None:
+        raise TransactionError(
+            "transaction journal filename must be 32 lowercase hexadecimal characters plus .json: "
+            f"{path}"
+        )
+
+
 def incomplete_transaction_journals(project_root: Path) -> list[Path]:
     """List incomplete transaction journals without changing state."""
     directory = _journal_dir(project_root)
     if directory.is_symlink():
         raise TransactionError(f"transaction journal directory must not be a symlink: {directory}")
-    if not directory.is_dir():
+    if not directory.exists():
         return []
-    return sorted(directory.glob("*.json"), key=lambda path: path.name)
+    if not directory.is_dir():
+        raise TransactionError(f"transaction journal path must be a directory: {directory}")
+    journals: list[Path] = []
+    for child in sorted(directory.iterdir(), key=lambda path: path.name):
+        _validate_journal_filename(child)
+        if child.is_symlink() or not child.is_file():
+            raise TransactionError(f"transaction journal must be a regular file: {child}")
+        journals.append(child)
+    return journals
 
 
 def require_transaction_recovery(project_root: Path) -> None:
@@ -349,6 +367,7 @@ class WorkflowTransaction:
         """Read all pending journals before acquiring any data locks."""
         journals: list[tuple[Path, list[tuple[Path, _FileSnapshot]]]] = []
         for journal in incomplete_transaction_journals(self.project_root):
+            _validate_journal_filename(journal)
             if journal.is_symlink() or not journal.is_file():
                 raise TransactionError(f"transaction journal must be a regular file: {journal}")
             if journal.parent != _journal_dir(self.project_root):
@@ -357,7 +376,11 @@ class WorkflowTransaction:
                 journal.resolve(strict=True).relative_to(_journal_dir(self.project_root).resolve())
             except (OSError, ValueError) as exc:
                 raise TransactionError(f"transaction journal escapes its directory: {journal}") from exc
-            _, entries = _decode_journal(self.project_root, journal)
+            transaction_id, entries = _decode_journal(self.project_root, journal)
+            if transaction_id != journal.stem:
+                raise TransactionError(
+                    f"transaction journal transaction_id does not match filename stem: {journal}"
+                )
             journals.append((journal, entries))
         return journals
 
