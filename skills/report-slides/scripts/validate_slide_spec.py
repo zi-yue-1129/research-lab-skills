@@ -14,7 +14,7 @@ from typing import Any
 
 import yaml
 
-from presentation_contracts import load_contract, validate_schema_version
+from presentation_contracts import contract_sha256, load_contract, validate_schema_version
 
 
 _CANVAS_WIDTH = 1200
@@ -69,9 +69,13 @@ def validate_slide_spec(doc: Any) -> list[str]:
     _validate_detector_field(doc, errors)
     _validate_complexity_signals(doc, len(region_ids), errors)
     _require_nonempty_string(doc, "approved_takeaway", errors)
-    _validate_sha256(doc, "approved_takeaway_sha256", errors)
+    _validate_protected_digest(
+        doc, "approved_takeaway", "approved_takeaway_sha256", errors
+    )
     _validate_string_list(doc, "approved_evidence_refs", errors, allow_empty=False)
-    _validate_sha256(doc, "approved_evidence_sha256", errors)
+    _validate_protected_digest(
+        doc, "approved_evidence_refs", "approved_evidence_sha256", errors
+    )
     return errors
 
 
@@ -173,11 +177,24 @@ def _validate_detector_field(doc: dict[str, Any], errors: list[str]) -> None:
         errors.append("requires_complex_workflow: must be a boolean or null")
 
 
-def _validate_sha256(doc: dict[str, Any], field: str, errors: list[str]) -> None:
-    """Require a lowercase hexadecimal SHA-256 digest field."""
-    value = doc.get(field)
-    if not isinstance(value, str) or _SHA256_PATTERN.fullmatch(value) is None:
-        errors.append(f"{field}: required 64-character lowercase hexadecimal digest")
+def _validate_protected_digest(
+    doc: dict[str, Any], value_field: str, digest_field: str, errors: list[str]
+) -> None:
+    """Require a canonical digest that matches its protected contract value."""
+    digest = doc.get(digest_field)
+    if not isinstance(digest, str) or _SHA256_PATTERN.fullmatch(digest) is None:
+        errors.append(
+            f"{digest_field}: required 64-character lowercase hexadecimal digest"
+        )
+        return
+    value = doc.get(value_field)
+    if value is None:
+        return
+    expected_digest = contract_sha256(value)
+    if digest != expected_digest:
+        errors.append(
+            f"{digest_field}: does not match canonical digest of {value_field}"
+        )
 
 
 def _validate_string_list(
@@ -227,4 +244,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

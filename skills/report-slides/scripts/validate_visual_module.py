@@ -170,6 +170,7 @@ def validate_worker_assignment(doc: Any) -> list[str]:
         return ["document must be a mapping"]
 
     errors: list[str] = []
+    errors.extend(validate_schema_version(doc))
     module_id = doc.get("module_id")
     if not isinstance(module_id, str) or not module_id.strip():
         errors.append("module_id: required generated module ID")

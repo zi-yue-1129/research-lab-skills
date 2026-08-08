@@ -8,6 +8,7 @@ from typing import Any
 
 import yaml
 
+from presentation_contracts import contract_sha256
 from validate_slide_spec import validate_slide_spec
 
 
@@ -40,9 +41,11 @@ def valid_slide_spec() -> dict[str, Any]:
             "not_atomic": False,
         },
         "approved_takeaway": "Action commands join observation features before prediction.",
-        "approved_takeaway_sha256": "a" * 64,
+        "approved_takeaway_sha256": contract_sha256(
+            "Action commands join observation features before prediction."
+        ),
         "approved_evidence_refs": ["E-OBS", "E-CMD"],
-        "approved_evidence_sha256": "b" * 64,
+        "approved_evidence_sha256": contract_sha256(["E-OBS", "E-CMD"]),
     }
 
 
@@ -111,6 +114,19 @@ def test_slide_spec_requires_detector_field_to_be_nullable_or_boolean() -> None:
     )
 
 
+def test_slide_spec_protected_digests_match_approved_content() -> None:
+    """Reject protected content mutations when their digests are unchanged."""
+    takeaway_mutation = valid_slide_spec()
+    takeaway_mutation["approved_takeaway"] += " Changed."
+    takeaway_errors = validate_slide_spec(takeaway_mutation)
+    assert any("approved_takeaway_sha256" in error for error in takeaway_errors)
+
+    evidence_mutation = valid_slide_spec()
+    evidence_mutation["approved_evidence_refs"] = ["E-OBS", "E-LATENT"]
+    evidence_errors = validate_slide_spec(evidence_mutation)
+    assert any("approved_evidence_sha256" in error for error in evidence_errors)
+
+
 def test_slide_spec_cli_reports_json_result(tmp_path: Path) -> None:
     """Validate a YAML specification through the documented JSON CLI."""
     path = tmp_path / "slide-spec.yaml"
@@ -120,4 +136,3 @@ def test_slide_spec_cli_reports_json_result(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == {"valid": True, "errors": []}
-

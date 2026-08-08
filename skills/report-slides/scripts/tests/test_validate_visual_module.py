@@ -7,7 +7,11 @@ from typing import Any
 
 import yaml
 
-from validate_visual_module import validate_complex_visual_spec, validate_module_spec
+from validate_visual_module import (
+    validate_complex_visual_spec,
+    validate_module_spec,
+    validate_worker_assignment,
+)
 
 SCRIPT = Path(__file__).resolve().parent.parent / "validate_visual_module.py"
 
@@ -201,6 +205,7 @@ def test_spec_missing_layout_fails(tmp_path: Path) -> None:
 
 def test_valid_worker_assignment_passes(tmp_path: Path) -> None:
     assignment = {
+        "schema_version": 1,
         "module_id": "mod_20260806_ab12cd", "worker_type": "architecture",
         "dependencies": [], "spec_sha256": "a" * 64,
         "assigned_at": "2026-08-06T00:00:00Z", "inputs_resolved": True, "blocker": None,
@@ -216,6 +221,7 @@ def test_valid_worker_assignment_passes(tmp_path: Path) -> None:
 
 def test_worker_assignment_missing_inputs_resolved_fails(tmp_path: Path) -> None:
     assignment = {
+        "schema_version": 1,
         "module_id": "mod_20260806_ab12cd", "worker_type": "architecture",
         "dependencies": [], "spec_sha256": "a" * 64,
         "assigned_at": "2026-08-06T00:00:00Z",
@@ -232,6 +238,7 @@ def test_worker_assignment_missing_inputs_resolved_fails(tmp_path: Path) -> None
 
 def test_worker_assignment_invalid_worker_type_fails(tmp_path: Path) -> None:
     assignment = {
+        "schema_version": 1,
         "module_id": "mod_20260806_ab12cd", "worker_type": "not-a-real-worker",
         "dependencies": [], "spec_sha256": "a" * 64,
         "assigned_at": "2026-08-06T00:00:00Z", "inputs_resolved": True, "blocker": None,
@@ -244,3 +251,25 @@ def test_worker_assignment_invalid_worker_type_fails(tmp_path: Path) -> None:
     assert result.returncode == 1
     data = json.loads(result.stdout)
     assert any("worker_type" in err for err in data["errors"])
+
+
+def test_worker_assignment_requires_schema_version_one() -> None:
+    """Reject assignments with a missing or incompatible schema version."""
+    assignment = {
+        "schema_version": 1,
+        "module_id": "mod_20260806_ab12cd",
+        "worker_type": "architecture",
+        "dependencies": [],
+        "spec_sha256": "a" * 64,
+        "assigned_at": "2026-08-06T00:00:00Z",
+        "inputs_resolved": True,
+        "blocker": None,
+    }
+    for invalid_version in (None, 2, True):
+        candidate = dict(assignment)
+        if invalid_version is None:
+            candidate.pop("schema_version")
+        else:
+            candidate["schema_version"] = invalid_version
+        errors = validate_worker_assignment(candidate)
+        assert any("schema_version" in error for error in errors), invalid_version
