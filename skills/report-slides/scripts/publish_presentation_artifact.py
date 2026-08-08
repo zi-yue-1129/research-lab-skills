@@ -23,6 +23,7 @@ from presentation_events import (
     ARTIFACTS_RELATIVE_PATH,
     canonical_relative_path,
     create_artifact_record,
+    load_plans,
     load_assignments,
 )
 import presentation_events as _events
@@ -31,7 +32,8 @@ from presentation_gates import (
     assert_module_publishable,
     assert_production_allowed,
 )
-from presentation_state import load_slides, load_visual_modules
+from presentation_workflow import _workflow_lock
+from presentation_state import load_decks, load_slides, load_visual_modules
 from validate_slide_spec import validate_slide_spec
 from validate_visual_module import validate_complex_visual_spec, validate_worker_assignment
 
@@ -80,106 +82,133 @@ def publish_artifact(
     root = Path(project_root).resolve()
     _assert_production(root, deck_id)
     _validate_inputs(root, deck_id, source, destination, artifact_kind, producer_id)
-    slides_root = _resolved_slides_root(root, deck_id)
-    destination_path = Path(destination).resolve(strict=False)
-    _require_contained(destination_path, slides_root, "destination")
-    contract = _load_contract_or_fail(Path(contract_path), deck_id)
+    _validate_subject_kind(artifact_kind, slide_id, module_id, deck_id)
+    with _workflow_lock(root):
+        return _publish_locked(
+            root,
+            deck_id,
+            Path(source),
+            Path(destination),
+            artifact_kind,
+            slide_id,
+            module_id,
+            producer_id,
+            Path(contract_path),
+        )
+
+
+def _publish_locked(
+    project_root: Path,
+    deck_id: str,
+    source: Path,
+    destination: Path,
+    artifact_kind: str,
+    slide_id: str | None,
+    module_id: str | None,
+    producer_id: str,
+    contract_path: Path,
+) -> dict[str, Any]:
+    """Publish one artifact while holding the workflow lock."""
+    slides_root = _resolved_slides_root(project_root, deck_id)
+    destination_path = destination.resolve(strict=False)
+    _require_contained(destination_path, slides_root, "destination", deck_id)
+    contract = _load_contract_or_fail(contract_path, deck_id)
     context = _validate_contract_context(
-        root,
+        project_root,
         deck_id,
         contract,
-        Path(contract_path),
+        contract_path,
         artifact_kind,
         slide_id,
         module_id,
+        producer_id,
     )
     assignment = context.get("assignment")
     if isinstance(assignment, Mapping):
         expected_producer = assignment.get("worker_id", assignment.get("worker"))
         if expected_producer != producer_id:
-            _fail(
-                deck_id,
-                [{"reason": "producer_mismatch", "expected": expected_producer}],
-            )
-    source_path = Path(source).resolve()
+            _fail(deck_id, [{"reason": "producer_mismatch", "expected": expected_producer}])
+    source_path = source.resolve()
     if not source_path.is_file():
         _fail(deck_id, [{"reason": "missing_source", "path": str(source)}])
     try:
         payload = source_path.read_bytes()
     except OSError as exc:
         _fail(deck_id, [{"reason": "source_unreadable", "message": str(exc)}])
-    digest = hashlib.sha256(payload).hexdigest()
-    relative_destination = canonical_relative_path(destination_path.relative_to(root))
-    artifact = {
-        "deck_id": deck_id,
-        "slide_id": context.get("slide_id", slide_id),
-        "module_id": context.get("module_id", module_id),
-        "artifact_kind": artifact_kind,
-        "kind": artifact_kind,
-        "path": relative_destination,
-        "relative_path": relative_destination,
-        "sha256": digest,
-        "producer_id": producer_id,
-        "produced_by": producer_id,
-    }
-    if context.get("assignment") is not None:
-        assignment = context["assignment"]
-        artifact["assignment_id"] = assignment.get("id")
-        artifact["spec_sha256"] = assignment.get("spec_sha256")
-
-    state_snapshots = _snapshot_state(root, bool(module_id))
+    source_digest = hashlib.sha256(payload).hexdigest()
+    relative_destination = canonical_relative_path(destination_path.relative_to(project_root))
+    state_snapshots = _snapshot_state(project_root, bool(module_id))
     destination_snapshot = _snapshot_path(destination_path)
     temporary_path: Path | None = None
     try:
         destination_path.parent.mkdir(parents=True, exist_ok=True)
         descriptor, temporary_name = tempfile.mkstemp(
-            prefix=f".{destination_path.name}.",
-            suffix=".tmp",
-            dir=str(destination_path.parent),
+            prefix=f".{destination_path.name}.", suffix=".tmp", dir=str(destination_path.parent)
         )
         temporary_path = Path(temporary_name)
         with os.fdopen(descriptor, "wb") as handle:
-            handle.write(payload)
+            written = _write_payload(handle, payload)
             handle.flush()
             os.fsync(handle.fileno())
+        if written != len(payload):
+            _fail(
+                deck_id,
+                [{"reason": "short_write", "expected": len(payload), "actual": written}],
+            )
+        _verify_file(temporary_path, len(payload), source_digest, "temporary", deck_id)
         os.replace(temporary_path, destination_path)
         temporary_path = None
         _fsync_directory(destination_path.parent)
-
+        destination_size, destination_digest = _destination_digest(destination_path)
+        if destination_size != len(payload) or destination_digest != source_digest:
+            _fail(
+                deck_id,
+                [{
+                    "reason": "destination_digest_mismatch",
+                    "expected": source_digest,
+                    "actual": destination_digest,
+                    "expected_size": len(payload),
+                    "actual_size": destination_size,
+                }],
+            )
+        artifact: dict[str, Any] = {
+            "deck_id": deck_id,
+            "slide_id": context.get("slide_id", slide_id),
+            "module_id": context.get("module_id", module_id),
+            "artifact_kind": artifact_kind,
+            "kind": artifact_kind,
+            "path": relative_destination,
+            "relative_path": relative_destination,
+            "sha256": destination_digest,
+            "producer_id": producer_id,
+            "produced_by": producer_id,
+        }
+        if isinstance(assignment, Mapping):
+            artifact["assignment_id"] = assignment.get("id")
+            artifact["spec_sha256"] = assignment.get("spec_sha256")
         if module_id is not None:
-            _assert_module_after_copy(root, module_id, artifact, deck_id)
-        record = create_artifact_record(
-            root,
-            deck_id,
-            artifact_kind,
-            relative_destination,
-            digest,
-            producer_id,
-            slide_id=artifact["slide_id"],
-            module_id=module_id,
+            _assert_module_after_copy(project_root, module_id, artifact, deck_id)
+        return _persist_artifact_record(project_root, artifact)
+    except PublicationGateError as exc:
+        cleanup_error = _cleanup_temp(temporary_path, deck_id)
+        rollback_error = _rollback_publication(
+            project_root, destination_path, destination_snapshot, state_snapshots, deck_id
         )
-        record.update(
-            {
-                key: value
-                for key, value in artifact.items()
-                if key in {"assignment_id", "spec_sha256"}
-            }
-        )
-        if "assignment_id" in record and record.get("assignment_id") is not None:
-            _persist_artifact_binding(root, record["id"], record)
-        return record
-    except PublicationGateError:
-        _rollback_publication(root, destination_path, destination_snapshot, state_snapshots)
+        if cleanup_error is not None:
+            raise cleanup_error from exc
+        if rollback_error is not None:
+            raise rollback_error from exc
         raise
     except Exception as exc:  # noqa: BLE001 - publication must fail closed
-        _rollback_publication(root, destination_path, destination_snapshot, state_snapshots)
+        cleanup_error = _cleanup_temp(temporary_path, deck_id)
+        rollback_error = _rollback_publication(
+            project_root, destination_path, destination_snapshot, state_snapshots, deck_id
+        )
+        if cleanup_error is not None:
+            raise cleanup_error from exc
+        if rollback_error is not None:
+            raise rollback_error from exc
         _fail(deck_id, [{"reason": "publication_failed", "message": str(exc)}])
-    finally:
-        if temporary_path is not None:
-            try:
-                temporary_path.unlink()
-            except FileNotFoundError:
-                pass
 
 
 def _assert_production(project_root: Path, deck_id: str) -> None:
@@ -213,6 +242,21 @@ def _validate_inputs(
         _fail(deck_id, [{"reason": "destination_outside_project_root"}])
 
 
+def _validate_subject_kind(
+    artifact_kind: str, slide_id: str | None, module_id: str | None, deck_id: str
+) -> None:
+    """Require each artifact kind to carry exactly its supported subject."""
+    if artifact_kind in _MODULE_ARTIFACT_KINDS:
+        if module_id is None:
+            _fail(deck_id, [{"reason": "module_subject_required"}])
+        return
+    if artifact_kind in _SLIDE_ARTIFACT_KINDS:
+        if module_id is not None:
+            _fail(deck_id, [{"reason": "slide_subject_cannot_include_module"}])
+        if slide_id is None:
+            _fail(deck_id, [{"reason": "slide_subject_required"}])
+
+
 def _resolved_slides_root(project_root: Path, deck_id: str) -> Path:
     """Resolve the confirmed ``slides`` role through resource-resolver."""
     resolver_path = Path(__file__).resolve().parents[2] / "resource-resolver/scripts/resolve.py"
@@ -240,7 +284,20 @@ def _resolved_slides_root(project_root: Path, deck_id: str) -> Path:
     if not isinstance(primary, str) or "://" in primary:
         _fail(deck_id, [{"reason": "slides_role_primary_invalid"}])
     candidate = (project_root / primary).resolve()
-    _require_contained(candidate, project_root, "slides role")
+    _require_contained(candidate, project_root, "slides role", deck_id)
+    return candidate
+
+
+def _resolve_state_path(
+    project_root: Path, raw_path: str, field: str, deck_id: str
+) -> Path:
+    """Resolve a persisted state path without permitting root escape."""
+    try:
+        relative_path = canonical_relative_path(raw_path)
+    except (TypeError, ValueError) as exc:
+        _fail(deck_id, [{"reason": f"{field}_invalid", "message": str(exc)}])
+    candidate = (project_root / relative_path).resolve()
+    _require_contained(candidate, project_root, field, deck_id)
     return candidate
 
 
@@ -262,18 +319,20 @@ def _validate_contract_context(
     artifact_kind: str,
     slide_id: str | None,
     module_id: str | None,
+    producer_id: str,
 ) -> dict[str, Any]:
     """Validate exact slide/module identity and return publication context."""
     if artifact_kind in _MODULE_ARTIFACT_KINDS:
-        if module_id is not None:
-            return _validate_module_context(
-                project_root, deck_id, contract, contract_path, slide_id, module_id
-            )
-        if slide_id is None:
-            _fail(deck_id, [{"reason": "module_id_required", "artifact_kind": artifact_kind}])
+        if module_id is None:
+            _fail(deck_id, [{"reason": "module_subject_required", "artifact_kind": artifact_kind}])
+        return _validate_module_context(
+            project_root, deck_id, contract, contract_path, slide_id, module_id
+        )
     if slide_id is None:
-        _fail(deck_id, [{"reason": "slide_id_required", "artifact_kind": artifact_kind}])
-    return _validate_slide_context(project_root, deck_id, contract, contract_path, slide_id)
+        _fail(deck_id, [{"reason": "slide_subject_required", "artifact_kind": artifact_kind}])
+    return _validate_slide_context(
+        project_root, deck_id, contract, contract_path, slide_id, producer_id
+    )
 
 
 def _validate_slide_context(
@@ -282,12 +341,24 @@ def _validate_slide_context(
     contract: Any,
     contract_path: Path,
     slide_id: str,
+    producer_id: str,
 ) -> dict[str, Any]:
     """Validate one exact Slide Specification and its protected content."""
     slides = load_slides(project_root)
     slide = slides.get(slide_id)
     if not isinstance(slide, Mapping) or slide.get("deck_id") != deck_id:
         _fail(deck_id, [{"reason": "slide_id_mismatch", "slide_id": slide_id}])
+    raw_spec_path = slide.get("slide_spec_path")
+    persisted_digest = slide.get("slide_spec_sha256")
+    if not isinstance(raw_spec_path, str) or not raw_spec_path:
+        _fail(deck_id, [{"reason": "slide_spec_path_missing"}])
+    if not isinstance(persisted_digest, str) or len(persisted_digest) != 64:
+        _fail(deck_id, [{"reason": "slide_spec_sha256_missing"}])
+    expected_spec_path = _resolve_state_path(project_root, raw_spec_path, "slide_spec_path", deck_id)
+    if expected_spec_path != contract_path.resolve():
+        _fail(deck_id, [{"reason": "slide_spec_path_identity_mismatch"}])
+    if not expected_spec_path.is_file():
+        _fail(deck_id, [{"reason": "slide_spec_file_missing"}])
     errors = validate_slide_spec(contract)
     if errors:
         _fail(deck_id, [{"reason": error} for error in errors])
@@ -298,13 +369,14 @@ def _validate_slide_context(
             deck_id,
             [{"reason": "slide_spec_identity_mismatch", "expected": expected_plan_slide_id}],
         )
-    _validate_contract_path_identity(project_root, slide, contract_path, "slide_spec_path", deck_id)
-    persisted_digest = slide.get("slide_spec_sha256")
-    if persisted_digest and persisted_digest != contract_sha256(contract):
+    if persisted_digest != contract_sha256(contract):
         _fail(deck_id, [{"reason": "slide_spec_digest_mismatch"}])
     for field in ("approved_takeaway_sha256", "approved_evidence_sha256"):
-        if slide.get(field) and slide[field] != contract.get(field):
+        state_digest = slide.get(field)
+        if not isinstance(state_digest, str) or state_digest != contract.get(field):
             _fail(deck_id, [{"reason": f"{field}_mismatch"}])
+    _validate_slide_plan_binding(project_root, deck_id, slide, contract)
+    _validate_slide_producer(project_root, deck_id, slide, producer_id)
     return {"slide_id": slide_id, "module_id": None, "slide": slide}
 
 
@@ -345,7 +417,9 @@ def _validate_module_context(
         _fail(deck_id, [{"reason": "assignment_spec_digest_mismatch"}])
     assignment_path = assignment.get("assignment_path", assignment.get("path"))
     assignment_contract_path = (
-        project_root / assignment_path if isinstance(assignment_path, str) else None
+        _resolve_state_path(project_root, assignment_path, "assignment_path", deck_id)
+        if isinstance(assignment_path, str)
+        else None
     )
     if assignment_contract_path is None or not assignment_contract_path.is_file():
         _fail(deck_id, [{"reason": "missing_assignment_contract"}])
@@ -373,6 +447,91 @@ def _validate_module_context(
     }
 
 
+def _validate_slide_plan_binding(
+    project_root: Path,
+    deck_id: str,
+    slide: Mapping[str, Any],
+    contract: Mapping[str, Any],
+) -> None:
+    """Require protected slide values to match the currently approved plan."""
+    deck = load_decks(project_root).get(deck_id)
+    plan_id = deck.get("current_plan_id") if isinstance(deck, Mapping) else None
+    plans = load_plans(project_root)
+    plan_record = plans.get(plan_id) if isinstance(plan_id, str) else None
+    if not isinstance(plan_record, Mapping):
+        _fail(deck_id, [{"reason": "current_plan_missing"}])
+    if plan_record.get("deck_id") != deck_id:
+        _fail(deck_id, [{"reason": "current_plan_deck_mismatch"}])
+    plan_path = plan_record.get("plan_path", plan_record.get("path"))
+    if not isinstance(plan_path, str):
+        _fail(deck_id, [{"reason": "current_plan_path_missing"}])
+    plan_document_path = _resolve_state_path(project_root, plan_path, "current_plan_path", deck_id)
+    try:
+        plan = load_contract(plan_document_path)
+    except (OSError, ValueError, TypeError, yaml.YAMLError) as exc:
+        _fail(deck_id, [{"reason": "current_plan_invalid", "message": str(exc)}])
+    persisted_digest = plan_record.get("sha256", plan_record.get("plan_sha256"))
+    if persisted_digest != contract_sha256(plan):
+        _fail(deck_id, [{"reason": "current_plan_digest_mismatch"}])
+    plan_slide_id = slide.get("plan_slide_id")
+    entries = [
+        entry
+        for entry in plan.get("slides", [])
+        if isinstance(entry, Mapping) and entry.get("slide_id") == plan_slide_id
+    ] if isinstance(plan, Mapping) else []
+    if len(entries) != 1:
+        _fail(deck_id, [{"reason": "slide_plan_binding_missing"}])
+    plan_slide = entries[0]
+    for field in ("approved_takeaway", "approved_evidence_refs"):
+        if contract.get(field) != plan_slide.get("key_takeaway" if field == "approved_takeaway" else "evidence_refs"):
+            _fail(deck_id, [{"reason": f"{field}_plan_mismatch"}])
+
+
+def _validate_slide_producer(
+    project_root: Path,
+    deck_id: str,
+    slide: Mapping[str, Any],
+    producer_id: str,
+) -> None:
+    """Require producer identity from persisted slide ownership or assignment."""
+    identities: list[tuple[str, str]] = []
+    for field in ("producer_id", "owner_id", "assigned_to", "worker_id", "producer"):
+        value = slide.get(field)
+        if isinstance(value, str) and value.strip():
+            identities.append((field, value.strip()))
+    assignment_path = slide.get("assignment_path")
+    if "assignment_path" in slide and assignment_path is not None:
+        if not isinstance(assignment_path, str) or not assignment_path:
+            _fail(deck_id, [{"reason": "slide_assignment_path_invalid"}])
+        assignment_file = _resolve_state_path(
+            project_root, assignment_path, "slide_assignment_path", deck_id
+        )
+        try:
+            assignment = load_contract(assignment_file)
+        except (OSError, ValueError, TypeError, yaml.YAMLError) as exc:
+            _fail(deck_id, [{"reason": "slide_assignment_invalid", "message": str(exc)}])
+        if not isinstance(assignment, Mapping):
+            _fail(deck_id, [{"reason": "slide_assignment_invalid"}])
+        for field in ("producer_id", "owner_id", "assigned_to", "worker_id", "worker"):
+            value = assignment.get(field)
+            if isinstance(value, str) and value.strip():
+                identities.append((f"assignment.{field}", value.strip()))
+    if not identities:
+        _fail(deck_id, [{"reason": "slide_producer_binding_missing"}])
+    persisted_identities = {identity for _, identity in identities}
+    if len(persisted_identities) != 1:
+        _fail(
+            deck_id,
+            [{
+                "reason": "slide_producer_binding_conflict",
+                "identities": sorted(persisted_identities),
+            }],
+        )
+    owner = next(iter(persisted_identities))
+    if owner != producer_id:
+        _fail(deck_id, [{"reason": "producer_mismatch", "expected": owner}])
+
+
 def _module_spec_document(
     project_root: Path,
     module: Mapping[str, Any],
@@ -382,7 +541,11 @@ def _module_spec_document(
 ) -> tuple[Any, Path | None]:
     """Resolve the exact visual spec from the module or caller contract."""
     visual_spec_path = module.get("visual_spec_path")
-    expected_path = project_root / visual_spec_path if isinstance(visual_spec_path, str) else None
+    expected_path = (
+        _resolve_state_path(project_root, visual_spec_path, "visual_spec_path", deck_id)
+        if isinstance(visual_spec_path, str)
+        else None
+    )
     if isinstance(contract, Mapping) and isinstance(contract.get("modules"), list):
         if expected_path is not None and expected_path.resolve() != contract_path.resolve():
             _fail(deck_id, [{"reason": "contract_path_not_current_visual_spec"}])
@@ -432,6 +595,21 @@ def _compare_assignment_contract(
     for field in ("module_id", "worker_type", "dependencies", "spec_sha256", "inputs_resolved", "blocker"):
         if field in contract and contract.get(field) != persisted.get(field):
             _fail(deck_id, [{"reason": f"assignment_{field}_mismatch"}])
+    persisted_worker = next(
+        (
+            persisted.get(field)
+            for field in ("worker_id", "worker", "producer_id")
+            if isinstance(persisted.get(field), str) and persisted.get(field).strip()
+        ),
+        None,
+    )
+    contract_workers = {
+        contract.get(field).strip()
+        for field in ("worker_id", "worker", "producer_id")
+        if isinstance(contract.get(field), str) and contract.get(field).strip()
+    }
+    if contract_workers and (len(contract_workers) != 1 or persisted_worker not in contract_workers):
+        _fail(deck_id, [{"reason": "assignment_worker_mismatch"}])
     for field in (
         "input_anchors",
         "output_anchors",
@@ -468,8 +646,7 @@ def _persist_artifact_binding(
     with _events._locked_file(project_root, path):
         records = _events._load_yaml_map(path, "artifacts")
         if artifact_id not in records:
-            raise PublicationGateError(
-                "artifact_publishable",
+            _fail(
                 str(record.get("deck_id", "<unknown>")),
                 [{"reason": "artifact_record_missing_after_create"}],
             )
@@ -481,6 +658,71 @@ def _persist_artifact_binding(
             }
         )
         _events._save_yaml_map(path, "artifacts", records)
+
+
+def _persist_artifact_record(
+    project_root: Path, artifact: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Persist one destination-derived artifact record after replacement."""
+    record = create_artifact_record(
+        project_root,
+        str(artifact["deck_id"]),
+        str(artifact["artifact_kind"]),
+        str(artifact["relative_path"]),
+        str(artifact["sha256"]),
+        str(artifact["producer_id"]),
+        slide_id=artifact.get("slide_id"),
+        module_id=artifact.get("module_id"),
+    )
+    record.update(
+        {
+            key: artifact[key]
+            for key in ("assignment_id", "spec_sha256")
+            if key in artifact
+        }
+    )
+    if record.get("assignment_id") is not None:
+        _persist_artifact_binding(project_root, str(record["id"]), record)
+    return record
+
+
+def _write_payload(handle: Any, payload: bytes) -> int:
+    """Write all bytes, returning the number accepted by the file object."""
+    offset = 0
+    while offset < len(payload):
+        written = handle.write(payload[offset:])
+        if not isinstance(written, int) or written <= 0:
+            return offset
+        offset += written
+    return offset
+
+
+def _destination_digest(path: Path) -> tuple[int, str]:
+    """Return stable byte length and SHA-256 digest for one file."""
+    before = path.stat().st_size
+    payload = path.read_bytes()
+    after = path.stat().st_size
+    if before != after or before != len(payload):
+        raise OSError(f"file size changed while reading {path}")
+    return len(payload), hashlib.sha256(payload).hexdigest()
+
+
+def _verify_file(
+    path: Path, expected_size: int, expected_digest: str, label: str, deck_id: str
+) -> None:
+    """Verify one staged file before it becomes visible."""
+    actual_size, actual_digest = _destination_digest(path)
+    if actual_size != expected_size or actual_digest != expected_digest:
+        _fail(
+            deck_id,
+            [{
+                "reason": f"{label}_digest_mismatch",
+                "expected": expected_digest,
+                "actual": actual_digest,
+                "expected_size": expected_size,
+                "actual_size": actual_size,
+            }],
+        )
 
 
 def _validate_protected_fields(contract: Any, deck_id: str) -> None:
@@ -510,7 +752,7 @@ def _validate_contract_path_identity(
     raw_path = record.get(field)
     if not isinstance(raw_path, str) or not raw_path:
         return
-    expected = (project_root / raw_path).resolve()
+    expected = _resolve_state_path(project_root, raw_path, field, deck_id)
     if expected != contract_path.resolve():
         _fail(deck_id, [{"reason": f"{field}_identity_mismatch"}])
 
@@ -527,17 +769,12 @@ def _assert_module_after_copy(
         _fail(deck_id, [{"reason": "module_publication_not_allowed", "message": str(exc)}])
 
 
-def _require_contained(candidate: Path, root: Path, label: str) -> None:
+def _require_contained(candidate: Path, root: Path, label: str, deck_id: str) -> None:
     """Require one resolved path to remain below a resolved root."""
     try:
         candidate.relative_to(root)
     except ValueError:
-        raise PublicationGateError(
-            "artifact_publishable",
-            "<unknown>",
-            [{"reason": f"{label}_outside_root"}],
-            f"{label} is outside its permitted root",
-        )
+        _fail(deck_id, [{"reason": f"{label}_outside_root"}])
 
 
 def _fail(deck_id: str, blockers: list[dict[str, Any]]) -> None:
@@ -576,32 +813,88 @@ def _rollback_publication(
     destination: Path,
     destination_snapshot: bytes | None,
     state_snapshots: Mapping[Path, bytes | None],
-) -> None:
-    """Restore destination and durable state after any publication failure."""
+    deck_id: str,
+) -> PublicationGateError | None:
+    """Restore destination and state atomically, reporting recovery failures."""
+    errors: list[str] = []
     try:
-        if destination_snapshot is None:
-            destination.unlink(missing_ok=True)
-        else:
-            destination.write_bytes(destination_snapshot)
-    except OSError:
-        pass
+        _restore_path_atomic(destination, destination_snapshot)
+    except Exception as exc:  # noqa: BLE001 - recovery must remain explicit
+        errors.append(f"destination: {exc}")
     for path, snapshot in state_snapshots.items():
         try:
-            if snapshot is None:
-                path.unlink(missing_ok=True)
-            else:
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_bytes(snapshot)
-        except OSError:
-            pass
+            _restore_path_atomic(path, snapshot)
+        except Exception as exc:  # noqa: BLE001 - recovery must remain explicit
+            errors.append(f"{path}: {exc}")
+        try:
+            _remove_state_temp(path)
+        except Exception as exc:  # noqa: BLE001 - recovery must remain explicit
+            errors.append(f"{path}.tmp: {exc}")
+    if errors:
+        return PublicationGateError(
+            "artifact_publishable",
+            deck_id,
+            [{"reason": "rollback_failed", "details": errors}],
+            "artifact_publishable rollback_failed: " + "; ".join(errors),
+        )
+    return None
+
+
+def _remove_state_temp(path: Path) -> None:
+    """Remove the atomic state-store sibling temporary and sync its directory."""
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    if temporary.exists():
+        temporary.unlink()
+        _fsync_directory(path.parent)
+
+
+def _restore_path_atomic(path: Path, snapshot: bytes | None) -> None:
+    """Restore one path with sibling temp, fsync, and atomic replace."""
+    if snapshot is None:
+        if path.exists():
+            path.unlink()
+            _fsync_directory(path.parent)
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.rollback.", suffix=".tmp", dir=str(path.parent)
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            written = _write_payload(handle, snapshot)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if written != len(snapshot):
+            raise OSError(f"short rollback write for {path}: {written}/{len(snapshot)}")
+        _verify_file(temporary, len(snapshot), hashlib.sha256(snapshot).hexdigest(), "rollback", "<unknown>")
+        os.replace(temporary, path)
+        temporary = None
+        _fsync_directory(path.parent)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def _cleanup_temp(path: Path | None, deck_id: str) -> PublicationGateError | None:
+    """Remove one unpublished temporary file and expose cleanup failures."""
+    if path is None:
+        return None
+    try:
+        path.unlink(missing_ok=True)
+    except OSError as exc:
+        return PublicationGateError(
+            "artifact_publishable",
+            deck_id,
+            [{"reason": "temp_cleanup_failed", "path": str(path), "message": str(exc)}],
+            f"artifact_publishable temp cleanup failed: {path}: {exc}",
+        )
+    return None
 
 
 def _fsync_directory(directory: Path) -> None:
     """Synchronize a directory entry after atomic replacement on POSIX."""
-    try:
-        descriptor = os.open(directory, os.O_RDONLY)
-    except OSError:
-        return
+    descriptor = os.open(directory, os.O_RDONLY)
     try:
         os.fsync(descriptor)
     finally:

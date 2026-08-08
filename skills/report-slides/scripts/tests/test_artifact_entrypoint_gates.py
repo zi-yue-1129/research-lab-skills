@@ -167,3 +167,4 @@ def test_artifact_entrypoint_writes_nothing_before_approval(
     assert not output.exists()
     error = json.loads(result.stdout)
     assert error["error"] == "ProductionGateError"
+    assert set(error) == {"error", "predicate", "deck_id", "blockers"}
