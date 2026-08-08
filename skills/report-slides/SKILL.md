@@ -294,6 +294,15 @@ provided."
 
 ### 6. Slide specification
 
+Before creating any Slide record, move the deck out of `approved` and into
+production — `approved` only ever transitions to `producing` (or `blocked`),
+and Stage 13's later `producing -> draft_review` transition depends on the
+deck having reached `producing` here:
+
+```bash
+python3 "$PSTATE" --set-deck-status --deck-id "$DECK_ID" --status producing --json
+```
+
 For each `SlidePlanEntry` in the approved plan:
 `python3 "$PSTATE" --create-slide --deck-id "$DECK_ID" --plan-slide-id
 <slide-01> --title "<title>" --json`, then dispatch `slide_architect_agent`
@@ -318,8 +327,8 @@ a signals-only document, not the full spec.) The result's
 `requires_complex_workflow` decides the branch: `false` → skip to Stage 9
 using exactly today's `generate_slides.py`/agent-authored-SVG path for this
 slide (Compatibility Criterion 2 — no module is created, the slide moves
-`ready -> producing -> review_required -> passed` directly against its own
-single visual). `true` → continue to Stage 8.
+`ready -> assigned -> producing -> review_required -> passed` directly
+against its own single visual). `true` → continue to Stage 8.
 
 ### 8. Complex visual decomposition
 
@@ -334,31 +343,76 @@ DVM="$(find ~/.claude -path "*/report-slides/scripts/validate_visual_module.py" 
 python3 "$DVM" --spec ".../visual_spec.yaml" --json
 ```
 
-Then create one Visual Module record per `ModuleSpec`:
+Then create one Visual Module record per `ModuleSpec`. `--dependencies` takes
+the state store's own generated `id`s (e.g. `module_xxxxx`), never the
+Complex Visual Specification's `module_key`s — `create_visual_module` raises
+`VisualModuleNotFoundError` for anything not already a real record in the
+store. This means:
+
+- **Modules must be created in dependency order.** A `ModuleSpec` whose
+  `dependencies` list is non-empty cannot be created until every module it
+  depends on already exists as a record — topologically sort `modules` by
+  `dependencies` before issuing any `--create-visual-module` call.
+- **The orchestrator must maintain a `module_key -> generated id` mapping.**
+  Each `--create-visual-module --json` call returns the new record's
+  generated `id`; store it keyed by that `ModuleSpec`'s `id` (its
+  `module_key`). Before creating a later module, translate its
+  `ModuleSpec.dependencies` (module_keys) through this mapping into the
+  corresponding generated ids and pass only those to `--dependencies`.
 
 ```bash
-python3 "$PSTATE" --create-visual-module --slide-id "$SLIDE_ID" --module-key <module-id> \
+declare -A MODULE_ID_MAP  # module_key -> generated id, populated as each module is created
+# For a module whose ModuleSpec.dependencies are module_keys already present in MODULE_ID_MAP:
+RESOLVED_DEPS=()
+for dep_key in "${MODULE_SPEC_DEPENDENCIES[@]}"; do
+    RESOLVED_DEPS+=("${MODULE_ID_MAP[$dep_key]}")
+done
+MODULE_JSON=$(python3 "$PSTATE" --create-visual-module --slide-id "$SLIDE_ID" --module-key <module-id-from-spec> \
     --module-type <data_visualization|architecture|conceptual|annotation> \
-    --dependencies $(python3 -c "import json; print(' '.join(json.load(open('deps.json'))))") --json
+    --dependencies "${RESOLVED_DEPS[@]}" --json)
+MODULE_ID_MAP[<module-id-from-spec>]=$(echo "$MODULE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['id'])")
 ```
 
 ### 9. Module production
 
-For each Visual Module whose dependencies are all `passed` (query with
-`--query --deck-id "$DECK_ID" --json` and inspect `visual_modules`),
-transition it to `producing` (`--set-module-status --module-id "$MODULE_ID"
---status producing --json` — this call itself fails if a dependency is not
-yet `passed`, so it doubles as the readiness check) and dispatch the matching
-worker agent by `module_type`: `data_visualization_worker_agent`,
-`architecture_diagram_worker_agent`, `conceptual_illustration_worker_agent`,
-or `annotation_worker_agent`. Independent modules (no shared dependency) may
-be dispatched in the same turn since each is a separate Task-tool call; a
-module with an unresolved dependency stays `ready`/`blocked` until its
-dependency reaches `passed`. Each worker writes its module's own manifest via
-the mandatory visual-authoring gate below (§9.1-9.4) — reused unchanged from
-the pre-redesign workflow per §5 of the design spec, since each module is its
-own `diagram_id`-equivalent asset — and returns; orchestrator sets
-`--status review_required`.
+Every Visual Module created in Stage 8 starts at `planned`. The legal path to
+`producing` is `planned -> ready -> assigned -> producing` — `planned ->
+producing` is illegal and raises `ValueError` at runtime, so the orchestrator
+must walk each intermediate state explicitly:
+
+1. **`planned -> ready`.** Once Stage 8 finishes creating a module's record,
+   transition it to `ready`: `python3 "$PSTATE" --set-module-status
+   --module-id "$MODULE_ID" --status ready --json`.
+2. For each Visual Module at `ready` whose dependencies are all `passed`
+   (query with `--query --deck-id "$DECK_ID" --json` and inspect
+   `visual_modules`), write its **Worker Assignment** document to
+   `.research/presentations/decks/$DECK_ID/slides/<plan_slide_id>/modules/<module_key>/assignment.yaml`
+   (fields: `module_id` the store's generated id, `worker_type` one of
+   `data_visualization|architecture|conceptual|annotation`, `assigned_at`,
+   `inputs_resolved: bool`, `blocker: str|null`), then validate it:
+   ```bash
+   DVM="$(find ~/.claude -path "*/report-slides/scripts/validate_visual_module.py" | head -1)"
+   python3 "$DVM" --assignment ".../modules/<module_key>/assignment.yaml" --json
+   ```
+3. **`ready -> assigned`.** `python3 "$PSTATE" --set-module-status
+   --module-id "$MODULE_ID" --status assigned --json`, then dispatch the
+   matching worker agent by `module_type`: `data_visualization_worker_agent`,
+   `architecture_diagram_worker_agent`, `conceptual_illustration_worker_agent`,
+   or `annotation_worker_agent` — pass the Worker Assignment's path in the
+   dispatch so the worker knows where to read its assignment from.
+4. **`assigned -> producing`.** `python3 "$PSTATE" --set-module-status
+   --module-id "$MODULE_ID" --status producing --json` — this call itself
+   fails if a dependency is not yet `passed`, so it doubles as the readiness
+   check.
+
+Independent modules (no shared dependency) may be dispatched in the same turn
+since each is a separate Task-tool call; a module whose dependency has not yet
+reached `passed` stays at `ready` (or `blocked`) — it does not advance to
+`assigned`/`producing` until that dependency resolves. Each worker writes its
+module's own manifest via the mandatory visual-authoring gate below
+(§9.1-9.4) — reused unchanged from the pre-redesign workflow per §5 of the
+design spec, since each module is its own `diagram_id`-equivalent asset — and
+returns; orchestrator sets `--status review_required`.
 
 #### 9.1 Mandatory visual-authoring gate
 

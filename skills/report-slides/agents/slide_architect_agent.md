@@ -48,10 +48,10 @@ For each signal:
 
 - **`region_count`** (int): Count the number of distinct regions in `layout_regions`. This must equal `len(layout_regions)`. It is a hard count, not a judgment call.
 
-- **`route_count`** (int): Count the number of distinct authoring routes or design paths through the slide. A "route" is a logical path of content that a worker agent or designer might take independently. For example:
-  - A slide with only a title and one chart: 2 routes (title, chart).
-  - A slide with a title, chart, and three separate callout boxes: 5 routes (title, chart, box1, box2, box3).
-  - Routes do not multiply—they are distinct content elements, not combinations.
+- **`route_count`** (int): Count the number of *distinct authoring routes* the slide's content requires. A "route" is one of exactly the four enum values used everywhere else in this skill: `native`, `data`, `generative`, or `hybrid`. Count how many distinct values from that enum this slide needs across its visual content—not how many visual elements or regions it has. For example:
+  - A slide with only a title and one chart: 1 route (`data`) — the chart is produced via the `data` route; a title is not itself a route. `route_count: 1`.
+  - A slide needing both a data chart (`data` route) and a separately AI-generated conceptual illustration (`generative` route): 2 distinct routes. `route_count: 2`.
+  - Routes do not multiply by element count—two charts both authored via the `data` route still count as `route_count: 1`.
 
 - **`multi_stage`** (bool): Does this slide require work across multiple stages (e.g., some content authored at Stage 8, some at Stage 9)? Answer explicitly `true` or `false`.
 

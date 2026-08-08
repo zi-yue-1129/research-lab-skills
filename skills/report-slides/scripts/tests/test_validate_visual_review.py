@@ -5,12 +5,14 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
+import yaml
 from PIL import Image
 
 from validate_visual_review import (
     OverallResult,
     _ALLOWED_FINDING_KINDS,
     derive_overall_status,
+    main,
     validate_review_record,
     validate_review_result,
     validate_review_result_findings,
@@ -584,3 +586,21 @@ def test_validate_review_result_rejects_bad_subject_type() -> None:
     }
     issues = validate_review_result(doc)
     assert any(issue.path == "subject_type" for issue in issues)
+
+
+def test_main_accepts_a_yaml_suffixed_review_result(tmp_path: Path) -> None:
+    """--review-result must accept .yaml documents, matching validate_deck_plan.py
+    and validate_visual_module.py, whose reviewer-agent Output Format examples
+    are fenced as YAML even though the underlying documents are validated here."""
+    doc = {
+        "subject_type": "plan",
+        "subject_id": "deck_20260808_ab12cd",
+        "reviewer_role": "content_reviewer",
+        "status": "passed",
+        "round": 1,
+        "findings": [],
+    }
+    review_path = tmp_path / "review_result.yaml"
+    review_path.write_text(yaml.safe_dump(doc), encoding="utf-8")
+
+    assert main(["--review-result", str(review_path)]) == 0

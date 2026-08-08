@@ -125,7 +125,7 @@ def test_scientific_visual_reviewer_agent_names_stage_and_boundary() -> None:
     assert "Stage 11" in text
     assert "Stage Boundary" in text
     assert "aesthetic" in text.lower()
-    assert "reviewer_role: scientific" in text or "reviewer_role" in text and "scientific" in text
+    assert "reviewer_role: scientific" in text
 
 
 def test_visual_quality_reviewer_agent_names_stage_and_finding_kinds() -> None:

@@ -57,7 +57,8 @@ findings:
 Validate your Review Result with:
 
 ```bash
-python3 validate_visual_review.py --review-result <path>
+VVR="$(find ~/.claude -path "*/report-slides/scripts/validate_visual_review.py" | head -1)"
+python3 "$VVR" --review-result <path>
 ```
 
 Fix any formatting errors before returning.

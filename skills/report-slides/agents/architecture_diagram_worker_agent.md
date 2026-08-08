@@ -62,7 +62,7 @@ Return:
 2. **Return summary** naming:
    - `module_id` (the exact ID from your Worker Assignment)
    - `manifest_path` (relative path to the module's manifest.yaml)
-   - `route` (one of: `native`, `generative`)
+   - `route` (one of: `native`)
    - `editability` (one of: `native`, `hybrid`, `raster` — matching the manifest's `editability` field exactly)
    - `pixel_review_outcome` (e.g., "passed", "revision_required", "blocked")
 

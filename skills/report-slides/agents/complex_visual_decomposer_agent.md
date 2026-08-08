@@ -35,10 +35,10 @@ Begin by analyzing the Slide Specification's `complexity_signals` and `layout_re
    - `hybrid`: Mix of data and generative (e.g., an annotated chart).
 
 3. **Assign Module Type** — Match each piece to one of four module types (and their corresponding worker agents in Stage 9):
-   - `data_visualization`: Charts, graphs, tables (Task 7).
-   - `architecture`: System diagrams, flowcharts, structural visualizations (Task 8).
-   - `conceptual`: Conceptual diagrams, illustrations, visual metaphors (Task 9).
-   - `annotation`: Callouts, highlights, overlays, text-based annotations (Task 10).
+   - `data_visualization`: Charts, graphs, tables (`data_visualization_worker_agent`).
+   - `architecture`: System diagrams, flowcharts, structural visualizations (`architecture_diagram_worker_agent`).
+   - `conceptual`: Conceptual diagrams, illustrations, visual metaphors (`conceptual_illustration_worker_agent`).
+   - `annotation`: Callouts, highlights, overlays, text-based annotations (`annotation_worker_agent`).
 
 4. **Name Anchors** — Define stable connection points for other modules or the integration step to attach to:
    - `input_anchors`: Named connection points where other modules feed data or content into this module (e.g., `["data-input", "reference-link"]`).
@@ -46,7 +46,7 @@ Begin by analyzing the Slide Specification's `complexity_signals` and `layout_re
 
 5. **Identify Dependencies** — List module ids (from the same spec) that this module depends on. For example, if module B's data input comes from module A's output, then module B has `dependencies: [A]`. **Important:** The validator only type-checks `dependencies` as a list; it does NOT validate whether the ids you list actually exist in `modules`. You are responsible for ensuring that every module id in `dependencies` is a declared module in the same specification—a dangling or fabricated dependency id will not be caught automatically.
 
-6. **Set Reuse Identity** — If a module is identical to one already produced elsewhere in the deck, find its `reuse_id` via manifest search and set `reuse_of: <reuse_id>`. Otherwise, set `reuse_of: null`. Follow the manifest reuse-identity discipline established in this skill.
+6. **Set Reuse Identity** — If a module is identical to one already produced elsewhere in the deck, find that existing module's `id` via manifest search and set `reuse_of: <that module's id>`. Otherwise, set `reuse_of: null`. Follow the manifest reuse-identity discipline established in this skill.
 
 7. **Optional Editability** — If the module supports post-production editing, set `editability` to one of:
    - `native`: Fully editable by designers (text, colors, layout).

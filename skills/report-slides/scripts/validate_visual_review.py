@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
+import yaml
 from PIL import Image, UnidentifiedImageError
 
 VALID_STATUSES: Tuple[str, ...] = (
@@ -701,7 +702,7 @@ def main(arguments: Optional[Sequence[str]] = None) -> int:
         "--record", type=Path, help="Path to a PPTX visual-review.json record."
     )
     parser.add_argument(
-        "--review-result", type=Path, help="Path to a standalone Review Result JSON document."
+        "--review-result", type=Path, help="Path to a standalone Review Result YAML or JSON document."
     )
     parser.add_argument(
         "--root",
@@ -718,8 +719,11 @@ def main(arguments: Optional[Sequence[str]] = None) -> int:
     if parsed.review_result:
         try:
             text = parsed.review_result.read_text(encoding="utf-8")
-            doc = json.loads(text)
-        except (OSError, json.JSONDecodeError) as error:
+            if parsed.review_result.suffix in (".yaml", ".yml"):
+                doc = yaml.safe_load(text)
+            else:
+                doc = json.loads(text)
+        except (OSError, json.JSONDecodeError, yaml.YAMLError) as error:
             print(f"ERROR {parsed.review_result}: {error}")
             return 1
         issues = validate_review_result(doc)
