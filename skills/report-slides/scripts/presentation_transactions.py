@@ -16,6 +16,7 @@ import fcntl
 import json
 import os
 import re
+import stat
 import time
 import uuid
 from contextlib import contextmanager
@@ -61,14 +62,46 @@ def _sidecar(path: Path) -> Path:
     return path.with_suffix(path.suffix + ".lock")
 
 
+def _open_sidecar(path: Path) -> int:
+    """Open or create a regular sidecar without following symlinks.
+
+    Args:
+        path: Data file whose ``.lock`` sidecar should be opened.
+
+    Returns:
+        An open descriptor for the sidecar lock file.
+
+    Raises:
+        TransactionError: If the sidecar is a symlink or unsafe file type.
+    """
+    lock_path = _sidecar(path)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        existing = os.lstat(lock_path)
+    except FileNotFoundError:
+        existing = None
+    if existing is not None and not stat.S_ISREG(existing.st_mode):
+        raise TransactionError(f"sidecar lock must be a regular file, not symlink or special type: {lock_path}")
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(str(lock_path), flags, 0o666)
+    except OSError as exc:
+        if exc.errno in (errno.ELOOP, errno.EISDIR):
+            raise TransactionError(f"sidecar lock must be a regular file, not symlink or directory: {lock_path}") from exc
+        raise
+    try:
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode):
+            raise TransactionError(f"sidecar lock must be a regular file, not special type: {lock_path}")
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
 def _acquire_sidecar(path: Path) -> int:
     """Acquire one exclusive sidecar lock and return its descriptor."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    lock_path = _sidecar(path)
-    if lock_path.is_symlink() or (lock_path.exists() and not lock_path.is_file()):
-        raise TransactionError(f"sidecar lock must be a regular file: {lock_path}")
-    lock_path.touch(exist_ok=True)
-    descriptor = os.open(str(lock_path), os.O_RDWR)
+    descriptor = _open_sidecar(path)
     timeout = int(os.environ.get("PRESENTATION_STATE_LOCK_TIMEOUT_SECONDS", "30"))
     deadline = time.monotonic() + timeout
     try:
@@ -230,8 +263,8 @@ def incomplete_transaction_journals(project_root: Path) -> list[Path]:
 
 
 def require_transaction_recovery(project_root: Path) -> None:
-    """Raise before a low-level mutation while any durable journal remains."""
-    journals = incomplete_transaction_journals(project_root)
+    """Validate journals and raise before a low-level mutation if any remain."""
+    journals = _load_validated_journals(project_root)
     if journals:
         names = ", ".join(str(path) for path in journals)
         raise TransactionRecoveryRequiredError(f"transaction recovery required before write: {names}")
@@ -288,6 +321,37 @@ def _decode_journal(project_root: Path, path: Path) -> tuple[str, list[tuple[Pat
             raise TransactionError(f"invalid transaction journal metadata: {path}")
         decoded.append((target, _FileSnapshot(exists, content, _validate_mode(mode, path))))
     return transaction_id, decoded
+
+
+def _load_validated_journals(project_root: Path) -> list[tuple[Path, list[tuple[Path, _FileSnapshot]]]]:
+    """Read and validate every pending journal before data locking.
+
+    Args:
+        project_root: Project root containing the presentation stores.
+
+    Returns:
+        Journal paths paired with their exact decoded preimages.
+
+    Raises:
+        TransactionError: If any journal path, file, or payload is unsafe.
+    """
+    journals: list[tuple[Path, list[tuple[Path, _FileSnapshot]]]] = []
+    journal_directory = _journal_dir(project_root)
+    for journal in incomplete_transaction_journals(project_root):
+        _validate_journal_filename(journal)
+        if journal.parent != journal_directory:
+            raise TransactionError(f"transaction journal is outside its directory: {journal}")
+        try:
+            journal.resolve(strict=True).relative_to(journal_directory.resolve())
+        except (OSError, ValueError) as exc:
+            raise TransactionError(f"transaction journal escapes its directory: {journal}") from exc
+        transaction_id, entries = _decode_journal(project_root, journal)
+        if transaction_id != journal.stem:
+            raise TransactionError(
+                f"transaction journal transaction_id does not match filename stem: {journal}"
+            )
+        journals.append((journal, entries))
+    return journals
 
 
 def _write_fsync(path: Path, content: bytes, mode: int) -> None:
@@ -365,24 +429,7 @@ class WorkflowTransaction:
 
     def _load_incomplete_journals(self) -> list[tuple[Path, list[tuple[Path, _FileSnapshot]]]]:
         """Read all pending journals before acquiring any data locks."""
-        journals: list[tuple[Path, list[tuple[Path, _FileSnapshot]]]] = []
-        for journal in incomplete_transaction_journals(self.project_root):
-            _validate_journal_filename(journal)
-            if journal.is_symlink() or not journal.is_file():
-                raise TransactionError(f"transaction journal must be a regular file: {journal}")
-            if journal.parent != _journal_dir(self.project_root):
-                raise TransactionError(f"transaction journal is outside its directory: {journal}")
-            try:
-                journal.resolve(strict=True).relative_to(_journal_dir(self.project_root).resolve())
-            except (OSError, ValueError) as exc:
-                raise TransactionError(f"transaction journal escapes its directory: {journal}") from exc
-            transaction_id, entries = _decode_journal(self.project_root, journal)
-            if transaction_id != journal.stem:
-                raise TransactionError(
-                    f"transaction journal transaction_id does not match filename stem: {journal}"
-                )
-            journals.append((journal, entries))
-        return journals
+        return _load_validated_journals(self.project_root)
 
     def _recover_journals(self, journals: Sequence[tuple[Path, list[tuple[Path, _FileSnapshot]]]]) -> None:
         """Restore and remove pending journal preimages under held locks."""

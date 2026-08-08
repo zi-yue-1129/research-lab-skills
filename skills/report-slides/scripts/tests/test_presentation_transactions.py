@@ -10,8 +10,18 @@ from pathlib import Path
 
 import pytest
 
-from presentation_events import append_event, events_shard_path
-from presentation_state import create_deck, create_slide, create_visual_module, load_slides, set_module_status
+import presentation_events
+import presentation_state
+from presentation_events import append_event, events_shard_path, load_events
+from presentation_state import (
+    create_deck,
+    create_slide,
+    create_visual_module,
+    load_decks,
+    load_slides,
+    set_deck_status,
+    set_module_status,
+)
 from presentation_transactions import (
     SimulatedProcessDeath,
     TransactionError,
@@ -100,6 +110,178 @@ def _journal_entry(path: str, *, exists: bool = False, mode: int = 0o644) -> dic
         "mode": mode,
         "content": base64.b64encode(b"before").decode("ascii"),
     }
+
+
+def _write_malformed_journal(project: Path) -> Path:
+    """Write a validly named transaction journal with malformed JSON."""
+    journal_dir = project / ".research/presentations/transactions"
+    journal_dir.mkdir(parents=True, exist_ok=True)
+    journal = journal_dir / ("d" * 32 + ".json")
+    journal.write_text("{malformed", encoding="utf-8")
+    return journal
+
+
+def _prepare_state_write_target(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """Create a deck and remove its sidecar so the next write starts absent."""
+    project = tmp_path / "state-project"
+    project.mkdir()
+    (project / ".git").mkdir()
+    create_deck(project, "Sidecar guard")
+    target = project / ".research/presentations/state/decks.yaml"
+    sidecar = target.with_suffix(target.suffix + ".lock")
+    sidecar.unlink()
+    return project, target, sidecar
+
+
+def _prepare_event_write_target(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """Create an empty event target and leave its sidecar absent."""
+    project = tmp_path / "event-project"
+    project.mkdir()
+    (project / ".git").mkdir()
+    target = events_shard_path(project)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    sidecar = target.with_suffix(target.suffix + ".lock")
+    assert not target.exists()
+    assert not sidecar.exists()
+    return project, target, sidecar
+
+
+@pytest.mark.parametrize("journal_kind", ["malformed", "unexpected"])
+def test_state_write_rejects_journal_before_absent_sidecar_creation(
+    tmp_path: Path, journal_kind: str
+) -> None:
+    """Malformed or unexpected journals fail before a YAML sidecar is created."""
+    project, target, sidecar = _prepare_state_write_target(tmp_path)
+    if journal_kind == "malformed":
+        _write_malformed_journal(project)
+    else:
+        journal_dir = project / ".research/presentations/transactions"
+        journal_dir.mkdir(parents=True, exist_ok=True)
+        (journal_dir / "unexpected.txt").write_text("unexpected", encoding="utf-8")
+
+    deck_id = next(iter(load_decks(project)))
+    with pytest.raises(TransactionError, match="journal|filename|suffix|JSON|recovery required"):
+        set_deck_status(project, deck_id, "content_review")
+
+    assert not sidecar.exists()
+    assert target.exists()
+
+
+@pytest.mark.parametrize("journal_kind", ["malformed", "unexpected"])
+def test_event_append_rejects_journal_before_absent_sidecar_creation(
+    tmp_path: Path, journal_kind: str
+) -> None:
+    """Malformed or unexpected journals fail before an event sidecar is created."""
+    project, target, sidecar = _prepare_event_write_target(tmp_path)
+    if journal_kind == "malformed":
+        _write_malformed_journal(project)
+    else:
+        journal_dir = project / ".research/presentations/transactions"
+        journal_dir.mkdir(parents=True, exist_ok=True)
+        (journal_dir / "unexpected.txt").write_text("unexpected", encoding="utf-8")
+
+    with pytest.raises(TransactionError, match="journal|filename|suffix|JSON|recovery required"):
+        append_event(project, {"event": "guarded", "id": "guarded"})
+
+    assert not sidecar.exists()
+    assert not target.exists()
+
+
+def _sentinel_snapshot(path: Path) -> tuple[bytes, int, int]:
+    """Capture bytes, mode, and mtime without following a sidecar symlink."""
+    stat_result = path.stat()
+    return path.read_bytes(), stat_result.st_mode & 0o777, stat_result.st_mtime_ns
+
+
+def test_state_write_rejects_sidecar_symlink_without_touching_outside_sentinel(tmp_path: Path) -> None:
+    """A YAML sidecar symlink cannot redirect locking to an outside inode."""
+    project, target, sidecar = _prepare_state_write_target(tmp_path)
+    outside = tmp_path / "outside-state-sentinel"
+    outside.write_bytes(b"state-sentinel")
+    outside.chmod(0o640)
+    before = _sentinel_snapshot(outside)
+    sidecar.symlink_to(outside)
+    link_target = os.readlink(sidecar)
+
+    deck_id = next(iter(load_decks(project)))
+    with pytest.raises(TransactionError, match="sidecar|symlink|regular"):
+        set_deck_status(project, deck_id, "content_review")
+
+    assert sidecar.is_symlink()
+    assert os.readlink(sidecar) == link_target
+    assert _sentinel_snapshot(outside) == before
+    assert target.exists()
+
+
+def test_event_append_rejects_sidecar_symlink_without_touching_outside_sentinel(tmp_path: Path) -> None:
+    """An event sidecar symlink cannot redirect locking to an outside inode."""
+    project, target, sidecar = _prepare_event_write_target(tmp_path)
+    outside = tmp_path / "outside-event-sentinel"
+    outside.write_bytes(b"event-sentinel")
+    outside.chmod(0o600)
+    before = _sentinel_snapshot(outside)
+    sidecar.symlink_to(outside)
+    link_target = os.readlink(sidecar)
+
+    with pytest.raises(TransactionError, match="sidecar|symlink|regular"):
+        append_event(project, {"event": "guarded", "id": "guarded"})
+
+    assert sidecar.is_symlink()
+    assert os.readlink(sidecar) == link_target
+    assert _sentinel_snapshot(outside) == before
+    assert not target.exists()
+
+
+def test_state_write_rechecks_journal_after_lock_acquisition(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A journal appearing during lock acquisition blocks YAML mutation."""
+    project, target, sidecar = _prepare_state_write_target(tmp_path)
+    sidecar.touch()
+    before = target.read_bytes()
+    deck_id = next(iter(load_decks(project)))
+    original_flock = presentation_state.fcntl.flock
+    injected = False
+
+    def flock_with_pending_journal(descriptor: int, operation: int) -> None:
+        """Publish a valid journal immediately before the first exclusive flock."""
+        nonlocal injected
+        if operation & presentation_state.fcntl.LOCK_EX and not injected:
+            _write_journal(project, [_journal_entry(".research/presentations/state/decks.yaml")])
+            injected = True
+        original_flock(descriptor, operation)
+
+    monkeypatch.setattr(presentation_state.fcntl, "flock", flock_with_pending_journal)
+    with pytest.raises(TransactionRecoveryRequiredError, match="recovery required"):
+        set_deck_status(project, deck_id, "content_review")
+
+    assert target.read_bytes() == before
+    assert sidecar.exists()
+
+
+def test_event_append_rechecks_journal_after_lock_acquisition(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A journal appearing during lock acquisition blocks event mutation."""
+    project, target, sidecar = _prepare_event_write_target(tmp_path)
+    sidecar.touch()
+    original_flock = presentation_events.fcntl.flock
+    injected = False
+
+    def flock_with_pending_journal(descriptor: int, operation: int) -> None:
+        """Publish a valid journal immediately before the first exclusive flock."""
+        nonlocal injected
+        if operation & presentation_events.fcntl.LOCK_EX and not injected:
+            _write_journal(project, [_journal_entry(".research/presentations/events/" + target.name)])
+            injected = True
+        original_flock(descriptor, operation)
+
+    monkeypatch.setattr(presentation_events.fcntl, "flock", flock_with_pending_journal)
+    with pytest.raises(TransactionRecoveryRequiredError, match="recovery required"):
+        append_event(project, {"event": "guarded", "id": "guarded"})
+
+    assert not target.exists()
+    assert sidecar.exists()
 
 
 @pytest.mark.parametrize(
@@ -394,6 +576,7 @@ def test_real_three_target_crash_blocks_writes_and_recovers_exact_preimages(
     assignments = state_dir / "assignments.yaml"
     artifacts = state_dir / "artifacts.yaml"
     revision_requests = state_dir / "revision_requests.yaml"
+    assert not assignments.exists()
     artifacts_before = b"artifacts-before"
     revisions_before = b"revisions-before"
     artifacts.write_bytes(artifacts_before)
@@ -448,3 +631,5 @@ def test_real_three_target_crash_blocks_writes_and_recovers_exact_preimages(
 
     set_deck_status(project, deck["id"], "content_review")
     append_event(project, {"event": "recovered", "id": "recovered"})
+    assert load_decks(project)[deck["id"]]["status"] == "content_review"
+    assert load_events(project, "recovered") == [{"event": "recovered", "id": "recovered"}]

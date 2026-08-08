@@ -17,7 +17,11 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterator, Optional
-from presentation_transactions import incomplete_transaction_journals, require_transaction_recovery
+from presentation_transactions import (
+    _open_sidecar,
+    incomplete_transaction_journals,
+    require_transaction_recovery,
+)
 from presentation_events import (
     LockTimeoutError,
     StateParseError,
@@ -146,8 +150,8 @@ def _locked_file(project_root: Path, path: Path) -> Iterator[None]:
     Locks the sidecar (`path` + ".lock"), never `path` itself: an atomic
     replace of `path` inside the critical section would otherwise swap in
     a fresh, never-locked inode, letting a concurrent process race past
-    the lock. The sidecar is only ever touch()'d then flocked, so its
-    identity never changes.
+    the lock. The sidecar is opened with no-follow semantics, so a symlink
+    cannot redirect locking to an outside inode.
     Args:
         project_root: The project's root directory.
         path: The data file this lock protects.
@@ -155,10 +159,9 @@ def _locked_file(project_root: Path, path: Path) -> Iterator[None]:
         LockTimeoutError: If the lock isn't acquired within
             LOCK_TIMEOUT_SECONDS.
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
+    require_transaction_recovery(project_root)
     lock_path = path.with_suffix(path.suffix + ".lock")
-    lock_path.touch(exist_ok=True)
-    fd = os.open(str(lock_path), os.O_RDWR)
+    fd = _open_sidecar(path)
     try:
         deadline = time.monotonic() + LOCK_TIMEOUT_SECONDS
         while True:

@@ -24,7 +24,7 @@ from typing import Any, Iterator
 import yaml
 
 from presentation_contracts import contract_sha256, load_contract
-from presentation_transactions import require_transaction_recovery
+from presentation_transactions import _open_sidecar, require_transaction_recovery
 
 
 EVENTS_RELATIVE_DIR = Path(".research/presentations/events")
@@ -69,10 +69,9 @@ def _locked_file(project_root: Path, path: Path) -> Iterator[None]:
     Raises:
         LockTimeoutError: If another process holds the lock too long.
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
+    require_transaction_recovery(project_root)
     lock_path = path.with_suffix(path.suffix + ".lock")
-    lock_path.touch(exist_ok=True)
-    descriptor = os.open(str(lock_path), os.O_RDWR)
+    descriptor = _open_sidecar(path)
     try:
         deadline = time.monotonic() + LOCK_TIMEOUT_SECONDS
         while True:
