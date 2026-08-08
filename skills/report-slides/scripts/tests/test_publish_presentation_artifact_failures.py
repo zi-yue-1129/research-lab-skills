@@ -110,6 +110,58 @@ def test_restore_aggregates_rollback_operation_and_temp_cleanup_errors(
         original_unlink(temporary, missing_ok=True)
 
 
+def test_restore_preserves_nested_blockers_and_cleanup_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep each nested gate blocker alongside rollback cleanup evidence."""
+    import publish_presentation_artifact as publisher
+
+    path = tmp_path / "artifact.svg"
+    path.write_bytes(b"prior")
+    snapshot = (b"prior", 0o640)
+    nested = PublicationGateError(
+        "nested_predicate",
+        "nested-deck",
+        [
+            {"reason": "nested_alpha", "detail": "alpha"},
+            {"reason": "nested_beta", "detail": "beta"},
+        ],
+        "nested publication failure",
+    )
+    original_unlink = Path.unlink
+
+    def raise_nested(*args: Any, **kwargs: Any) -> None:
+        raise nested
+
+    def fail_rollback_cleanup(target: Path, *args: Any, **kwargs: Any) -> None:
+        if ".rollback." in target.name:
+            raise OSError("nested rollback temp cleanup")
+        original_unlink(target, *args, **kwargs)
+
+    monkeypatch.setattr(publisher, "_verify_file", raise_nested)
+    monkeypatch.setattr(Path, "unlink", fail_rollback_cleanup)
+    with pytest.raises(PublicationGateError) as raised:
+        publisher._restore_path_atomic(path, snapshot)
+
+    blockers = raised.value.blockers
+    assert [blocker["reason"] for blocker in blockers] == [
+        "nested_alpha",
+        "nested_beta",
+        "rollback_cleanup_failed",
+    ]
+    assert all(blocker["phase"] == "rollback" for blocker in blockers[:2])
+    assert all(blocker["path"] == str(path) for blocker in blockers[:2])
+    assert all(blocker["predicate"] == "nested_predicate" for blocker in blockers[:2])
+    assert all(blocker["deck_id"] == "nested-deck" for blocker in blockers[:2])
+    cleanup = blockers[-1]
+    assert cleanup["phase"] == "rollback_cleanup"
+    assert cleanup["path"].startswith(str(path.parent / f".{path.name}.rollback."))
+    assert cleanup["message"] == "nested rollback temp cleanup"
+    monkeypatch.undo()
+    for temporary in path.parent.glob(".*.rollback.*.tmp"):
+        original_unlink(temporary, missing_ok=True)
+
+
 def test_primary_and_rollback_directory_fsync_errors_are_both_reported(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -156,7 +208,7 @@ def test_publish_restores_all_state_files_after_later_state_replace_failure(
 ) -> None:
     """Restore every state file and destination after a later commit failure."""
     project, deck_id, module_id, assignment_path = _module_publish_fixture(tmp_path)
-    destination = project / "docs/slides/module.svg"
+    destination = project / "docs/slides/module-v1.svg"
     publish_artifact(
         project, deck_id, staged_svg(tmp_path), destination, "module-svg",
         None, module_id, "worker-a", assignment_path,
@@ -165,7 +217,10 @@ def test_publish_restores_all_state_files_after_later_state_replace_failure(
     modules_path = project / ".research/presentations/state/visual_modules.yaml"
     for path in (destination, artifacts_path, modules_path):
         path.chmod(0o640)
-    snapshots = {path: (path.read_bytes(), path.stat().st_mode & 0o777) for path in (destination, artifacts_path, modules_path)}
+    snapshots = {
+        path: (path.read_bytes(), path.stat().st_mode & 0o777)
+        for path in (destination, artifacts_path, modules_path)
+    }
     source = tmp_path / "changed.svg"
     source.write_bytes(b"changed")
     import publish_presentation_artifact as publisher
@@ -174,21 +229,27 @@ def test_publish_restores_all_state_files_after_later_state_replace_failure(
     replaced: list[Path] = []
 
     def fail_later_state_replace(source_path: Path, target: Path) -> None:
-        replaced.append(Path(target))
-        if Path(target) == artifacts_path:
+        target = Path(target)
+        replaced.append(target)
+        if target == modules_path:
+            original_replace(source_path, target)
+            assert modules_path.read_bytes() != snapshots[modules_path][0]
+            return
+        if target == artifacts_path:
             raise OSError("later state replace")
         original_replace(source_path, target)
 
     monkeypatch.setattr(publisher.os, "replace", fail_later_state_replace)
     with pytest.raises(PublicationGateError):
         publish_artifact(
-            project, deck_id, source, destination, "module-svg",
+            project, deck_id, source, project / "docs/slides/module-v2.svg", "module-svg",
             None, module_id, "worker-a", assignment_path,
         )
     assert modules_path in replaced
     for path, (payload, mode) in snapshots.items():
         assert path.read_bytes() == payload
         assert path.stat().st_mode & 0o777 == mode
+    assert not (project / "docs/slides/module-v2.svg").exists()
 
 
 def test_publish_aggregates_primary_and_same_rollback_temp_cleanup_errors(

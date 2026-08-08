@@ -860,38 +860,38 @@ def _snapshot_path(path: Path) -> tuple[bytes | None, int | None]:
     return path.read_bytes(), stat.st_mode & 0o777
 
 
-def _snapshot_state(
-    project_root: Path, include_modules: bool
-) -> dict[Path, tuple[bytes | None, int | None]]:
+def _snapshot_state(project_root: Path, include_modules: bool) -> dict[Path, tuple[bytes | None, int | None]]:
     """Capture every mutable state file touched by artifact registration."""
     return {path: _snapshot_path(path) for path in _state_paths(project_root, include_modules)}
 
 
-def _rollback_publication(
-    project_root: Path,
-    destination: Path,
-    destination_snapshot: tuple[bytes | None, int | None],
-    state_snapshots: Mapping[Path, tuple[bytes | None, int | None]],
-    deck_id: str,
-) -> list[dict[str, Any]]:
+def _rollback_publication(project_root: Path, destination: Path, destination_snapshot: tuple[bytes | None, int | None], state_snapshots: Mapping[Path, tuple[bytes | None, int | None]], deck_id: str) -> list[dict[str, Any]]:
     """Restore all state first, then destination, and return every failure."""
     failures: list[dict[str, Any]] = []
     for path, snapshot in state_snapshots.items():
         try:
             _restore_path_atomic(path, snapshot)
         except PublicationGateError as exc:
-            failures.extend(exc.blockers)
+            failures.extend(_contextualize_recovery_blockers(exc, path, "state"))
         except Exception as exc:  # noqa: BLE001 - recovery must remain explicit
-            failures.append({"reason": "rollback_failed", "scope": "state", "path": str(path), "message": str(exc)})
+            failures.append(_rollback_failure(exc, path, "state"))
     try:
         _restore_path_atomic(destination, destination_snapshot)
     except PublicationGateError as exc:
-        failures.extend(exc.blockers)
+        failures.extend(_contextualize_recovery_blockers(exc, destination, "destination"))
     except Exception as exc:  # noqa: BLE001 - recovery must remain explicit
-        failures.append({"reason": "rollback_failed", "scope": "destination", "path": str(destination), "message": str(exc)})
+        failures.append(_rollback_failure(exc, destination, "destination"))
     return failures
 
 
+def _contextualize_recovery_blockers(error: PublicationGateError, path: Path, scope: str) -> list[dict[str, Any]]:
+    """Attach recovery phase, path, predicate, and deck context to blockers."""
+    return [{**blocker, "scope": blocker.get("scope", scope), "phase": blocker.get("phase", "rollback"),
+             "path": blocker.get("path", str(path)), "predicate": blocker.get("predicate", error.predicate),
+             "deck_id": blocker.get("deck_id", error.deck_id)} for blocker in error.blockers]
+def _rollback_failure(error: Exception, path: Path, scope: str) -> dict[str, Any]:
+    """Return one structured blocker for a non-gate rollback exception."""
+    return {"reason": "rollback_failed", "scope": scope, "phase": "rollback", "path": str(path), "message": str(error)}
 def _restore_path_atomic(path: Path, snapshot: tuple[bytes | None, int | None]) -> None:
     """Restore one path atomically, preserving bytes, existence, and mode."""
     payload, mode = snapshot
@@ -925,13 +925,21 @@ def _restore_path_atomic(path: Path, snapshot: tuple[bytes | None, int | None]) 
             temporary.unlink(missing_ok=True)
         except Exception as exc:  # noqa: BLE001 - report cleanup with operation failure
             cleanup_failure = exc
-    if failure is not None and cleanup_failure is not None:
-        blockers = [{"reason": "rollback_failed", "scope": "rollback_temp", "message": str(failure)}, {"reason": "rollback_cleanup_failed", "scope": "rollback_temp", "message": str(cleanup_failure)}]
-        raise PublicationGateError("artifact_publishable", "<unknown>", blockers, f"artifact_publishable rollback recovery failed: {failure}; {cleanup_failure}") from failure
-    if failure is not None:
-        raise failure
+    if isinstance(failure, PublicationGateError):
+        blockers = _contextualize_recovery_blockers(failure, path, "rollback")
+    elif failure is not None:
+        blockers = [_rollback_failure(failure, path, "rollback_temp")]
+    else:
+        blockers = []
     if cleanup_failure is not None:
-        raise cleanup_failure
+        blockers.append({"reason": "rollback_cleanup_failed", "scope": "rollback_temp", "phase": "rollback_cleanup",
+                         "path": str(temporary), "message": str(cleanup_failure)})
+    if blockers:
+        summary = "; ".join(f"{blocker.get('reason', blocker)}: {blocker.get('message', '')}" for blocker in blockers)
+        raise PublicationGateError(
+            "artifact_publishable", "<unknown>", blockers,
+            f"artifact_publishable rollback recovery failed: {summary}",
+        ) from failure
 
 
 def _cleanup_paths(paths: list[Path | None], deck_id: str) -> list[dict[str, Any]]:
