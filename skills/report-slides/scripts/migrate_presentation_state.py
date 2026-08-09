@@ -245,9 +245,12 @@ def _parse_event_line(path: Path, line_number: int, line: str) -> dict[str, Any]
 
 
 def _validate_events(
-    project_root: Path, event_files: Mapping[Path, tuple[bytes, int]]
+    project_root: Path,
+    event_files: Mapping[Path, tuple[bytes, int]],
+    *,
+    current_slides: Mapping[str, Any],
 ) -> list[dict[str, Any]]:
-    """Parse all event shards and reject duplicate immutable event IDs."""
+    """Parse event shards against immutable-event and current-slide context."""
     events: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
     for path in sorted(event_files, key=lambda item: item.relative_to(item.parents[2]).as_posix()):
@@ -266,7 +269,12 @@ def _validate_events(
                 if event_id in seen_ids:
                     raise MigrationError(f"duplicate event id {event_id!r}")
                 seen_ids.add(event_id)
-            _validate_record_paths(project_root, event)
+            _validate_record_paths(
+                project_root,
+                event,
+                store_name="events",
+                current_slides=current_slides,
+            )
             events.append(event)
     return events
 
@@ -690,7 +698,12 @@ def _analyze_migration(
         document = _parse_yaml(path, content)
         version = _schema_version(path, document)
         records = _records_from_document(path, document, top_key, version)
-        _validate_record_paths(project_root, records)
+        for record in records.values():
+            _validate_record_paths(
+                project_root,
+                record,
+                store_name=top_key,
+            )
         if top_key == "decks":
             for record in records.values():
                 status = record.get("status")
@@ -704,7 +717,16 @@ def _analyze_migration(
         versions.add(version)
     if len(versions) > 1:
         raise MigrationError("mixed schema versions across presentation state stores")
-    events = _validate_events(project_root, event_files)
+    current_slides: Mapping[str, Any] = {}
+    for _, top_key, records in parsed.values():
+        if top_key == "slides":
+            current_slides = records
+            break
+    events = _validate_events(
+        project_root,
+        event_files,
+        current_slides=current_slides,
+    )
     source_version = next(iter(versions), STATE_VERSION)
     report: dict[str, Any] = {
         "source_schema_version": source_version,

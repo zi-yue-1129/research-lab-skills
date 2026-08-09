@@ -45,6 +45,60 @@ def _write_store(project: Path, name: str, records: Any, version: int = 0) -> No
     )
 
 
+def _canonical_digest(value: dict[str, Any]) -> str:
+    """Compute one canonical producer contract digest independently."""
+    payload = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _slide_record(
+    *,
+    status: str = "passed",
+    slide_spec_path: str | None = "contracts/slide-spec.yaml",
+) -> dict[str, Any]:
+    """Return the exact public slide record shape used by the state API."""
+    return {
+        "id": "sld-round5",
+        "deck_id": "deck-round5",
+        "plan_slide_id": "slide-01",
+        "title": "Evidence changes decisions",
+        "status": status,
+        "created_at": "2026-08-09T00:00:00Z",
+        "updated_at": "2026-08-09T00:00:00Z",
+        "created_by": "user",
+        "approved_takeaway_sha256": None,
+        "approved_evidence_sha256": None,
+        "slide_spec_path": slide_spec_path,
+        "slide_spec_sha256": None,
+        "attempt": 1,
+    }
+
+
+def _module_record() -> dict[str, Any]:
+    """Return the exact public visual-module record shape."""
+    return {
+        "id": "mod-round5",
+        "slide_id": "sld-round5",
+        "module_key": "input",
+        "module_type": "architecture",
+        "dependencies": [],
+        "status": "planned",
+        "visual_spec_path": None,
+        "assignment_path": None,
+        "artifact_manifest_path": None,
+        "attempt": 1,
+        "supersedes_module_id": None,
+        "created_at": "2026-08-09T00:00:00Z",
+        "updated_at": "2026-08-09T00:00:00Z",
+        "created_by": "user",
+    }
+
+
 def _draft_event(project: Path) -> dict[str, Any]:
     """Create one current workflow-shaped draft-preview event and files."""
     render_dir = project / "renders"
@@ -60,10 +114,7 @@ def _draft_event(project: Path) -> dict[str, Any]:
     source_sha256 = _canonical_source_digest([slide_relative], [slide_digest])
     plan_sha256 = "1" * 64
     deck_id = "deck-round5"
-    return {
-        "event": "draft_preview",
-        "id": "draft-round5",
-        "ts": "2026-08-09T00:00:00Z",
+    preview = {
         "schema_version": 1,
         "deck_id": deck_id,
         "plan_version": 1,
@@ -106,6 +157,13 @@ def _draft_event(project: Path) -> dict[str, Any]:
             },
         },
     }
+    return {
+        **preview,
+        "event": "draft_preview",
+        "id": "draft-round5",
+        "preview_sha256": _canonical_digest(preview),
+        "ts": "2026-08-09T00:00:00Z",
+    }
 
 
 def _write_event(project: Path, event: dict[str, Any]) -> None:
@@ -126,7 +184,11 @@ def _legacy_project(tmp_path: Path) -> tuple[Path, dict[str, Any]]:
             "status": "planning",
         },
     })
-    _write_store(project, "slides.yaml", {})
+    slide_spec = project / "contracts" / "slide-spec.yaml"
+    slide_spec.parent.mkdir(parents=True)
+    slide_spec.write_text("schema_version: 1\n", encoding="utf-8")
+    slide = _slide_record()
+    _write_store(project, "slides.yaml", {slide["id"]: slide})
     _write_event(project, event)
     return project, event
 
@@ -185,7 +247,7 @@ def test_current_workflow_shaped_draft_preview_is_migration_compatible(
 
     report = migration.migrate_state(project, dry_run=dry_run)
 
-    assert report["migrated_ids"] == [event["deck_id"]]
+    assert report["migrated_ids"] == [event["deck_id"], "sld-round5"]
     assert report["blocked_ids"] == []
 
 
@@ -233,24 +295,16 @@ def test_nullable_path_is_rejected_outside_planned_slide_or_module(
 def test_planned_slide_and_module_placeholders_retain_documented_nulls(tmp_path: Path) -> None:
     """Public planned slide/module records may retain documented null paths."""
     project = _project(tmp_path)
-    validate_record_paths(project, {
-        "id": "sld-1",
-        "deck_id": "deck-1",
-        "plan_slide_id": "slide-01",
-        "title": "Evidence",
-        "status": "planned",
-        "slide_spec_path": None,
-    })
-    validate_record_paths(project, {
-        "id": "mod-1",
-        "slide_id": "sld-1",
-        "module_key": "input",
-        "module_type": "architecture",
-        "status": "planned",
-        "visual_spec_path": None,
-        "assignment_path": None,
-        "artifact_manifest_path": None,
-    })
+    validate_record_paths(
+        project,
+        _slide_record(status="planned", slide_spec_path=None),
+        store_name="slides",
+    )
+    validate_record_paths(
+        project,
+        _module_record(),
+        store_name="visual_modules",
+    )
 
 
 @pytest.mark.parametrize("record", [

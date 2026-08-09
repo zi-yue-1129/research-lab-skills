@@ -7,9 +7,10 @@ import os
 import stat
 import hashlib
 from pathlib import Path
-from typing import Iterator, Mapping
+from typing import Any, Iterator, Mapping
 
 from presentation_artifact_provenance import canonical_source_digest
+from presentation_contracts import contract_sha256
 
 
 class MigrationError(RuntimeError):
@@ -68,6 +69,79 @@ MAPPING_PATH_LIST_KEYS = frozenset({"rendered_slide_paths"})
 PATH_LIST_MEMBERS = frozenset({"path", "relative_path"})
 PATH_KEYED_MAPPING_FIELDS = frozenset({"artifact_digests", "artifact_bindings"})
 _SHA256_LENGTH = 64
+_STORE_NAMES = frozenset(
+    {
+        "decks",
+        "plans",
+        "slides",
+        "visual_modules",
+        "assignments",
+        "artifacts",
+        "revision_requests",
+        "events",
+    }
+)
+_PUBLIC_SLIDE_RECORD_FIELDS = frozenset(
+    {
+        "id",
+        "deck_id",
+        "plan_slide_id",
+        "title",
+        "status",
+        "created_at",
+        "updated_at",
+        "created_by",
+        "approved_takeaway_sha256",
+        "approved_evidence_sha256",
+        "slide_spec_path",
+        "slide_spec_sha256",
+        "attempt",
+    }
+)
+_PUBLIC_MODULE_RECORD_FIELDS = frozenset(
+    {
+        "id",
+        "slide_id",
+        "module_key",
+        "module_type",
+        "dependencies",
+        "status",
+        "visual_spec_path",
+        "assignment_path",
+        "artifact_manifest_path",
+        "attempt",
+        "supersedes_module_id",
+        "created_at",
+        "updated_at",
+        "created_by",
+    }
+)
+_PUBLIC_SLIDE_REPLACEMENT_FIELDS = (
+    _PUBLIC_SLIDE_RECORD_FIELDS - {"updated_at"}
+) | frozenset({"supersedes_slide_id", "revision_request_id", "revision_kind"})
+_PUBLIC_MODULE_REPLACEMENT_FIELDS = (
+    _PUBLIC_MODULE_RECORD_FIELDS - {"updated_at"}
+) | frozenset({"revision_request_id", "revision_kind"})
+_PREVIEW_FIELDS = frozenset(
+    {
+        "schema_version",
+        "deck_id",
+        "plan_version",
+        "plan_sha256",
+        "rendered_slide_paths",
+        "contact_sheet_path",
+        "slides",
+        "artifact_digests",
+        "artifact_bindings",
+    }
+)
+_PERSISTED_PREVIEW_FIELDS = _PREVIEW_FIELDS | frozenset(
+    {"event", "id", "preview_sha256", "ts"}
+)
+_RENDERED_PREVIEW_ENTRY_FIELDS = frozenset(
+    {"slide_id", "path", "slide_record_id", "attempt"}
+)
+_PREVIEW_SLIDE_FIELDS = frozenset({"slide_id", "title", "key_takeaway"})
 
 
 def iter_scope_entries(root: Path) -> Iterator[Path]:
@@ -200,12 +274,23 @@ def canonical_project_relative(
     return "/".join(parts)
 
 
-def validate_record_paths(project_root: Path, value: object) -> None:
+def validate_record_paths(
+    project_root: Path,
+    value: object,
+    *,
+    store_name: str | None = None,
+    current_slides: Mapping[str, Any] | None = None,
+) -> None:
     """Validate canonical path fields recursively with alias-cycle checks.
 
     Args:
         project_root: Root used to resolve and inspect path values.
         value: YAML/JSON mapping or list to validate recursively.
+        store_name: Authoritative top-level state store, ``events``, or
+            ``None`` for context-free documents.  Context-free validation
+            never grants nullable path fields.
+        current_slides: Current slides-store records used to bind persisted
+            draft-preview identity.
 
     Returns:
         ``None`` after all recognized path fields pass validation.
@@ -214,10 +299,27 @@ def validate_record_paths(project_root: Path, value: object) -> None:
         MigrationError: If a path field is malformed, unknown, unsafe, or has
             a list/mapping shape inconsistent with its canonical schema.
     """
-    _validate_record_paths(project_root, value, stack=set())
+    if store_name is not None and store_name not in _STORE_NAMES:
+        raise MigrationError(f"unknown authoritative migration store {store_name!r}")
+    _validate_record_paths(
+        project_root,
+        value,
+        stack=set(),
+        store_name=store_name,
+        current_slides=current_slides,
+        root_record=True,
+    )
 
 
-def _validate_record_paths(project_root: Path, value: object, stack: set[int]) -> None:
+def _validate_record_paths(
+    project_root: Path,
+    value: object,
+    stack: set[int],
+    *,
+    store_name: str | None = None,
+    current_slides: Mapping[str, Any] | None = None,
+    root_record: bool = False,
+) -> None:
     """Recursively validate one value while tracking active aliases."""
     if isinstance(value, (Mapping, list)):
         identity = id(value)
@@ -230,8 +332,20 @@ def _validate_record_paths(project_root: Path, value: object, stack: set[int]) -
         if isinstance(value, Mapping):
             is_draft_preview = value.get("event") == "draft_preview"
             if is_draft_preview:
-                _validate_draft_preview(project_root, value, stack)
-            nullable_fields = _nullable_fields_for_record(value)
+                if not root_record or store_name != "events":
+                    raise MigrationError(
+                        "draft_preview must be a top-level immutable event record"
+                    )
+                _validate_draft_preview(
+                    project_root,
+                    value,
+                    stack,
+                    current_slides=current_slides,
+                )
+            nullable_fields = _nullable_fields_for_record(
+                value,
+                store_name=store_name if root_record else None,
+            )
             for child_key, child_value in value.items():
                 if isinstance(child_key, str):
                     if child_key in SINGULAR_PATH_KEYS:
@@ -248,28 +362,52 @@ def _validate_record_paths(project_root: Path, value: object, stack: set[int]) -
                             _validate_path_keyed_mapping(project_root, child_key, child_value, stack)
                     elif child_key.endswith("_path") or child_key.endswith("_paths"):
                         raise MigrationError(f"unknown path-bearing field {child_key!r}")
-                _validate_record_paths(project_root, child_value, stack)
+                _validate_record_paths(
+                    project_root,
+                    child_value,
+                    stack,
+                    current_slides=current_slides,
+                )
         else:
             for item in value:
-                _validate_record_paths(project_root, item, stack)
+                _validate_record_paths(
+                    project_root,
+                    item,
+                    stack,
+                    current_slides=current_slides,
+                )
     finally:
         stack.remove(id(value))
 
 
-def _nullable_fields_for_record(value: Mapping[object, object]) -> frozenset[str]:
+def _nullable_fields_for_record(
+    value: Mapping[object, object],
+    *,
+    store_name: str | None,
+) -> frozenset[str]:
     """Return path fields nullable for one exact planned record schema.
 
     Nullability is intentionally tied to the public placeholder records rather
     than to a field name.  Assignment records and arbitrary event payloads do
     not receive any nullable path allowance.
     """
-    if "event" in value or value.get("status") != "planned":
+    if store_name not in {"slides", "visual_modules"} or value.get("status") != "planned":
         return frozenset()
     keys = set(value)
-    if {"id", "deck_id", "plan_slide_id", "title", "status"}.issubset(keys):
+    if store_name == "slides" and (
+        keys == _PUBLIC_SLIDE_RECORD_FIELDS
+        or keys == _PUBLIC_SLIDE_REPLACEMENT_FIELDS
+    ):
         return frozenset({"slide_spec_path"})
-    if {"id", "slide_id", "module_key", "module_type", "status"}.issubset(keys):
+    if store_name == "visual_modules" and (
+        keys == _PUBLIC_MODULE_RECORD_FIELDS
+        or keys == _PUBLIC_MODULE_REPLACEMENT_FIELDS
+    ):
         return frozenset({"visual_spec_path", "assignment_path", "artifact_manifest_path"})
+    if any(value.get(field) is None for field in NULLABLE_PATH_FIELDS if field in value):
+        raise MigrationError(
+            f"planned {store_name} record with nullable paths must match its exact public schema"
+        )
     return frozenset()
 
 
@@ -332,8 +470,8 @@ def _validate_path_keyed_mapping(
         canonical_project_relative(project_root, raw_key)
         if field == "artifact_digests":
             _validate_digest(raw_value, f"artifact_digests[{raw_key!r}]")
-    else:
-        _validate_artifact_binding(project_root, raw_key, raw_value, stack)
+        else:
+            _validate_artifact_binding(project_root, raw_key, raw_value, stack)
 
 
 def _hash_regular_file(project_root: Path, relative_path: str) -> str:
@@ -361,7 +499,11 @@ def _hash_regular_file(project_root: Path, relative_path: str) -> str:
 
 
 def _validate_draft_preview(
-    project_root: Path, preview: Mapping[object, object], stack: set[int]
+    project_root: Path,
+    preview: Mapping[object, object],
+    stack: set[int],
+    *,
+    current_slides: Mapping[str, Any] | None,
 ) -> None:
     """Validate draft-preview artifact maps against their enclosing identity.
 
@@ -370,6 +512,31 @@ def _validate_draft_preview(
     is hashed from the current regular file, while binding metadata is checked
     against the enclosing preview and rendered-slide entries.
     """
+    if set(preview) != _PERSISTED_PREVIEW_FIELDS:
+        raise MigrationError(
+            "persisted draft_preview fields must match the exact producer record contract"
+        )
+    if preview.get("event") != "draft_preview":
+        raise MigrationError("persisted draft_preview event type is invalid")
+    _validate_text(preview.get("id"), "draft_preview.id")
+    _validate_text(preview.get("ts"), "draft_preview.ts")
+    if type(preview.get("schema_version")) is not int or preview.get("schema_version") != 1:
+        raise MigrationError("draft_preview.schema_version must be integer 1")
+    preview_sha256 = preview.get("preview_sha256")
+    _validate_digest(preview_sha256, "draft_preview.preview_sha256")
+    for mapping_field in PATH_KEYED_MAPPING_FIELDS:
+        raw_mapping = preview.get(mapping_field)
+        if not isinstance(raw_mapping, Mapping):
+            raise MigrationError(
+                f"draft_preview.{mapping_field} must be a non-empty mapping"
+            )
+        _canonical_mapping_keys(project_root, mapping_field, raw_mapping)
+    producer_payload = {field: preview[field] for field in _PREVIEW_FIELDS}
+    try:
+        expected_preview_sha256 = contract_sha256(producer_payload)
+    except (TypeError, ValueError, RecursionError) as exc:
+        raise MigrationError(f"draft_preview producer digest cannot be recomputed: {exc}") from exc
+
     deck_id = preview.get("deck_id")
     _validate_text(deck_id, "draft_preview.deck_id")
     plan_version = preview.get("plan_version")
@@ -397,19 +564,43 @@ def _validate_draft_preview(
             raise MigrationError(f"rendered slide path is not canonical: {raw_path!r}")
         if relative_path in rendered_entries:
             raise MigrationError(f"duplicate rendered slide path {relative_path!r}")
-        if ("slide_record_id" in raw_entry) != ("attempt" in raw_entry):
-            raise MigrationError("rendered slide persisted record fields must appear together")
-        if "slide_record_id" in raw_entry:
-            _validate_text(
-                raw_entry.get("slide_record_id"),
-                f"draft_preview.rendered_slide_paths[{index}].slide_record_id",
+        if set(raw_entry) != _RENDERED_PREVIEW_ENTRY_FIELDS:
+            raise MigrationError(
+                "draft_preview rendered slide entry must contain exact current identity fields"
             )
-            _validate_positive_int(
-                raw_entry.get("attempt"),
-                f"draft_preview.rendered_slide_paths[{index}].attempt",
-            )
+        _validate_text(
+            raw_entry.get("slide_record_id"),
+            f"draft_preview.rendered_slide_paths[{index}].slide_record_id",
+        )
+        _validate_positive_int(
+            raw_entry.get("attempt"),
+            f"draft_preview.rendered_slide_paths[{index}].attempt",
+        )
         rendered_paths.append(relative_path)
         rendered_entries[relative_path] = raw_entry
+
+    raw_slides = preview.get("slides")
+    if not isinstance(raw_slides, list) or not raw_slides:
+        raise MigrationError("draft_preview.slides must be a non-empty list")
+    preview_slide_ids: list[str] = []
+    for index, raw_slide in enumerate(raw_slides):
+        if not isinstance(raw_slide, Mapping) or set(raw_slide) != _PREVIEW_SLIDE_FIELDS:
+            raise MigrationError(
+                f"draft_preview.slides[{index}] must match the exact producer metadata fields"
+            )
+        for field in _PREVIEW_SLIDE_FIELDS:
+            _validate_text(raw_slide.get(field), f"draft_preview.slides[{index}].{field}")
+        preview_slide_ids.append(str(raw_slide["slide_id"]))
+    rendered_slide_ids = [str(rendered_entries[path]["slide_id"]) for path in rendered_paths]
+    if preview_slide_ids != rendered_slide_ids:
+        raise MigrationError("draft_preview slide metadata order or identity mismatch")
+
+    _validate_current_preview_slides(
+        preview,
+        rendered_entries,
+        rendered_paths,
+        current_slides=current_slides,
+    )
 
     raw_contact = preview.get("contact_sheet_path")
     contact_path = canonical_project_relative(project_root, raw_contact)
@@ -475,6 +666,47 @@ def _validate_draft_preview(
         raise MigrationError(f"contact-sheet source digest cannot be recomputed: {exc}") from exc
     if source_sha256 != expected_source_sha256:
         raise MigrationError("contact-sheet source_sha256 mismatch")
+    if preview_sha256 != expected_preview_sha256:
+        raise MigrationError("draft_preview.preview_sha256 does not match producer payload")
+
+
+def _validate_current_preview_slides(
+    preview: Mapping[object, object],
+    rendered_entries: Mapping[str, Mapping[object, object]],
+    rendered_paths: list[str],
+    *,
+    current_slides: Mapping[str, Any] | None,
+) -> None:
+    """Bind persisted preview entries to exact current slide records."""
+    if current_slides is None:
+        raise MigrationError("draft_preview current slides-store context is required")
+    deck_id = preview.get("deck_id")
+    by_plan_slide_id: dict[str, Mapping[str, Any]] = {}
+    for raw_slide in current_slides.values():
+        if not isinstance(raw_slide, Mapping):
+            raise MigrationError("current slides-store record must be a mapping")
+        if raw_slide.get("deck_id") != deck_id or raw_slide.get("status") == "superseded":
+            continue
+        plan_slide_id = raw_slide.get("plan_slide_id")
+        if not isinstance(plan_slide_id, str) or not plan_slide_id:
+            raise MigrationError("current slide plan identity is invalid")
+        if plan_slide_id in by_plan_slide_id:
+            raise MigrationError(f"duplicate current slide identity {plan_slide_id!r}")
+        by_plan_slide_id[plan_slide_id] = raw_slide
+    for path in rendered_paths:
+        entry = rendered_entries[path]
+        plan_slide_id = str(entry["slide_id"])
+        current = by_plan_slide_id.get(plan_slide_id)
+        if current is None:
+            raise MigrationError(f"current slide record missing for {plan_slide_id!r}")
+        current_record_id = current.get("id")
+        current_attempt = current.get("attempt")
+        _validate_text(current_record_id, f"current slide {plan_slide_id!r}.id")
+        _validate_positive_int(current_attempt, f"current slide {plan_slide_id!r}.attempt")
+        if entry.get("slide_record_id") != current_record_id:
+            raise MigrationError(f"draft_preview stale slide_record_id for {path!r}")
+        if entry.get("attempt") != current_attempt:
+            raise MigrationError(f"draft_preview stale slide attempt for {path!r}")
 
 
 def _canonical_mapping_keys(

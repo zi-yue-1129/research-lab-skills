@@ -76,6 +76,36 @@ def _snapshot(root: Path) -> dict[str, tuple[str, bytes, int, int]]:
     return result
 
 
+def _canonical_digest(value: dict[str, Any]) -> str:
+    """Compute one canonical producer contract digest independently."""
+    payload = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _current_slide_record(deck_id: str = "deck-round4") -> dict[str, Any]:
+    """Return the exact current public slide record bound by the preview."""
+    return {
+        "id": "sld-round4",
+        "deck_id": deck_id,
+        "plan_slide_id": "slide-01",
+        "title": "Evidence changes decisions",
+        "status": "passed",
+        "created_at": "2026-08-09T00:00:00Z",
+        "updated_at": "2026-08-09T00:00:00Z",
+        "created_by": "user",
+        "approved_takeaway_sha256": None,
+        "approved_evidence_sha256": None,
+        "slide_spec_path": "contracts/slide-spec.yaml",
+        "slide_spec_sha256": None,
+        "attempt": 1,
+    }
+
+
 def _draft_preview_event(project: Path, *, deck_id: str = "deck-round4") -> dict[str, Any]:
     """Create one current workflow-shaped draft-preview event and its files."""
     render_dir = project / "renders"
@@ -90,10 +120,7 @@ def _draft_preview_event(project: Path, *, deck_id: str = "deck-round4") -> dict
     contact_digest = hashlib.sha256(contact_path.read_bytes()).hexdigest()
     plan_digest = "1" * 64
     source_digest = _canonical_source_digest([slide_relative], [slide_digest])
-    return {
-        "event": "draft_preview",
-        "id": "draft-round4",
-        "ts": "2026-08-09T00:00:00Z",
+    preview = {
         "schema_version": 1,
         "deck_id": deck_id,
         "plan_version": 1,
@@ -136,6 +163,13 @@ def _draft_preview_event(project: Path, *, deck_id: str = "deck-round4") -> dict
             },
         },
     }
+    return {
+        **preview,
+        "event": "draft_preview",
+        "id": "draft-round4",
+        "preview_sha256": _canonical_digest(preview),
+        "ts": "2026-08-09T00:00:00Z",
+    }
 
 
 def _write_event(project: Path, event: dict[str, Any]) -> Path:
@@ -153,7 +187,11 @@ def _legacy_event_project(tmp_path: Path) -> tuple[Path, dict[str, Any]]:
     _write_store(project, "decks.yaml", {
         deck_id: {"id": deck_id, "title": "Round four", "status": "planning"},
     })
-    _write_store(project, "slides.yaml", {})
+    slide_spec = project / "contracts" / "slide-spec.yaml"
+    slide_spec.parent.mkdir(parents=True)
+    slide_spec.write_text("schema_version: 1\n", encoding="utf-8")
+    slide = _current_slide_record(deck_id)
+    _write_store(project, "slides.yaml", {slide["id"]: slide})
     event = _draft_preview_event(project, deck_id=deck_id)
     _write_event(project, event)
     return project, event
@@ -200,7 +238,12 @@ def test_draft_preview_path_keyed_fields_reject_non_string_keys(tmp_path: Path, 
     mapping[1] = mapping.pop(original_key)
     event[field] = mapping
     with pytest.raises(migration.MigrationError, match="mapping key|path|canonical"):
-        validate_record_paths(project, event)
+        validate_record_paths(
+            project,
+            event,
+            store_name="events",
+            current_slides={"sld-round4": _current_slide_record()},
+        )
 
 
 @pytest.mark.parametrize(
@@ -218,7 +261,12 @@ def test_draft_preview_mapping_values_keep_structural_validation(
     key = next(iter(event[field]))
     event[field][key] = bad_value
     with pytest.raises(migration.MigrationError, match="digest|binding|mapping|shape"):
-        validate_record_paths(project, event)
+        validate_record_paths(
+            project,
+            event,
+            store_name="events",
+            current_slides={"sld-round4": _current_slide_record()},
+        )
 
 
 def test_unknown_mapping_fields_do_not_gain_path_key_semantics(tmp_path: Path) -> None:
@@ -240,7 +288,7 @@ def test_valid_draft_preview_path_keyed_event_migrates_without_false_positive(
 
     assert report["source_schema_version"] == 0
     assert report["target_schema_version"] == 1
-    assert report["migrated_ids"] == ["deck-round4"]
+    assert report["migrated_ids"] == ["deck-round4", "sld-round4"]
     assert report["blocked_ids"] == []
     assert report["blockers"] == {}
     if dry_run:
