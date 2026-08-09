@@ -6,15 +6,70 @@ from __future__ import annotations
 import os
 import stat
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, Mapping
 
 
 class MigrationError(RuntimeError):
     """Raised when a migration scope contains unsafe filesystem entries."""
 
 
+SINGULAR_PATH_KEYS = frozenset(
+    {
+        "path",
+        "relative_path",
+        "plan_path",
+        "assignment_path",
+        "artifact_path",
+        "artifact_manifest_path",
+        "completion_record_path",
+        "current_plan_path",
+        "slide_assignment_path",
+        "slide_spec_path",
+        "visual_spec_path",
+        "preview_path",
+        "source_path",
+        "output_path",
+        "rendered_path",
+        "contact_sheet_path",
+        "visual_review_path",
+        "review_record_path",
+        "review_path",
+        "approval_path",
+        "revision_path",
+        "decision_path",
+        "event_path",
+        "input_path",
+        "manifest_path",
+    }
+)
+PLURAL_PATH_KEYS = frozenset(
+    {
+        "source_paths",
+        "rendered_slide_paths",
+        "source_artifacts",
+        "conversion_artifacts",
+        "rendered_png_paths",
+        "inspected_paths",
+        "comparison_reference_paths",
+    }
+)
+MAPPING_PATH_LIST_KEYS = frozenset({"rendered_slide_paths"})
+PATH_LIST_MEMBERS = frozenset({"path", "relative_path"})
+
+
 def iter_scope_entries(root: Path) -> Iterator[Path]:
-    """Yield regular files directly below ``root`` while rejecting extras."""
+    """Yield regular files directly below ``root`` while rejecting extras.
+
+    Args:
+        root: State or event directory to inspect.
+
+    Returns:
+        An iterator over direct regular-file entries in lexical order.
+
+    Raises:
+        MigrationError: If ``root`` or any direct entry is a symlink, special
+            file, or nested directory, or if directory inspection fails.
+    """
     if not root.exists():
         return
     try:
@@ -46,7 +101,19 @@ def iter_scope_entries(root: Path) -> Iterator[Path]:
 
 
 def assert_no_symlink_ancestors(path: Path, project_root: Path) -> None:
-    """Reject a state/event scope whose parent path redirects elsewhere."""
+    """Reject a state/event scope whose parent path redirects elsewhere.
+
+    Args:
+        path: Scope path whose ancestors must be checked.
+        project_root: Canonical project root that bounds the scope.
+
+    Returns:
+        ``None`` after every existing ancestor is verified as non-symlink.
+
+    Raises:
+        MigrationError: If ``path`` escapes ``project_root``, an ancestor
+            cannot be inspected, or an ancestor is a symbolic link.
+    """
     root = project_root.resolve()
     try:
         relative_parts = path.relative_to(root).parts
@@ -63,3 +130,130 @@ def assert_no_symlink_ancestors(path: Path, project_root: Path) -> None:
             raise MigrationError(f"unable to inspect scope ancestor {current}: {exc}") from exc
         if stat.S_ISLNK(metadata.st_mode):
             raise MigrationError(f"state/event scope contains a symlink ancestor: {current}")
+
+
+def canonical_project_relative(
+    project_root: Path, raw_value: object, *, allow_directory: bool = False
+) -> str:
+    """Validate one existing POSIX project-relative path safely.
+
+    Args:
+        project_root: Root against which the path is resolved.
+        raw_value: Candidate project-relative path value.
+        allow_directory: Whether this field explicitly permits a directory.
+
+    Returns:
+        The normalized project-relative path string.
+
+    Raises:
+        MigrationError: If the value is malformed, missing, special, a
+            symlink, outside the project, or an unallowed directory.
+    """
+    if not isinstance(raw_value, str) or not raw_value or "\x00" in raw_value:
+        raise MigrationError(f"path must be a non-empty relative path: {raw_value!r}")
+    if raw_value.startswith("/") or "\\" in raw_value:
+        raise MigrationError(f"path must be project-relative and POSIX-normalized: {raw_value!r}")
+    parts = raw_value.split("/")
+    if any(part in {"", ".", ".."} for part in parts):
+        raise MigrationError(f"path traversal or non-normalized path rejected: {raw_value!r}")
+    root = project_root.resolve()
+    candidate = root.joinpath(*parts)
+    current = root
+    final_metadata: os.stat_result | None = None
+    for part in parts:
+        current /= part
+        try:
+            metadata = os.lstat(current)
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise MigrationError(f"unable to inspect path {raw_value!r}: {exc}") from exc
+        if stat.S_ISLNK(metadata.st_mode):
+            raise MigrationError(f"path contains a symlink and cannot be verified: {raw_value!r}")
+        if part != parts[-1] and not stat.S_ISDIR(metadata.st_mode):
+            raise MigrationError(f"path ancestor is not a directory: {raw_value!r}")
+        if part == parts[-1] and not stat.S_ISREG(metadata.st_mode) and not stat.S_ISDIR(metadata.st_mode):
+            raise MigrationError(f"path refers to a special file: {raw_value!r}")
+        if part == parts[-1]:
+            final_metadata = metadata
+    if final_metadata is None:
+        raise MigrationError(f"path target does not exist: {raw_value!r}")
+    if stat.S_ISDIR(final_metadata.st_mode) and not allow_directory:
+        raise MigrationError(f"path target must be a regular file: {raw_value!r}")
+    try:
+        candidate.resolve(strict=False).relative_to(root)
+    except (OSError, ValueError) as exc:
+        raise MigrationError(f"path escapes project root: {raw_value!r}") from exc
+    return "/".join(parts)
+
+
+def validate_record_paths(project_root: Path, value: object) -> None:
+    """Validate canonical path fields recursively with alias-cycle checks.
+
+    Args:
+        project_root: Root used to resolve and inspect path values.
+        value: YAML/JSON mapping or list to validate recursively.
+
+    Returns:
+        ``None`` after all recognized path fields pass validation.
+
+    Raises:
+        MigrationError: If a path field is malformed, unknown, unsafe, or has
+            a list/mapping shape inconsistent with its canonical schema.
+    """
+    _validate_record_paths(project_root, value, stack=set())
+
+
+def _validate_record_paths(project_root: Path, value: object, stack: set[int]) -> None:
+    """Recursively validate one value while tracking active aliases."""
+    if isinstance(value, (Mapping, list)):
+        identity = id(value)
+        if identity in stack:
+            raise MigrationError("recursive YAML alias cycle in path-bearing state")
+        stack.add(identity)
+    else:
+        return
+    try:
+        if isinstance(value, Mapping):
+            for child_key, child_value in value.items():
+                if isinstance(child_key, str):
+                    if child_key in SINGULAR_PATH_KEYS:
+                        _validate_singular_path(project_root, child_key, child_value)
+                    elif child_key in PLURAL_PATH_KEYS:
+                        _validate_plural_path(project_root, child_key, child_value, stack)
+                    elif child_key.endswith("_path") or child_key.endswith("_paths"):
+                        raise MigrationError(f"unknown path-bearing field {child_key!r}")
+                _validate_record_paths(project_root, child_value, stack)
+        else:
+            for item in value:
+                _validate_record_paths(project_root, item, stack)
+    finally:
+        stack.remove(id(value))
+
+
+def _validate_singular_path(project_root: Path, key: str, value: object) -> None:
+    """Validate one singular path field."""
+    if value is None or isinstance(value, (Mapping, list)):
+        raise MigrationError(f"singular path field {key!r} requires one string path")
+    canonical_project_relative(project_root, value)
+
+
+def _validate_plural_path(
+    project_root: Path, key: str, value: object, stack: set[int]
+) -> None:
+    """Validate one explicit plural path field and its canonical entries."""
+    if not isinstance(value, list):
+        raise MigrationError(f"plural path field {key!r} requires a list")
+    mapping_entries = key in MAPPING_PATH_LIST_KEYS
+    for item in value:
+        if mapping_entries:
+            if not isinstance(item, Mapping):
+                raise MigrationError(f"plural path field {key!r} requires mapping entries")
+            members = [member for member in PATH_LIST_MEMBERS if member in item]
+            if len(members) != 1:
+                raise MigrationError(f"path list field {key!r} item requires exactly one canonical path member")
+        elif isinstance(item, Mapping):
+            raise MigrationError(f"plural path field {key!r} requires string entries")
+        canonical_project_relative(project_root, item.get("path", item.get("relative_path"))) if mapping_entries else canonical_project_relative(project_root, item)
+        if mapping_entries:
+            _validate_record_paths(project_root, item, stack)

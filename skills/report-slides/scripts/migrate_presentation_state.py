@@ -32,8 +32,12 @@ from presentation_transactions import WorkflowTransaction, incomplete_transactio
 from validate_deck_plan import validate_deck_approval, validate_deck_plan
 from migration_scope import (
     MigrationError,
+    PLURAL_PATH_KEYS as _PLURAL_PATH_KEYS,
+    SINGULAR_PATH_KEYS as _SINGULAR_PATH_KEYS,
     assert_no_symlink_ancestors as _assert_no_symlink_ancestors,
+    canonical_project_relative as _canonical_project_relative,
     iter_scope_entries as _iter_scope_entries,
+    validate_record_paths as _validate_record_paths,
 )
 
 
@@ -152,125 +156,7 @@ def _fsync_directory(directory: Path) -> None:
         os.close(descriptor)
 
 
-def _canonical_project_relative(
-    project_root: Path, raw_value: object, *, allow_directory: bool = False
-) -> str:
-    """Validate one existing POSIX project-relative path safely.
-
-    Args:
-        project_root: Root against which the path is resolved.
-        raw_value: Candidate project-relative path.
-        allow_directory: Whether this field explicitly permits a directory.
-    """
-    if not isinstance(raw_value, str) or not raw_value or "\x00" in raw_value:
-        raise MigrationError(f"path must be a non-empty relative path: {raw_value!r}")
-    if raw_value.startswith("/") or "\\" in raw_value:
-        raise MigrationError(f"path must be project-relative and POSIX-normalized: {raw_value!r}")
-    parts = raw_value.split("/")
-    if any(part in {"", ".", ".."} for part in parts):
-        raise MigrationError(f"path traversal or non-normalized path rejected: {raw_value!r}")
-    root = project_root.resolve()
-    candidate = root.joinpath(*parts)
-    current = root
-    final_metadata: os.stat_result | None = None
-    for part in parts:
-        current = current / part
-        try:
-            metadata = os.lstat(current)
-        except FileNotFoundError:
-            continue
-        except OSError as exc:
-            raise MigrationError(f"unable to inspect path {raw_value!r}: {exc}") from exc
-        if stat.S_ISLNK(metadata.st_mode):
-            raise MigrationError(f"path contains a symlink and cannot be verified: {raw_value!r}")
-        if part != parts[-1] and not stat.S_ISDIR(metadata.st_mode):
-            raise MigrationError(f"path ancestor is not a directory: {raw_value!r}")
-        if part == parts[-1] and not stat.S_ISREG(metadata.st_mode) and not stat.S_ISDIR(metadata.st_mode):
-            raise MigrationError(f"path refers to a special file: {raw_value!r}")
-        if part == parts[-1]:
-            final_metadata = metadata
-    if final_metadata is None:
-        raise MigrationError(f"path target does not exist: {raw_value!r}")
-    if stat.S_ISDIR(final_metadata.st_mode) and not allow_directory:
-        raise MigrationError(f"path target must be a regular file: {raw_value!r}")
-    try:
-        candidate.resolve(strict=False).relative_to(root)
-    except (OSError, ValueError) as exc:
-        raise MigrationError(f"path escapes project root: {raw_value!r}") from exc
-    return "/".join(parts)
-
-
-_PATH_KEYS = frozenset(
-    {
-        "path",
-        "relative_path",
-        "plan_path",
-        "assignment_path",
-        "artifact_path",
-        "slide_spec_path",
-        "preview_path",
-        "source_path",
-        "output_path",
-        "rendered_path",
-        "source_paths",
-        "rendered_slide_paths",
-    }
-)
-_PATH_LIST_MEMBERS = frozenset({"path", "relative_path"})
-_DIRECTORY_PATH_KEYS = frozenset()
-
-
-def _validate_record_paths(
-    project_root: Path,
-    value: object,
-    key: str | None = None,
-    stack: set[int] | None = None,
-) -> None:
-    """Validate path-bearing fields recursively with alias-cycle detection."""
-    active = stack if stack is not None else set()
-    if isinstance(value, (Mapping, list)):
-        identity = id(value)
-        if identity in active:
-            raise MigrationError("recursive YAML alias cycle in path-bearing state")
-        active.add(identity)
-    else:
-        return
-    try:
-        if isinstance(value, Mapping):
-            for child_key, child_value in value.items():
-                if isinstance(child_key, str) and (
-                    child_key in _PATH_KEYS or child_key.endswith("_path") or child_key.endswith("_paths")
-                ):
-                    if child_value is None:
-                        raise MigrationError(f"path field {child_key!r} must not be null")
-                    if isinstance(child_value, list):
-                        for item in child_value:
-                            if isinstance(item, Mapping):
-                                if not any(member in item for member in _PATH_LIST_MEMBERS):
-                                    raise MigrationError(
-                                        f"path list field {child_key!r} item requires a canonical path member"
-                                    )
-                                _validate_record_paths(project_root, item, stack=active)
-                            else:
-                                _canonical_project_relative(
-                                    project_root,
-                                    item,
-                                    allow_directory=child_key in _DIRECTORY_PATH_KEYS,
-                                )
-                    elif isinstance(child_value, Mapping):
-                        raise MigrationError(f"path field {child_key!r} must be a path string or list")
-                    else:
-                        _canonical_project_relative(
-                            project_root,
-                            child_value,
-                            allow_directory=child_key in _DIRECTORY_PATH_KEYS,
-                        )
-                _validate_record_paths(project_root, child_value, str(child_key), active)
-        elif isinstance(value, list):
-            for item in value:
-                _validate_record_paths(project_root, item, key, active)
-    finally:
-        active.remove(id(value))
+_PATH_KEYS = _SINGULAR_PATH_KEYS | _PLURAL_PATH_KEYS
 
 
 def _parse_yaml(path: Path, content: bytes) -> dict[str, Any]:
@@ -704,7 +590,9 @@ def _scope_paths(project_root: Path) -> tuple[tuple[Path, ...], tuple[Path, ...]
     event_paths: list[Path] = []
     for path in _iter_scope_entries(state_root):
         if path.name.endswith(".lock"):
-            if path.name.removesuffix(".lock") in STATE_NAMES:
+            data_name = path.name.removesuffix(".lock")
+            if data_name in STATE_NAMES:
+                _assert_sidecar_target(path, state_root / data_name, "state")
                 continue
             raise MigrationError(f"unknown presentation state sidecar: {path}")
         if path.name.endswith(".tmp"):
@@ -714,19 +602,39 @@ def _scope_paths(project_root: Path) -> tuple[tuple[Path, ...], tuple[Path, ...]
         state_paths.append(path)
     for path in _iter_scope_entries(events_root):
         if path.name.endswith(".lock"):
-            if EVENT_SHARD_PATTERN.fullmatch(path.name.removesuffix(".lock")):
+            data_name = path.name.removesuffix(".lock")
+            if EVENT_SHARD_PATTERN.fullmatch(data_name):
+                _parse_event_shard_date(data_name, path)
+                _assert_sidecar_target(path, events_root / data_name, "event")
                 continue
             raise MigrationError(f"unknown presentation event sidecar: {path}")
         if path.name.endswith(".tmp"):
             raise MigrationError(f"temporary presentation event file is not allowed: {path}")
         if EVENT_SHARD_PATTERN.fullmatch(path.name) is None:
             raise MigrationError(f"unknown presentation event file: {path}")
-        try:
-            datetime.strptime(path.stem, "%Y-%m-%d")
-        except ValueError as exc:
-            raise MigrationError(f"invalid presentation event shard date: {path}") from exc
+        _parse_event_shard_date(path.name, path)
         event_paths.append(path)
     return tuple(sorted(state_paths)), tuple(sorted(event_paths))
+
+
+def _assert_sidecar_target(sidecar: Path, target: Path, scope: str) -> None:
+    """Require a canonical sidecar target to exist as a regular file."""
+    if not os.path.lexists(target):
+        raise MigrationError(f"orphan {scope} sidecar without canonical data file: {sidecar}")
+    try:
+        metadata = os.lstat(target)
+    except OSError as exc:
+        raise MigrationError(f"unable to inspect {scope} sidecar target {target}: {exc}") from exc
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+        raise MigrationError(f"{scope} sidecar target must be a regular file: {target}")
+
+
+def _parse_event_shard_date(name: str, path: Path) -> None:
+    """Require an event shard name to encode a real calendar date."""
+    try:
+        datetime.strptime(Path(name).stem, "%Y-%m-%d")
+    except ValueError as exc:
+        raise MigrationError(f"invalid presentation event shard date: {path}") from exc
 
 
 def _scope_files(
