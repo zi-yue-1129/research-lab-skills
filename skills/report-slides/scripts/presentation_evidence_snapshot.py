@@ -116,6 +116,8 @@ def build_snapshot(project_root: Path, *, locked: bool = False) -> EvidenceSnaps
     event_bytes = _read_event_scope(root)
     stores, schema_version = _parse_stores(root, state_bytes)
     events = _parse_event_shards(root, event_bytes)
+    frozen_stores = _freeze(stores)
+    frozen_events = tuple(_freeze(event) for event in events)
     file_preimages: dict[Path, bytes] = {}
     for relative_path, content in state_bytes.items():
         file_preimages[root / relative_path] = content
@@ -126,8 +128,8 @@ def build_snapshot(project_root: Path, *, locked: bool = False) -> EvidenceSnaps
     return EvidenceSnapshot(
         project_root=root,
         schema_version=schema_version,
-        stores=_freeze(stores),
-        events=tuple(_freeze(event) for event in events),
+        stores=frozen_stores,
+        events=frozen_events,
         file_preimages=MappingProxyType(dict(file_preimages)),
         artifact_objects=MappingProxyType(dict(artifact_objects)),
     )
@@ -536,12 +538,63 @@ def _declared_artifact_paths(event: Mapping[str, Any]) -> tuple[str, ...]:
     return tuple(paths)
 
 
-def _freeze(value: Any) -> Any:
-    """Recursively freeze parsed values so projection cannot mutate snapshots."""
+def _freeze(value: Any, active_ids: set[int] | None = None) -> Any:
+    """Freeze parsed values while rejecting only active YAML alias cycles.
+
+    Args:
+        value: Parsed YAML or JSON value to make immutable.
+        active_ids: Object identities on the current recursive path. Repeated
+            aliases outside that path are valid and are frozen independently.
+
+    Returns:
+        An immutable copy of ``value``.
+
+    Raises:
+        SnapshotError: If a mapping, list, or set aliases itself through the
+            active recursive path.
+    """
+    active = set() if active_ids is None else active_ids
     if isinstance(value, Mapping):
-        return MappingProxyType({key: _freeze(item) for key, item in value.items()})
+        return _freeze_mapping(value, active)
     if isinstance(value, list):
-        return tuple(_freeze(item) for item in value)
+        return _freeze_list(value, active)
     if isinstance(value, set):
-        return frozenset(_freeze(item) for item in value)
+        return _freeze_set(value, active)
     return value
+
+
+def _freeze_mapping(value: Mapping[Any, Any], active_ids: set[int]) -> Mapping[Any, Any]:
+    """Freeze one mapping after detecting active YAML alias recursion."""
+    _enter_freeze(value, active_ids)
+    try:
+        return MappingProxyType(
+            {key: _freeze(item, active_ids) for key, item in value.items()}
+        )
+    finally:
+        active_ids.remove(id(value))
+
+
+def _freeze_list(value: list[Any], active_ids: set[int]) -> tuple[Any, ...]:
+    """Freeze one list after detecting active YAML alias recursion."""
+    _enter_freeze(value, active_ids)
+    try:
+        return tuple(_freeze(item, active_ids) for item in value)
+    finally:
+        active_ids.remove(id(value))
+
+
+def _freeze_set(value: set[Any], active_ids: set[int]) -> frozenset[Any]:
+    """Freeze one set after detecting active YAML alias recursion."""
+    _enter_freeze(value, active_ids)
+    try:
+        return frozenset(_freeze(item, active_ids) for item in value)
+    finally:
+        active_ids.remove(id(value))
+
+
+def _enter_freeze(value: object, active_ids: set[int]) -> None:
+    """Register one container on the active freeze stack or reject a cycle."""
+    identity = id(value)
+    if identity in active_ids:
+        raise SnapshotError("cyclic YAML alias is not supported in snapshots")
+    active_ids.add(identity)

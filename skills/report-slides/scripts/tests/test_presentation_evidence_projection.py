@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 import yaml
 
+import presentation_evidence_snapshot as evidence_snapshot
 from presentation_contracts import contract_sha256
 from presentation_evidence_contracts import envelope_sha256
 from presentation_evidence_projection import ProjectionError, project_historical_evidence
@@ -177,6 +178,81 @@ def _evidence_source(
     return envelope
 
 
+def _review_status(
+    status: str,
+    reviewed_by: str,
+    inspected_paths: list[str],
+    *,
+    revision_required: bool = False,
+    blocker: str | None = None,
+) -> dict[str, Any]:
+    """Create one complete visual-review gate status fixture."""
+    record: dict[str, Any] = {
+        "status": status,
+        "round": 1,
+        "reviewed_by": reviewed_by,
+        "inspected_paths": inspected_paths,
+        "findings": [],
+        "revision_required": revision_required,
+        "started_at": "2026-08-09T00:04:00Z",
+        "completed_at": "2026-08-09T00:04:00Z",
+    }
+    if blocker is not None:
+        record["blocker"] = blocker
+    return record
+
+
+def _completion_review_record(
+    final_path: str, render_path: str, review_path: str
+) -> dict[str, Any]:
+    """Create one structurally valid, completion-authorizing review record."""
+    source_png = "evidence/source-01.png"
+    render_status = _review_status("passed", "model_vision", [render_path])
+    render_status.update(
+        {
+            "renderer": {
+                "name": "LibreOffice",
+                "version": "25.0",
+                "conversion_format": "pdf-to-png",
+            },
+            "conversion_artifacts": ["evidence/deck.pdf"],
+            "rendered_png_paths": [render_path],
+            "model_vision": {
+                "inspected_paths": [render_path],
+                "comparison_reference_paths": [source_png],
+            },
+            "visual_checks": {"clipping": "passed"},
+        }
+    )
+    return {
+        "schema_version": 1,
+        "deck_id": "deck-temporal",
+        "output_format": "pptx",
+        "expected_slides": [1],
+        "source_artifacts": ["evidence/source-01.svg", source_png],
+        "artifacts": {"pptx": final_path, "review_record": review_path},
+        "statuses": {
+            "svg_preview": _review_status("passed", "model_vision", [source_png]),
+            "pptx_structure": _review_status(
+                "passed", "pptx_structure_validator", [final_path]
+            ),
+            "pptx_render": render_status,
+        },
+        "overall": {
+            "status": "passed",
+            "completion_allowed": True,
+            "authority": "pptx-render",
+        },
+        "history": [
+            {
+                "round": 1,
+                "result": "passed",
+                "revision": "Historical completion review",
+            }
+        ],
+    }
+
+
 def _completion_events(project: Path) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
     """Create source-bound historical completion events and artifact records."""
     final_path = "evidence/deck.pptx"
@@ -188,13 +264,7 @@ def _completion_events(project: Path) -> tuple[list[dict[str, Any]], dict[str, d
         target = project / relative_path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(content)
-    review_record = {
-        "schema_version": 1,
-        "deck_id": "deck-temporal",
-        "output_format": "pptx",
-        "artifacts": {"pptx": final_path},
-        "statuses": {"pptx_render": {"rendered_png_paths": [render_path]}},
-    }
+    review_record = _completion_review_record(final_path, render_path, review_path)
     review_target = project / review_path
     review_target.parent.mkdir(parents=True, exist_ok=True)
     review_target.write_text(
@@ -512,6 +582,116 @@ def test_snapshot_and_projection_do_not_write_during_dry_analysis(tmp_path: Path
     assert after == before
 
 
+@pytest.mark.parametrize("cycle_shape", ["direct_mapping", "nested_mapping_list"])
+def test_snapshot_rejects_cyclic_yaml_aliases_before_cas_planning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cycle_shape: str
+) -> None:
+    """Cyclic YAML aliases fail as snapshot errors before CAS planning starts."""
+    project = _project(tmp_path)
+    if cycle_shape == "direct_mapping":
+        record: dict[str, Any] = {"id": "deck-cyclic"}
+        record["self"] = record
+    else:
+        nested_mapping: dict[str, Any] = {}
+        nested_list: list[Any] = [nested_mapping]
+        nested_mapping["items"] = nested_list
+        record = {"id": "deck-cyclic", "details": nested_mapping}
+    _write_store(project, "decks.yaml", "decks", {"deck-cyclic": record})
+    _write_events(project, [_preview_event(project)])
+    cas_calls: list[object] = []
+
+    def reject_cas_plan(*args: object, **kwargs: object) -> object:
+        """Record an unexpected CAS-plan attempt for this preflight test."""
+        del args, kwargs
+        cas_calls.append("plan")
+        raise AssertionError("cyclic aliases must fail before CAS planning")
+
+    monkeypatch.setattr(evidence_snapshot, "plan_cas_objects", reject_cas_plan)
+
+    with pytest.raises(SnapshotError, match="cyclic YAML alias"):
+        build_snapshot(project)
+
+    assert cas_calls == []
+
+
+def test_snapshot_allows_repeated_noncyclic_yaml_aliases(tmp_path: Path) -> None:
+    """Repeated aliases are frozen deterministically when no active cycle exists."""
+    project = _project(tmp_path)
+    shared_metadata = {"owner": "historian"}
+    _write_store(
+        project,
+        "decks.yaml",
+        "decks",
+        {
+            "deck-alias": {
+                "id": "deck-alias",
+                "left_metadata": shared_metadata,
+                "right_metadata": shared_metadata,
+            }
+        },
+    )
+
+    snapshot = build_snapshot(project)
+    record = snapshot.stores["decks"]["deck-alias"]
+
+    assert record["left_metadata"] == record["right_metadata"]
+
+
+@pytest.mark.parametrize("review_status", ["failed", "blocked"])
+def test_completion_rejects_non_authorizing_visual_review_status(
+    tmp_path: Path, review_status: str
+) -> None:
+    """Failed and blocked review results cannot authorize historical completion."""
+    project, preview, _event_path = _historical_project(tmp_path, completion=True)
+    completion_events, evidence = _completion_events(project)
+    review_event = completion_events[1]
+    review_path = project / "evidence" / "visual-review.json"
+    review_record = json.loads(review_path.read_text(encoding="utf-8"))
+    render_status = review_record["statuses"]["pptx_render"]
+    render_status["status"] = review_status
+    if review_status == "failed":
+        render_status["revision_required"] = True
+        render_status["findings"] = [
+            {
+                "kind": "clipping",
+                "scope": {"slide": 1, "region": "body"},
+                "artifact_path": "evidence/deck-01.png",
+                "description": "Historical clipping finding.",
+                "source": "pptx-render",
+                "disposition": "open",
+            }
+        ]
+    else:
+        render_status["blocker"] = "Renderer provenance was unavailable."
+    review_record["overall"] = {
+        "status": review_status,
+        "completion_allowed": False,
+        "authority": "pptx-render",
+    }
+    _write_review_record(review_path, review_event, review_record)
+    _write_events(project, [preview, *completion_events])
+    _write_store(project, "evidence.yaml", "evidence", evidence)
+
+    with pytest.raises(ProjectionError, match="completion-authorizing"):
+        project_historical_evidence(build_snapshot(project))
+
+
+def test_completion_rejects_malformed_visual_review_status(tmp_path: Path) -> None:
+    """A review record with malformed gate evidence cannot authorize completion."""
+    project, preview, _event_path = _historical_project(tmp_path, completion=True)
+    completion_events, evidence = _completion_events(project)
+    review_event = completion_events[1]
+    review_path = project / "evidence" / "visual-review.json"
+    review_record = json.loads(review_path.read_text(encoding="utf-8"))
+    del review_record["statuses"]["pptx_render"]["round"]
+    _write_review_record(review_path, review_event, review_record)
+    _write_events(project, [preview, *completion_events])
+    _write_store(project, "evidence.yaml", "evidence", evidence)
+
+    with pytest.raises(ProjectionError, match="visual review document is invalid"):
+        project_historical_evidence(build_snapshot(project))
+
+
 def test_artifact_maps_on_unregistered_event_kinds_fail_closed(tmp_path: Path) -> None:
     """An unregistered event cannot hide declared artifact provenance."""
     project = _project(tmp_path)
@@ -613,6 +793,17 @@ def test_completion_rejects_preview_style_artifact_bindings(tmp_path: Path) -> N
 
     with pytest.raises(ProjectionError, match="artifact_bindings"):
         project_historical_evidence(build_snapshot(project))
+
+
+def _write_review_record(
+    path: Path, review_event: dict[str, Any], review_record: dict[str, Any]
+) -> None:
+    """Persist a mutated review fixture and its event-level content binding."""
+    path.write_text(
+        json.dumps(review_record, sort_keys=True, separators=(",", ":")),
+        encoding="utf-8",
+    )
+    review_event["visual_review_sha256"] = contract_sha256(review_record)
 
 
 def _refresh_preview_digest(preview: dict[str, Any]) -> None:

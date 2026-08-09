@@ -500,12 +500,11 @@ def validate_review_record(
     record_path: Path,
     artifact_root: Optional[Path] = None,
 ) -> List[ValidationIssue]:
-    """Validate one report-slides visual review record.
+    """Read and validate one report-slides visual review record.
 
-    This validates the record's shape, path safety, and derived completion
-    decision. It does not prove that model_vision inspected an image; it
-    verifies that the record names the exact paths the runtime says were
-    inspected and that those paths are present and readable.
+    This is the path-reading wrapper around :func:`validate_review_document`.
+    It exists for command-line and workflow callers whose evidence has not
+    already been captured into an immutable snapshot.
 
     Args:
         record_path: Path to the JSON review record.
@@ -515,8 +514,7 @@ def validate_review_record(
             skipped.
 
     Returns:
-        A list of :class:`ValidationIssue`, sorted by path. Empty when the
-        record is fully valid.
+        A list of :class:`ValidationIssue`, sorted by path. Empty when valid.
 
     Raises:
         ValueError: If the record is not valid JSON or its root is not a
@@ -530,8 +528,34 @@ def validate_review_record(
         record = json.loads(text)
     except json.JSONDecodeError as error:
         raise ValueError(f"malformed JSON in review record {record_path}: {error}") from error
+    return validate_review_document(record, artifact_root)
+
+
+def validate_review_document(
+    record: Mapping[str, Any],
+    artifact_root: Optional[Path] = None,
+) -> List[ValidationIssue]:
+    """Validate one parsed report-slides visual review record.
+
+    This is the authoritative pure form of visual-review validation. It
+    validates record shape, safe artifact declarations, every required gate,
+    and the derived completion decision without reading ``record`` from disk.
+    When ``artifact_root`` is ``None``, only lexical path validation occurs;
+    callers that have frozen artifact bytes validate those bytes separately.
+
+    Args:
+        record: Parsed JSON review record with a mapping root.
+        artifact_root: Optional root used to check declared artifact files.
+
+    Returns:
+        A list of :class:`ValidationIssue`, sorted by path. Empty when the
+        parsed record is fully valid.
+
+    Raises:
+        ValueError: If ``record`` does not have a mapping root.
+    """
     if not isinstance(record, Mapping):
-        raise ValueError(f"review record {record_path} must have a mapping root")
+        raise ValueError("review record must have a mapping root")
 
     issues: List[ValidationIssue] = []
 

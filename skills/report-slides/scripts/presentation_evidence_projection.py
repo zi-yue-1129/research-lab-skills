@@ -24,6 +24,7 @@ from presentation_evidence_contracts import (
 )
 from presentation_evidence_snapshot import EvidenceSnapshot
 from validate_deck_plan import validate_deck_approval
+from validate_visual_review import derive_overall_status, validate_review_document
 
 
 _SHA256_HEX = frozenset("0123456789abcdef")
@@ -451,7 +452,39 @@ def _frozen_visual_review_document(
     document = _parse_frozen_json(content, review_path)
     if source["visual_review_sha256"] != _canonical_digest(document, "visual_review"):
         raise ProjectionError("visual_review source document digest mismatch")
+    _validate_completion_authorizing_review(document)
     return document
+
+
+def _validate_completion_authorizing_review(document: Mapping[str, Any]) -> None:
+    """Require every intrinsic visual-review predicate needed for completion."""
+    try:
+        issues = validate_review_document(document)
+    except ValueError as exc:
+        raise ProjectionError(f"visual review document is invalid: {exc}") from exc
+    if issues:
+        first_issue = issues[0]
+        raise ProjectionError(
+            f"visual review document is invalid: {first_issue.path}: "
+            f"{first_issue.message}"
+        )
+    try:
+        result = derive_overall_status(document)
+    except ValueError as exc:
+        raise ProjectionError(
+            f"visual review document cannot derive completion status: {exc}"
+        ) from exc
+    statuses = _mapping(document.get("statuses"), "visual review statuses")
+    render_status = _mapping(
+        statuses.get("pptx_render"), "visual review pptx_render status"
+    )
+    if (
+        result.status != "passed"
+        or not result.completion_allowed
+        or result.authority != "pptx-render"
+        or render_status.get("status") != "passed"
+    ):
+        raise ProjectionError("visual review is not completion-authorizing")
 
 
 def _parse_frozen_json(content: bytes, relative_path: str) -> dict[str, Any]:
