@@ -42,6 +42,14 @@ SINGULAR_PATH_KEYS = frozenset(
         "manifest_path",
     }
 )
+NULLABLE_PATH_FIELDS = frozenset(
+    {
+        "slide_spec_path",
+        "visual_spec_path",
+        "assignment_path",
+        "artifact_manifest_path",
+    }
+)
 PLURAL_PATH_KEYS = frozenset(
     {
         "source_paths",
@@ -55,6 +63,8 @@ PLURAL_PATH_KEYS = frozenset(
 )
 MAPPING_PATH_LIST_KEYS = frozenset({"rendered_slide_paths"})
 PATH_LIST_MEMBERS = frozenset({"path", "relative_path"})
+PATH_KEYED_MAPPING_FIELDS = frozenset({"artifact_digests", "artifact_bindings"})
+_SHA256_LENGTH = 64
 
 
 def iter_scope_entries(root: Path) -> Iterator[Path]:
@@ -221,6 +231,8 @@ def _validate_record_paths(project_root: Path, value: object, stack: set[int]) -
                         _validate_singular_path(project_root, child_key, child_value)
                     elif child_key in PLURAL_PATH_KEYS:
                         _validate_plural_path(project_root, child_key, child_value, stack)
+                    elif child_key in PATH_KEYED_MAPPING_FIELDS:
+                        _validate_path_keyed_mapping(project_root, child_key, child_value, stack)
                     elif child_key.endswith("_path") or child_key.endswith("_paths"):
                         raise MigrationError(f"unknown path-bearing field {child_key!r}")
                 _validate_record_paths(project_root, child_value, stack)
@@ -233,7 +245,11 @@ def _validate_record_paths(project_root: Path, value: object, stack: set[int]) -
 
 def _validate_singular_path(project_root: Path, key: str, value: object) -> None:
     """Validate one singular path field."""
-    if value is None or isinstance(value, (Mapping, list)):
+    if value is None:
+        if key in NULLABLE_PATH_FIELDS:
+            return
+        raise MigrationError(f"singular path field {key!r} requires one string path")
+    if isinstance(value, (Mapping, list)):
         raise MigrationError(f"singular path field {key!r} requires one string path")
     canonical_project_relative(project_root, value)
 
@@ -257,3 +273,106 @@ def _validate_plural_path(
         canonical_project_relative(project_root, item.get("path", item.get("relative_path"))) if mapping_entries else canonical_project_relative(project_root, item)
         if mapping_entries:
             _validate_record_paths(project_root, item, stack)
+
+
+def _validate_path_keyed_mapping(
+    project_root: Path, field: str, value: object, stack: set[int]
+) -> None:
+    """Validate a mapping whose keys identify concrete project artifacts.
+
+    Args:
+        project_root: Root used to resolve artifact paths.
+        field: Explicit path-keyed mapping field name.
+        value: Candidate digest or binding map.
+        stack: Active mapping/list identities used for alias-cycle detection.
+
+    Raises:
+        MigrationError: If keys are unsafe or values do not match the current
+            draft-preview digest/binding contracts.
+    """
+    if not isinstance(value, Mapping):
+        raise MigrationError(f"path-keyed mapping field {field!r} requires a mapping")
+    if not value:
+        raise MigrationError(f"path-keyed mapping field {field!r} must not be empty")
+    for raw_key, raw_value in value.items():
+        if not isinstance(raw_key, str):
+            raise MigrationError(f"path-keyed mapping {field!r} keys must be strings")
+        canonical_project_relative(project_root, raw_key)
+        if field == "artifact_digests":
+            _validate_digest(raw_value, f"artifact_digests[{raw_key!r}]")
+        else:
+            _validate_artifact_binding(project_root, raw_key, raw_value, stack)
+
+
+def _validate_digest(value: object, field: str) -> None:
+    """Require one lowercase hexadecimal SHA-256 digest."""
+    if (
+        not isinstance(value, str)
+        or len(value) != _SHA256_LENGTH
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise MigrationError(f"{field} must be a lowercase SHA-256 digest")
+
+
+def _validate_text(value: object, field: str) -> None:
+    """Require one trimmed non-empty text contract field."""
+    if not isinstance(value, str) or not value or value != value.strip():
+        raise MigrationError(f"{field} must be a trimmed non-empty string")
+
+
+def _validate_positive_int(value: object, field: str) -> None:
+    """Require one positive integer while rejecting booleans."""
+    if type(value) is not int or value <= 0:
+        raise MigrationError(f"{field} must be a positive integer")
+
+
+def _validate_artifact_binding(
+    project_root: Path, path_key: str, value: object, stack: set[int]
+) -> None:
+    """Validate one exact rendered-slide or contact-sheet binding."""
+    if not isinstance(value, Mapping):
+        raise MigrationError(f"artifact binding for {path_key!r} must be a mapping")
+    kind = value.get("kind")
+    if kind == "rendered_slide":
+        expected_fields = frozenset(
+            {
+                "kind",
+                "deck_id",
+                "slide_id",
+                "plan_version",
+                "plan_sha256",
+                "producer_id",
+                "slide_record_id",
+                "attempt",
+            }
+        )
+        if set(value) != expected_fields:
+            raise MigrationError(f"rendered artifact binding for {path_key!r} has non-canonical fields")
+        for field in ("deck_id", "slide_id", "producer_id", "slide_record_id"):
+            _validate_text(value.get(field), f"artifact_bindings[{path_key!r}].{field}")
+        _validate_positive_int(value.get("plan_version"), f"artifact_bindings[{path_key!r}].plan_version")
+        _validate_digest(value.get("plan_sha256"), f"artifact_bindings[{path_key!r}].plan_sha256")
+        _validate_positive_int(value.get("attempt"), f"artifact_bindings[{path_key!r}].attempt")
+        return
+    if kind == "contact_sheet":
+        expected_fields = frozenset(
+            {
+                "kind",
+                "deck_id",
+                "plan_version",
+                "plan_sha256",
+                "producer_id",
+                "source_paths",
+                "source_sha256",
+            }
+        )
+        if set(value) != expected_fields:
+            raise MigrationError(f"contact-sheet artifact binding for {path_key!r} has non-canonical fields")
+        for field in ("deck_id", "producer_id"):
+            _validate_text(value.get(field), f"artifact_bindings[{path_key!r}].{field}")
+        _validate_positive_int(value.get("plan_version"), f"artifact_bindings[{path_key!r}].plan_version")
+        _validate_digest(value.get("plan_sha256"), f"artifact_bindings[{path_key!r}].plan_sha256")
+        _validate_digest(value.get("source_sha256"), f"artifact_bindings[{path_key!r}].source_sha256")
+        _validate_plural_path(project_root, "source_paths", value.get("source_paths"), stack)
+        return
+    raise MigrationError(f"artifact binding for {path_key!r} has unsupported kind")
