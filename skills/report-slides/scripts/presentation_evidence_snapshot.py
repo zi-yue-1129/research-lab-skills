@@ -10,6 +10,7 @@ paths while projecting evidence.
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -32,6 +33,7 @@ from presentation_no_follow import (
     MissingPathError,
     NoFollowPathError,
     open_parent_no_follow,
+    read_stable_regular,
     read_regular_siblings,
 )
 
@@ -54,6 +56,25 @@ _EVENT_SHARD_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}\.jsonl$")
 
 class SnapshotError(MigrationError):
     """Raised when an immutable evidence snapshot cannot be built safely."""
+
+
+@dataclass(frozen=True)
+class PlanPreimage:
+    """One no-follow immutable preimage for a current approved plan.
+
+    Attributes:
+        path: Canonical project-relative plan path.
+        content: Exact plan bytes captured through its retained parent.
+        mode: Permission bits observed when the plan was captured.
+        mtime_ns: Nanosecond modification time observed when captured.
+        sha256: SHA-256 digest of ``content``.
+    """
+
+    path: str
+    content: bytes
+    mode: int
+    mtime_ns: int
+    sha256: str
 
 
 class _UniqueKeyLoader(yaml.SafeLoader):
@@ -91,6 +112,7 @@ class EvidenceSnapshot:
     events: tuple[Mapping[str, Any], ...]
     file_preimages: Mapping[Path, bytes]
     artifact_objects: Mapping[str, CasObject] = field(default_factory=dict)
+    active_plan_preimages: Mapping[str, PlanPreimage] = field(default_factory=dict)
 
 
 def build_snapshot(project_root: Path, *, locked: bool = False) -> EvidenceSnapshot:
@@ -125,6 +147,9 @@ def build_snapshot(project_root: Path, *, locked: bool = False) -> EvidenceSnaps
         file_preimages[root / relative_path] = content
     artifact_objects = _capture_artifact_objects(root, events, file_preimages)
     _capture_visual_review_preimages(root, events, file_preimages)
+    active_plan_preimages = _capture_active_plan_preimages(
+        root, stores, file_preimages
+    )
     return EvidenceSnapshot(
         project_root=root,
         schema_version=schema_version,
@@ -132,6 +157,7 @@ def build_snapshot(project_root: Path, *, locked: bool = False) -> EvidenceSnaps
         events=frozen_events,
         file_preimages=MappingProxyType(dict(file_preimages)),
         artifact_objects=MappingProxyType(dict(artifact_objects)),
+        active_plan_preimages=MappingProxyType(dict(active_plan_preimages)),
     )
 
 
@@ -449,6 +475,104 @@ def _parse_event_shards(
                 seen_ids.add(event_id)
             events.append(event)
     return events
+
+
+def _capture_active_plan_preimages(
+    project_root: Path,
+    stores: Mapping[str, Mapping[str, Mapping[str, Any]]],
+    file_preimages: dict[Path, bytes],
+) -> dict[str, PlanPreimage]:
+    """Capture every canonical plan selected by an approved current deck.
+
+    Args:
+        project_root: Canonical root used for no-follow plan reads.
+        stores: Parsed presentation-state stores from the same snapshot.
+        file_preimages: Mutable preimage map extended with plan bytes.
+
+    Returns:
+        Plan-ID-keyed no-follow preimages for active approved plans.
+
+    Raises:
+        SnapshotError: If an approved plan identity, path, or source file is
+            missing, noncanonical, special, symlinked, or changes while read.
+    """
+    decks = stores.get("decks", {})
+    plans = stores.get("plans", {})
+    preimages: dict[str, PlanPreimage] = {}
+    for deck_id in sorted(decks):
+        deck = decks[deck_id]
+        if not _has_approved_plan_context(deck):
+            continue
+        plan_id = deck.get("current_plan_id")
+        if not isinstance(plan_id, str) or not plan_id:
+            raise SnapshotError(f"approved deck {deck_id!r} requires current_plan_id")
+        plan = plans.get(plan_id)
+        if not isinstance(plan, Mapping):
+            raise SnapshotError(
+                f"approved deck {deck_id!r} current plan {plan_id!r} is unavailable"
+            )
+        if plan.get("id") != plan_id or plan.get("deck_id") != deck_id:
+            raise SnapshotError(f"approved deck {deck_id!r} plan identity is invalid")
+        try:
+            relative_path = canonical_relative_path(plan.get("plan_path"))
+        except MigrationError as exc:
+            raise SnapshotError(
+                f"approved plan {plan_id!r} path must be canonical"
+            ) from exc
+        existing = preimages.get(plan_id)
+        if existing is not None:
+            if existing.path != relative_path:
+                raise SnapshotError(f"approved plan {plan_id!r} paths are inconsistent")
+            continue
+        try:
+            anchored = open_parent_no_follow(
+                project_root, relative_path, create_parents=False
+            )
+            try:
+                content, metadata = read_stable_regular(anchored)
+            finally:
+                anchored.close()
+        except (MissingPathError, NoFollowPathError, OSError) as exc:
+            raise SnapshotError(
+                f"cannot snapshot current approved plan {relative_path}: {exc}"
+            ) from exc
+        preimage = PlanPreimage(
+            path=relative_path,
+            content=content,
+            mode=metadata.st_mode & 0o777,
+            mtime_ns=metadata.st_mtime_ns,
+            sha256=hashlib.sha256(content).hexdigest(),
+        )
+        preimages[plan_id] = preimage
+        file_preimages[project_root / relative_path] = content
+    return preimages
+
+
+def _has_approved_plan_context(deck: Mapping[str, Any]) -> bool:
+    """Return whether a deck declares any active approved-plan state.
+
+    Args:
+        deck: One parsed deck record from immutable state.
+
+    Returns:
+        True when the deck requires an immutable current plan capture.
+
+    Raises:
+        SnapshotError: If the approval fields use booleans or invalid types.
+    """
+    version = deck.get("approved_plan_version")
+    digest = deck.get("approved_plan_sha256")
+    if version is None and digest is None:
+        return False
+    if type(version) is not int or version <= 0:
+        raise SnapshotError("approved_plan_version must be a positive integer")
+    if (
+        not isinstance(digest, str)
+        or len(digest) != 64
+        or any(character not in "0123456789abcdef" for character in digest)
+    ):
+        raise SnapshotError("approved_plan_sha256 must be a SHA-256 digest")
+    return True
 
 
 def _capture_artifact_objects(

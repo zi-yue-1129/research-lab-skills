@@ -25,6 +25,10 @@ from presentation_evidence_contracts import (
 from presentation_evidence_snapshot import EvidenceSnapshot
 from validate_deck_plan import validate_deck_approval
 from validate_visual_review import derive_overall_status, validate_review_document
+from presentation_active_evidence import (  # noqa: F401 - public API re-export
+    ActiveEvidenceProjection,
+    project_active_evidence,
+)
 
 
 _SHA256_HEX = frozenset("0123456789abcdef")
