@@ -236,6 +236,160 @@ def test_legacy_journal_without_mtime_metadata_remains_recoverable(tmp_path: Pat
     assert target.stat().st_mode & 0o777 == 0o644
 
 
+@pytest.mark.parametrize(
+    ("content_kind", "content_value"),
+    [
+        ("missing", None),
+        ("null", None),
+        ("wrong-type", 7),
+        ("invalid-base64", "not-base64!"),
+    ],
+)
+def test_existing_journal_requires_exact_encoded_content_before_recovery(
+    tmp_path: Path,
+    content_kind: str,
+    content_value: object,
+) -> None:
+    """Malformed existing-file content cannot erase a target or its journal."""
+    target = tmp_path / ".research/presentations/state/slides.yaml"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"committed-after")
+    target.chmod(0o640)
+    entry = _journal_entry(
+        ".research/presentations/state/slides.yaml",
+        exists=True,
+        mode=0o644,
+    )
+    if content_kind == "missing":
+        del entry["content"]
+    else:
+        entry["content"] = content_value
+    journal = _write_journal(tmp_path, [entry])
+    target_before = _sentinel_snapshot(target)
+    journal_before = _sentinel_snapshot(journal)
+
+    with pytest.raises(TransactionError, match="content|bytes|journal"):
+        with WorkflowTransaction([], tmp_path):
+            pass
+
+    assert _sentinel_snapshot(target) == target_before
+    assert _sentinel_snapshot(journal) == journal_before
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("content", None),
+        ("content", "Ynl0ZXM="),
+        ("mode", None),
+        ("mode", 0o644),
+    ],
+)
+def test_absent_journal_requires_explicit_empty_content_and_zero_mode(
+    tmp_path: Path,
+    field: str,
+    value: object,
+) -> None:
+    """Absent-file preimages reject missing bytes or invented metadata."""
+    entry = _journal_entry(".research/presentations/state/slides.yaml")
+    if value is None:
+        del entry[field]
+    else:
+        entry[field] = value
+    journal = _write_journal(tmp_path, [entry])
+    journal_before = _sentinel_snapshot(journal)
+
+    with pytest.raises(TransactionError, match="content|mode|metadata|journal"):
+        with WorkflowTransaction([], tmp_path):
+            pass
+
+    assert _sentinel_snapshot(journal) == journal_before
+
+
+def test_cas_recovery_keeps_anchored_tree_across_regular_directory_rebind(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Recovery never restores or unlinks through a replacement research tree."""
+    project = tmp_path / "project"
+    project.mkdir()
+    digest = "d" * 64
+    target = (
+        project
+        / ".research/presentations/evidence/sha256"
+        / digest[:2]
+        / digest
+    )
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"original-before")
+    target.chmod(0o444)
+    monkeypatch.setenv("PRESENTATION_TRANSACTION_CRASH_AT", "1")
+    with pytest.raises(SimulatedProcessDeath, match="simulated process death"):
+        with WorkflowTransaction([target], project) as transaction:
+            transaction.stage_bytes(target, b"original-after", mode=0o444)
+            transaction.commit()
+    monkeypatch.delenv("PRESENTATION_TRANSACTION_CRASH_AT")
+    journal = next(
+        (project / ".research/presentations/transactions").glob("*.json")
+    )
+
+    replacement = project / ".research-replacement"
+    replacement_target = replacement / target.relative_to(project / ".research")
+    replacement_target.parent.mkdir(parents=True)
+    replacement_target.write_bytes(b"replacement-sentinel")
+    replacement_target.chmod(0o600)
+    replacement_journal_dir = replacement / "presentations/transactions"
+    replacement_journal_dir.mkdir(parents=True)
+    replacement_sentinel = replacement_journal_dir / "sentinel"
+    replacement_sentinel.write_bytes(b"replacement-journal-sentinel")
+    replacement_target_before = _sentinel_snapshot(replacement_target)
+    replacement_journal_before = _sentinel_snapshot(replacement_sentinel)
+    detached = project / ".research-original"
+    original_load = WorkflowTransaction._load_incomplete_journals
+    rebound = False
+
+    def load_then_rebind(
+        transaction: WorkflowTransaction,
+    ) -> list[tuple[Path, list[tuple[Path, object]]]]:
+        """Replace the live research tree after its journal has been loaded."""
+        nonlocal rebound
+        journals = original_load(transaction)
+        (project / ".research").rename(detached)
+        replacement.rename(project / ".research")
+        rebound = True
+        return journals  # type: ignore[return-value]
+
+    monkeypatch.setattr(
+        WorkflowTransaction,
+        "_load_incomplete_journals",
+        load_then_rebind,
+    )
+
+    failed_closed = False
+    try:
+        with WorkflowTransaction([], project):
+            pass
+    except TransactionError:
+        failed_closed = True
+
+    detached_target = detached / target.relative_to(project / ".research")
+    detached_journal = detached / journal.relative_to(project / ".research")
+    live_replacement_target = project / ".research" / target.relative_to(
+        project / ".research"
+    )
+    live_replacement_sentinel = (
+        project / ".research/presentations/transactions/sentinel"
+    )
+    assert rebound
+    assert _sentinel_snapshot(live_replacement_target) == replacement_target_before
+    assert _sentinel_snapshot(live_replacement_sentinel) == replacement_journal_before
+    if failed_closed:
+        assert detached_target.read_bytes() == b"original-after"
+        assert detached_journal.exists()
+    else:
+        assert detached_target.read_bytes() == b"original-before"
+        assert not detached_journal.exists()
+
+
 def _write_malformed_journal(project: Path) -> Path:
     """Write a validly named transaction journal with malformed JSON."""
     journal_dir = project / ".research/presentations/transactions"

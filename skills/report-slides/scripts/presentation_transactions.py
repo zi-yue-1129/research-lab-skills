@@ -20,7 +20,7 @@ import stat
 import time
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Sequence
 
@@ -30,7 +30,16 @@ from presentation_no_follow import (
     AnchoredPath,
     NoFollowPathError,
     acquire_sidecar as acquire_anchored_sidecar,
+    fsync_directory as _directory_fsync,
+    fsync_regular_file as _file_fsync,
+    open_parent_beneath,
     open_parent_no_follow,
+    read_regular_siblings,
+    read_stable_regular,
+    release_sidecar as _release_sidecar,
+    restore_regular,
+    sidecar_path as _sidecar,
+    temporary_path as _temporary_path,
     write_bytes_at,
 )
 
@@ -53,9 +62,7 @@ class SimulatedProcessDeath(BaseException):
 class _FileSnapshot:
     """Immutable bytes, mode, and optional mtime captured under a sidecar lock."""
 
-    def __init__(
-        self, exists: bool, content: bytes, mode: int, mtime_ns: int | None = None
-    ) -> None:
+    def __init__(self, exists: bool, content: bytes, mode: int, mtime_ns: int | None = None) -> None:
         self.exists = exists
         self.content = content
         self.mode = mode
@@ -69,11 +76,6 @@ class _FileStage:
         self.path = path
         self.temporary = temporary
         self.mode = mode
-
-
-def _sidecar(path: Path) -> Path:
-    """Return the repository-standard sidecar path for a data file."""
-    return path.with_suffix(path.suffix + ".lock")
 
 
 def _open_sidecar(path: Path) -> int:
@@ -139,41 +141,6 @@ def _acquire_sidecar(path: Path) -> int:
         raise
 
 
-def _release_sidecar(descriptor: int) -> None:
-    """Release one sidecar descriptor."""
-    fcntl.flock(descriptor, fcntl.LOCK_UN)
-    os.close(descriptor)
-
-
-def _directory_fsync(path: Path) -> None:
-    """Fsync a parent directory after replacing a file."""
-    descriptor = os.open(str(path), os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-
-
-def _file_fsync(path: Path) -> None:
-    """Fsync one restored regular file without following a symlink."""
-    if not hasattr(os, "O_NOFOLLOW"):
-        raise TransactionError(f"restored-file fsync requires os.O_NOFOLLOW: {path}")
-    descriptor = os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW)
-    try:
-        metadata = os.fstat(descriptor)
-        if not stat.S_ISREG(metadata.st_mode):
-            raise TransactionError(f"restored target must be a regular file: {path}")
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-
-
-def _temporary_path(path: Path) -> Path:
-    """Return a unique same-directory staging path."""
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
-    return path.with_name(f".{path.name}.transaction.{stamp}.{uuid.uuid4().hex[:8]}.tmp")
-
-
 def _path_key(path: Path) -> tuple[int, str]:
     """Return the repository-wide lock/write order for one data path."""
     priorities = {
@@ -183,15 +150,10 @@ def _path_key(path: Path) -> tuple[int, str]:
         ".gitignore": 90,
     }
     cas_parts = path.parts
-    is_cas_object = (
-        len(cas_parts) >= 6
-        and cas_parts[-6:-2]
-        == (".research", "presentations", "evidence", "sha256")
+    is_cas_object = len(cas_parts) >= 6 and cas_parts[-6:-2] == (
+        ".research", "presentations", "evidence", "sha256"
     )
-    priority = priorities.get(
-        path.name,
-        85 if is_cas_object else 80 if path.suffix == ".jsonl" else 100,
-    )
+    priority = priorities.get(path.name, 85 if is_cas_object else 80 if path.suffix == ".jsonl" else 100)
     return priority, str(path)
 
 
@@ -211,8 +173,8 @@ def _journal_dir(project_root: Path) -> Path:
 
 
 _ALLOWED_STATE_NAMES = frozenset({
-    "decks.yaml", "plans.yaml", "slides.yaml", "visual_modules.yaml",
-    "assignments.yaml", "artifacts.yaml", "revision_requests.yaml",
+    "decks.yaml", "plans.yaml", "slides.yaml", "visual_modules.yaml", "assignments.yaml",
+    "artifacts.yaml", "revision_requests.yaml",
 })
 _EVENT_SHARD_PATTERN = re.compile(r"\.research/presentations/events/(\d{4}-\d{2}-\d{2})\.jsonl")
 _PLAN_DESTINATION_PATTERN = re.compile(r"decks/[^/]+/plans/plan-v\d{4}\.yaml")
@@ -352,10 +314,15 @@ def _encode_snapshot(project_root: Path, path: Path, snapshot: _FileSnapshot) ->
     return encoded
 
 
-def _decode_journal(project_root: Path, path: Path) -> tuple[str, list[tuple[Path, _FileSnapshot]]]:
+def _decode_journal(
+    project_root: Path,
+    path: Path,
+    raw_content: bytes | None = None,
+) -> tuple[str, list[tuple[Path, _FileSnapshot]]]:
     """Decode one journal and reject malformed recovery metadata."""
     try:
-        document = json.loads(path.read_text(encoding="utf-8"))
+        text = path.read_text(encoding="utf-8") if raw_content is None else raw_content.decode("utf-8")
+        document = json.loads(text)
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise TransactionError(f"invalid transaction journal {path}: {exc}") from exc
     if not isinstance(document, dict):
@@ -369,14 +336,17 @@ def _decode_journal(project_root: Path, path: Path) -> tuple[str, list[tuple[Pat
     decoded: list[tuple[Path, _FileSnapshot]] = []
     seen_paths: set[Path] = set()
     for entry in entries:
-        if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
+        required_fields = {"path", "exists", "mode", "content"}
+        if not isinstance(entry, dict) or not required_fields.issubset(entry):
+            raise TransactionError(f"invalid transaction journal entry: {path}")
+        if not isinstance(entry["path"], str):
             raise TransactionError(f"invalid transaction journal entry: {path}")
         target = _validate_journal_target(project_root, entry["path"])
         if target in seen_paths:
             raise TransactionError(f"duplicate transaction journal path: {path}")
         seen_paths.add(target)
         try:
-            encoded_content = entry.get("content", "")
+            encoded_content = entry["content"]
             if not isinstance(encoded_content, str):
                 raise TypeError("content must be base64 text")
             content = base64.b64decode(encoded_content, validate=True)
@@ -409,7 +379,10 @@ def _decode_journal(project_root: Path, path: Path) -> tuple[str, list[tuple[Pat
     return transaction_id, decoded
 
 
-def _load_validated_journals(project_root: Path) -> list[tuple[Path, list[tuple[Path, _FileSnapshot]]]]:
+def _load_validated_journals(
+    project_root: Path,
+    anchored_documents: Mapping[str, bytes] | None = None,
+) -> list[tuple[Path, list[tuple[Path, _FileSnapshot]]]]:
     """Read and validate every pending journal before data locking.
 
     Args:
@@ -423,15 +396,26 @@ def _load_validated_journals(project_root: Path) -> list[tuple[Path, list[tuple[
     """
     journals: list[tuple[Path, list[tuple[Path, _FileSnapshot]]]] = []
     journal_directory = _journal_dir(project_root)
-    for journal in incomplete_transaction_journals(project_root):
+    journal_names = (
+        [journal.name for journal in incomplete_transaction_journals(project_root)]
+        if anchored_documents is None
+        else sorted(anchored_documents)
+    )
+    for journal_name in journal_names:
+        journal = journal_directory / journal_name
         _validate_journal_filename(journal)
         if journal.parent != journal_directory:
             raise TransactionError(f"transaction journal is outside its directory: {journal}")
-        try:
-            journal.resolve(strict=True).relative_to(journal_directory.resolve())
-        except (OSError, ValueError) as exc:
-            raise TransactionError(f"transaction journal escapes its directory: {journal}") from exc
-        transaction_id, entries = _decode_journal(project_root, journal)
+        if anchored_documents is None:
+            try:
+                journal.resolve(strict=True).relative_to(journal_directory.resolve())
+            except (OSError, ValueError) as exc:
+                raise TransactionError(f"transaction journal escapes its directory: {journal}") from exc
+        transaction_id, entries = _decode_journal(
+            project_root,
+            journal,
+            None if anchored_documents is None else anchored_documents[journal_name],
+        )
         if transaction_id != journal.stem:
             raise TransactionError(
                 f"transaction journal transaction_id does not match filename stem: {journal}"
@@ -500,6 +484,9 @@ class WorkflowTransaction:
         self._stages: dict[Path, _FileStage] = {}
         self._unsafe_cas_paths: set[Path] = set()
         self._cas_anchors: dict[Path, AnchoredPath] = {}
+        self._recovery_anchors: dict[Path, AnchoredPath] = {}
+        self._root_anchor: AnchoredPath | None = None
+        self._presentations_anchor: AnchoredPath | None = None
         self._journal_anchor: AnchoredPath | None = None
         self._journal: Path | None = None
         self._committed = False
@@ -507,36 +494,45 @@ class WorkflowTransaction:
     def __enter__(self) -> "WorkflowTransaction":
         """Acquire every sidecar lock and capture bytes before reading state."""
         try:
+            self._root_anchor = open_parent_no_follow(
+                self.project_root,
+                ".transaction-root-anchor",
+                create_parents=False,
+            )
+            self._presentations_anchor = open_parent_beneath(
+                self._root_anchor,
+                ".research/presentations/.presentations-anchor",
+                create_parents=True,
+            )
+            self._journal_anchor = open_parent_beneath(
+                self._presentations_anchor,
+                "transactions/.journal-anchor",
+                create_parents=True,
+            )
             journals = self._load_incomplete_journals()
             journal_paths = [path for _, entries in journals for path, _ in entries]
             self._lock_paths = tuple(sorted(set(self.paths) | set(journal_paths), key=_path_key))
-            if any(
-                _is_cas_transaction_path(self.project_root, path)
-                for path in self._lock_paths
-            ):
-                self._journal_anchor = open_parent_no_follow(
-                    self.project_root,
-                    ".research/presentations/transactions/.journal-anchor",
-                    create_parents=True,
-                )
+            for path in journal_paths:
+                anchored = self._anchor_recovery_path(path)
+                if _is_cas_transaction_path(self.project_root, path):
+                    self._cas_anchors[path] = anchored
+                else:
+                    self._recovery_anchors[path] = anchored
             for path in self._lock_paths:
                 if _is_cas_transaction_path(self.project_root, path):
-                    relative = path.relative_to(self.project_root).as_posix()
-                    anchored = open_parent_no_follow(
-                        self.project_root,
-                        relative,
-                        create_parents=True,
-                    )
-                    self._cas_anchors[path] = anchored
+                    anchored = self._cas_anchors.get(path)
+                    if anchored is None:
+                        anchored = self._anchor_recovery_path(path)
+                        self._cas_anchors[path] = anchored
                     timeout = int(
-                        os.environ.get(
-                            "PRESENTATION_STATE_LOCK_TIMEOUT_SECONDS",
-                            "30",
-                        )
+                        os.environ.get("PRESENTATION_STATE_LOCK_TIMEOUT_SECONDS", "30")
                     )
-                    self._descriptors.append(
-                        acquire_anchored_sidecar(anchored, timeout)
+                    self._descriptors.append(acquire_anchored_sidecar(anchored, timeout))
+                elif path in self._recovery_anchors:
+                    timeout = int(
+                        os.environ.get("PRESENTATION_STATE_LOCK_TIMEOUT_SECONDS", "30")
                     )
+                    self._descriptors.append(acquire_anchored_sidecar(self._recovery_anchors[path], timeout))
                 else:
                     self._descriptors.append(_acquire_sidecar(path))
             self._recover_journals(journals)
@@ -573,8 +569,31 @@ class WorkflowTransaction:
             raise TransactionError(f"rollback_cleanup_failed: {detail}")
 
     def _load_incomplete_journals(self) -> list[tuple[Path, list[tuple[Path, _FileSnapshot]]]]:
-        """Read all pending journals before acquiring any data locks."""
-        return _load_validated_journals(self.project_root)
+        """Read pending journals through the retained journal directory."""
+        if self._journal_anchor is None:
+            raise TransactionError("journal directory must be anchored before loading")
+        documents = read_regular_siblings(self._journal_anchor)
+        return _load_validated_journals(self.project_root, documents)
+
+    def _anchor_recovery_path(self, path: Path) -> AnchoredPath:
+        """Anchor a recovery target beneath the retained project hierarchy."""
+        relative = path.relative_to(self.project_root).as_posix()
+        prefix = ".research/presentations/"
+        if relative.startswith(prefix):
+            if self._presentations_anchor is None:
+                raise TransactionError("presentations directory is not anchored")
+            return open_parent_beneath(
+                self._presentations_anchor,
+                relative[len(prefix):],
+                create_parents=True,
+            )
+        if self._root_anchor is None:
+            raise TransactionError("project directory is not anchored")
+        return open_parent_beneath(
+            self._root_anchor,
+            relative,
+            create_parents=True,
+        )
 
     def _recover_journals(self, journals: Sequence[tuple[Path, list[tuple[Path, _FileSnapshot]]]]) -> None:
         """Restore and remove pending journal preimages under held locks."""
@@ -582,7 +601,8 @@ class WorkflowTransaction:
         for journal, entries in journals:
             try:
                 for path, snapshot in sorted(entries, key=lambda item: _path_key(item[0])):
-                    self._restore_snapshot(path, snapshot)
+                    anchored = self._cas_anchors.get(path) or self._recovery_anchors[path]
+                    self._restore_anchored_snapshot(path, snapshot, anchored)
                 if self._journal_anchor is not None:
                     os.unlink(journal.name, dir_fd=self._journal_anchor.parent_fd)
                     self._journal_anchor.fsync_parent()
@@ -746,28 +766,12 @@ class WorkflowTransaction:
         if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
             self._unsafe_cas_paths.add(path)
             return _FileSnapshot(False, b"", 0)
-        descriptor = anchored.open_leaf(os.O_RDONLY)
         try:
-            opened = os.fstat(descriptor)
-            if not stat.S_ISREG(opened.st_mode):
-                self._unsafe_cas_paths.add(path)
-                return _FileSnapshot(False, b"", 0)
-            chunks: list[bytes] = []
-            while True:
-                chunk = os.read(descriptor, 64 * 1024)
-                if not chunk:
-                    break
-                chunks.append(chunk)
-            closed = os.fstat(descriptor)
-        finally:
-            os.close(descriptor)
-        opened_identity = (opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns, opened.st_ctime_ns)
-        closed_identity = (closed.st_dev, closed.st_ino, closed.st_size, closed.st_mtime_ns, closed.st_ctime_ns)
-        if opened_identity != closed_identity:
-            raise TransactionError(f"CAS object changed while capturing preimage: {path}")
-        content = b"".join(chunks)
-        if len(content) != opened.st_size:
-            raise TransactionError(f"CAS object short read while capturing preimage: {path}")
+            content, opened = read_stable_regular(anchored)
+        except NoFollowPathError as exc:
+            raise TransactionError(
+                f"CAS object changed while capturing preimage: {path}"
+            ) from exc
         return _FileSnapshot(True, content, opened.st_mode & 0o777, opened.st_mtime_ns)
 
     def _notify_locked(self) -> None:
@@ -819,7 +823,7 @@ class WorkflowTransaction:
     def _restore_snapshot(self, path: Path, snapshot: _FileSnapshot) -> None:
         """Restore one preimage exactly, including existence and mode."""
         if _is_cas_transaction_path(self.project_root, path):
-            self._restore_cas_snapshot(path, snapshot)
+            self._restore_anchored_snapshot(path, snapshot, self._cas_anchors[path])
             return
         if not snapshot.exists:
             if path.exists():
@@ -848,48 +852,31 @@ class WorkflowTransaction:
             _file_fsync(path)
             _directory_fsync(path.parent)
 
-    def _restore_cas_snapshot(self, path: Path, snapshot: _FileSnapshot) -> None:
-        """Restore one CAS preimage through the retained parent descriptor."""
-        anchored = self._cas_anchors[path]
-        metadata = anchored.stat_leaf()
-        if metadata is not None and (
-            stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode)
-        ):
-            raise TransactionError(
-                f"CAS recovery target must be a regular no-follow file: {path}"
-            )
-        if not snapshot.exists:
-            if metadata is not None:
-                anchored.unlink_leaf()
-                anchored.fsync_parent()
-            return
-        temporary = _temporary_path(path)
+    def _restore_anchored_snapshot(
+        self,
+        path: Path,
+        snapshot: _FileSnapshot,
+        anchored: AnchoredPath,
+    ) -> None:
+        """Restore one preimage through the retained parent descriptor."""
         try:
-            write_bytes_at(
+            restore_regular(
                 anchored,
-                temporary.name,
-                snapshot.content,
-                snapshot.mode,
-                exact_mode=True,
+                _temporary_path(path).name,
+                exists=snapshot.exists,
+                content=snapshot.content,
+                mode=snapshot.mode,
+                mtime_ns=snapshot.mtime_ns,
             )
-            anchored.replace_leaf(temporary.name)
-        except BaseException:
-            self._remove_temporary_for_path(path, temporary)
-            raise
-        anchored.fsync_parent()
-        if snapshot.mtime_ns is not None:
-            os.utime(
-                anchored.leaf_name,
-                ns=(snapshot.mtime_ns, snapshot.mtime_ns),
-                dir_fd=anchored.parent_fd,
-                follow_symlinks=False,
+        except NoFollowPathError as exc:
+            target_kind = (
+                "CAS recovery target"
+                if _is_cas_transaction_path(self.project_root, path)
+                else "recovery target"
             )
-            descriptor = anchored.open_leaf(os.O_RDONLY)
-            try:
-                os.fsync(descriptor)
-            finally:
-                os.close(descriptor)
-            anchored.fsync_parent()
+            raise TransactionError(
+                f"{target_kind} must be a regular no-follow file: {path}"
+            ) from exc
 
     def _write_journal(self, stages: Sequence[_FileStage]) -> None:
         """Persist exact preimages before the first visible replacement."""
@@ -984,9 +971,18 @@ class WorkflowTransaction:
         for anchored in self._cas_anchors.values():
             anchored.close()
         self._cas_anchors.clear()
+        for anchored in self._recovery_anchors.values():
+            anchored.close()
+        self._recovery_anchors.clear()
         if self._journal_anchor is not None:
             self._journal_anchor.close()
             self._journal_anchor = None
+        if self._presentations_anchor is not None:
+            self._presentations_anchor.close()
+            self._presentations_anchor = None
+        if self._root_anchor is not None:
+            self._root_anchor.close()
+            self._root_anchor = None
 
 
 @contextmanager

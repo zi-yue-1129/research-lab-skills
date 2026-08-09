@@ -13,7 +13,9 @@ import fcntl
 import os
 import stat
 import time
+import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -104,6 +106,45 @@ class AnchoredPath:
         os.fsync(self.parent_fd)
 
 
+def sidecar_path(path: Path) -> Path:
+    """Return the stable sibling sidecar path for one data file."""
+    return path.with_suffix(path.suffix + ".lock")
+
+
+def temporary_path(path: Path) -> Path:
+    """Return a unique same-directory transaction staging path."""
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
+    return path.with_name(f".{path.name}.transaction.{stamp}.{uuid.uuid4().hex[:8]}.tmp")
+
+
+def release_sidecar(descriptor: int) -> None:
+    """Release and close one locked sidecar descriptor."""
+    fcntl.flock(descriptor, fcntl.LOCK_UN)
+    os.close(descriptor)
+
+
+def fsync_directory(path: Path) -> None:
+    """Fsync one directory after a visible filesystem change."""
+    descriptor = os.open(str(path), os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def fsync_regular_file(path: Path) -> None:
+    """Fsync one regular file without following its leaf symlink."""
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise NoFollowPathError(f"file fsync requires os.O_NOFOLLOW: {path}")
+    descriptor = os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise NoFollowPathError(f"fsync target must be a regular file: {path}")
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def open_parent_no_follow(
     project_root: Path,
     relative_path: str,
@@ -133,39 +174,163 @@ def open_parent_no_follow(
         raise NoFollowPathError(
             f"cannot open project root without following symlinks: {root}"
         ) from exc
+    return _walk_parent(
+        current_fd,
+        root,
+        parts,
+        directory_flags,
+        create_parents=create_parents,
+    )
+
+
+def open_parent_beneath(
+    directory_anchor: AnchoredPath,
+    relative_path: str,
+    *,
+    create_parents: bool,
+) -> AnchoredPath:
+    """Anchor a relative leaf beneath an already-retained directory.
+
+    Args:
+        directory_anchor: Anchor whose parent descriptor is the trusted base.
+        relative_path: Canonical POSIX path relative to that base directory.
+        create_parents: Whether missing parent components should be created.
+
+    Returns:
+        An anchored leaf beneath the same retained directory hierarchy.
+    """
+    parts = _canonical_parts(relative_path)
+    current_fd = os.dup(directory_anchor.parent_fd)
+    return _walk_parent(
+        current_fd,
+        directory_anchor.display_path.parent,
+        parts,
+        _directory_flags(),
+        create_parents=create_parents,
+    )
+
+
+def read_regular_siblings(directory_anchor: AnchoredPath) -> dict[str, bytes]:
+    """Read every regular sibling through one retained directory descriptor.
+
+    Args:
+        directory_anchor: Anchor whose parent directory should be enumerated.
+
+    Returns:
+        A name-to-bytes map for every directory entry.
+
+    Raises:
+        NoFollowPathError: If an entry is not a stable regular no-follow file.
+    """
+    contents: dict[str, bytes] = {}
+    for name in os.listdir(directory_anchor.parent_fd):
+        _require_leaf_name(name)
+        sibling = AnchoredPath(
+            directory_anchor.parent_fd,
+            name,
+            directory_anchor.display_path.with_name(name),
+        )
+        contents[name], _ = read_stable_regular(sibling)
+    return contents
+
+
+def read_stable_regular(anchored: AnchoredPath) -> tuple[bytes, os.stat_result]:
+    """Read a stable regular leaf through its retained parent descriptor.
+
+    Args:
+        anchored: Anchored leaf to read.
+
+    Returns:
+        Exact content and opened-file metadata.
+
+    Raises:
+        NoFollowPathError: If the leaf is not regular or changes while read.
+    """
+    descriptor = anchored.open_leaf(os.O_RDONLY)
     try:
-        root_metadata = os.fstat(current_fd)
-        if not stat.S_ISDIR(root_metadata.st_mode):
-            raise NoFollowPathError(f"project root must be a directory: {root}")
-        for component in parts[:-1]:
-            if create_parents:
-                try:
-                    os.mkdir(component, mode=0o777, dir_fd=current_fd)
-                except FileExistsError:
-                    pass
-            try:
-                next_fd = os.open(component, directory_flags, dir_fd=current_fd)
-            except OSError as exc:
-                if exc.errno == errno.ENOENT and not create_parents:
-                    raise MissingPathError(
-                        f"missing directory component: {root / relative_path}"
-                    ) from exc
-                if exc.errno in (
-                    errno.ELOOP,
-                    errno.ENOTDIR,
-                    errno.EACCES,
-                ):
-                    raise NoFollowPathError(
-                        "directory component must be no-follow and regular: "
-                        f"{root / relative_path}"
-                    ) from exc
-                raise
-            os.close(current_fd)
-            current_fd = next_fd
-        return AnchoredPath(current_fd, parts[-1], root / relative_path)
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode):
+            raise NoFollowPathError(
+                f"leaf must be a regular file: {anchored.display_path}"
+            )
+        chunks: list[bytes] = []
+        while True:
+            chunk = os.read(descriptor, 64 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        closed = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    content = b"".join(chunks)
+    opened_identity = _file_identity(opened)
+    if opened_identity != _file_identity(closed) or len(content) != opened.st_size:
+        raise NoFollowPathError(f"leaf changed while reading: {anchored.display_path}")
+    return content, opened
+
+
+def restore_regular(
+    anchored: AnchoredPath,
+    temporary_name: str,
+    *,
+    exists: bool,
+    content: bytes,
+    mode: int,
+    mtime_ns: int | None,
+) -> None:
+    """Restore one exact regular-file preimage through an anchored parent.
+
+    Args:
+        anchored: Retained parent and target leaf.
+        temporary_name: Unique sibling used for atomic replacement.
+        exists: Whether the preimage target existed.
+        content: Exact preimage bytes.
+        mode: Exact preimage permission bits.
+        mtime_ns: Optional exact preimage modification time.
+
+    Raises:
+        NoFollowPathError: If an existing target is not a regular file.
+        OSError: If restoration or durability synchronization fails.
+    """
+    metadata = anchored.stat_leaf()
+    if metadata is not None and not stat.S_ISREG(metadata.st_mode):
+        raise NoFollowPathError(
+            f"recovery target must be a regular no-follow file: {anchored.display_path}"
+        )
+    if not exists:
+        if metadata is not None:
+            anchored.unlink_leaf()
+            anchored.fsync_parent()
+        return
+    try:
+        write_bytes_at(
+            anchored,
+            temporary_name,
+            content,
+            mode,
+            exact_mode=True,
+        )
+        anchored.replace_leaf(temporary_name)
     except BaseException:
-        os.close(current_fd)
+        try:
+            os.unlink(temporary_name, dir_fd=anchored.parent_fd)
+        except FileNotFoundError:
+            pass
         raise
+    anchored.fsync_parent()
+    if mtime_ns is not None:
+        os.utime(
+            anchored.leaf_name,
+            ns=(mtime_ns, mtime_ns),
+            dir_fd=anchored.parent_fd,
+            follow_symlinks=False,
+        )
+        descriptor = anchored.open_leaf(os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        anchored.fsync_parent()
 
 
 def write_bytes_at(
@@ -300,6 +465,59 @@ def _write_all(descriptor: int, content: bytes, display_path: Path) -> None:
         if written <= 0:
             raise OSError(f"short write while staging {display_path}")
         offset += written
+
+
+def _walk_parent(
+    current_fd: int,
+    display_root: Path,
+    parts: tuple[str, ...],
+    directory_flags: int,
+    *,
+    create_parents: bool,
+) -> AnchoredPath:
+    """Walk parent components from an owned starting directory descriptor."""
+    display_path = display_root.joinpath(*parts)
+    try:
+        if not stat.S_ISDIR(os.fstat(current_fd).st_mode):
+            raise NoFollowPathError(
+                f"anchored root must be a directory: {display_root}"
+            )
+        for component in parts[:-1]:
+            if create_parents:
+                try:
+                    os.mkdir(component, mode=0o777, dir_fd=current_fd)
+                except FileExistsError:
+                    pass
+            try:
+                next_fd = os.open(component, directory_flags, dir_fd=current_fd)
+            except OSError as exc:
+                if exc.errno == errno.ENOENT and not create_parents:
+                    raise MissingPathError(
+                        f"missing directory component: {display_path}"
+                    ) from exc
+                if exc.errno in (errno.ELOOP, errno.ENOTDIR, errno.EACCES):
+                    raise NoFollowPathError(
+                        "directory component must be no-follow and regular: "
+                        f"{display_path}"
+                    ) from exc
+                raise
+            os.close(current_fd)
+            current_fd = next_fd
+        return AnchoredPath(current_fd, parts[-1], display_path)
+    except BaseException:
+        os.close(current_fd)
+        raise
+
+
+def _file_identity(metadata: os.stat_result) -> tuple[int, int, int, int, int]:
+    """Return fields that reveal replacement or mutation during a read."""
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
 
 
 def _canonical_parts(relative_path: str) -> tuple[str, ...]:
