@@ -788,16 +788,34 @@ git commit -m "test(report-slides): verify evidence v2 workflow"
 
 ## Per-task Review Gate
 
+### Cost-aware model policy
+
+- Tasks 1 through 7 use a fresh `gpt-5.6-terra` implementer at `xhigh` reasoning.
+- Task 8 documentation and acceptance integration uses `gpt-5.6-terra` at
+  `high`, escalating to `xhigh` only if integration debugging is required.
+- Every task receives an independent `gpt-5.6-terra` reviewer at `high`.
+- `gpt-5.6-sol` at `xhigh` is reserved for four milestone reviews: after
+  Tasks 2, 5, 7, and the final Task 8 acceptance result.
+- Luna may run deterministic test commands and assemble reports, but it does
+  not modify production code or adjudicate findings.
+- If the same Critical or Important issue survives two Terra implementation
+  rounds, escalate the next implementation round to `gpt-5.6-sol` at `xhigh`.
+- The ordinary five-round SDD breaker remains in force; model escalation does
+  not authorize extra rounds.
+
 After each task:
 
 1. The implementer records RED, GREEN, focused/full compatibility as required,
    static checks, line counts, commit hash, and concerns in the SDD task report.
-2. A different Sol xhigh reviewer performs read-only spec and quality review.
-3. Critical or Important findings return to a fresh Sol xhigh implementer with
-   strict RED before fixes.
+2. A different Terra high reviewer performs read-only spec and quality review.
+3. Critical or Important findings return to the Terra xhigh implementer with
+   strict RED before fixes; use the approved Sol escalation only after the same
+   issue survives two Terra implementation rounds.
 4. Do not begin the next task until the current task has no Critical or Important
    findings.
-5. Minor findings are recorded in the ledger and deferred only when they do not
+5. After Tasks 2, 5, and 7, a separate Sol xhigh milestone reviewer checks the
+   integrated contract before the next task begins.
+6. Minor findings are recorded in the ledger and deferred only when they do not
    weaken the evidence or transaction contract.
 
 ## Final Completion Gate
@@ -810,5 +828,6 @@ Task 8 schema-v2 rollout is complete only when:
 - no touched file exceeds 999 lines;
 - Ruff, compileall, import-cycle, and diff checks pass;
 - the linked worktree is clean;
-- an independent Sol xhigh final review reports zero Critical and zero Important;
+- an independent Sol xhigh final milestone review reports zero Critical and
+  zero Important;
 - the SDD ledger records the commit range and verification evidence.
