@@ -174,7 +174,16 @@ def _path_key(path: Path) -> tuple[int, str]:
         "artifacts.yaml": 60, "revision_requests.yaml": 70,
         ".gitignore": 90,
     }
-    priority = priorities.get(path.name, 80 if path.suffix == ".jsonl" else 100)
+    cas_parts = path.parts
+    is_cas_object = (
+        len(cas_parts) >= 6
+        and cas_parts[-6:-2]
+        == (".research", "presentations", "evidence", "sha256")
+    )
+    priority = priorities.get(
+        path.name,
+        85 if is_cas_object else 80 if path.suffix == ".jsonl" else 100,
+    )
     return priority, str(path)
 
 
@@ -199,6 +208,9 @@ _ALLOWED_STATE_NAMES = frozenset({
 })
 _EVENT_SHARD_PATTERN = re.compile(r"\.research/presentations/events/(\d{4}-\d{2}-\d{2})\.jsonl")
 _PLAN_DESTINATION_PATTERN = re.compile(r"decks/[^/]+/plans/plan-v\d{4}\.yaml")
+_CAS_DESTINATION_PATTERN = re.compile(
+    r"\.research/presentations/evidence/sha256/([0-9a-f]{2})/([0-9a-f]{64})"
+)
 _JOURNAL_FILENAME_PATTERN = re.compile(r"[0-9a-f]{32}\.json")
 
 
@@ -222,15 +234,20 @@ def _canonical_journal_relative_path(raw_path: object) -> str:
 
 
 def _validate_journal_target(project_root: Path, raw_path: object) -> Path:
-    """Validate an allowlisted state/event target without touching the filesystem."""
+    """Validate an allowlisted state, event, plan, or CAS target."""
     relative = _canonical_journal_relative_path(raw_path)
     state_prefix = ".research/presentations/state/"
+    cas_match = _CAS_DESTINATION_PATTERN.fullmatch(relative)
     if relative.startswith(state_prefix):
         name = relative[len(state_prefix):]
         if name not in _ALLOWED_STATE_NAMES:
             raise TransactionError(f"journal path is not an allowed state store: {relative}")
     elif _PLAN_DESTINATION_PATTERN.fullmatch(relative):
         pass
+    elif cas_match is not None:
+        shard, digest = cas_match.groups()
+        if shard != digest[:2]:
+            raise TransactionError(f"journal CAS path shard does not match digest: {relative}")
     else:
         match = _EVENT_SHARD_PATTERN.fullmatch(relative)
         if match is None:
@@ -261,6 +278,15 @@ def _project_relative_path(project_root: Path, path: Path) -> str:
         raise TransactionError(f"transaction path escapes project root: {path}") from exc
     _validate_journal_target(root, relative)
     return relative
+
+
+def _is_cas_transaction_path(project_root: Path, path: Path) -> bool:
+    """Return whether one lexical transaction path is a canonical CAS object."""
+    try:
+        relative = path.relative_to(project_root).as_posix()
+    except ValueError:
+        return False
+    return _CAS_DESTINATION_PATTERN.fullmatch(relative) is not None
 
 
 def _validate_journal_filename(path: Path) -> None:
@@ -409,16 +435,21 @@ def _write_fsync(path: Path, content: bytes, mode: int) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
     try:
-        with os.fdopen(descriptor, "wb") as handle:
-            handle.write(content)
-            handle.flush()
-            os.fsync(handle.fileno())
+        offset = 0
+        while offset < len(content):
+            written = os.write(descriptor, content[offset:])
+            if written <= 0:
+                raise OSError(f"short write while staging {path}")
+            offset += written
+        os.fsync(descriptor)
     except BaseException:
+        os.close(descriptor)
         try:
             path.unlink()
         except OSError:
             pass
         raise
+    os.close(descriptor)
     _directory_fsync(path.parent)
 
 
@@ -433,13 +464,23 @@ class WorkflowTransaction:
             project_root: Optional root used to locate crash-recovery journals.
         """
         self.project_root = (project_root or _infer_project_root(paths)).resolve()
-        self.paths = tuple(sorted({Path(path).resolve() for path in paths}, key=_path_key))
+        selected_paths: set[Path] = set()
+        for raw_path in paths:
+            supplied = Path(raw_path)
+            candidate = supplied if supplied.is_absolute() else self.project_root / supplied
+            _project_relative_path(self.project_root, candidate)
+            if _is_cas_transaction_path(self.project_root, candidate):
+                selected_paths.add(candidate)
+            else:
+                selected_paths.add(candidate.resolve())
+        self.paths = tuple(sorted(selected_paths, key=_path_key))
         for path in self.paths:
             _project_relative_path(self.project_root, path)
         self._lock_paths: tuple[Path, ...] = self.paths
         self._descriptors: list[int] = []
         self._snapshots: dict[Path, _FileSnapshot] = {}
         self._stages: dict[Path, _FileStage] = {}
+        self._unsafe_cas_paths: set[Path] = set()
         self._journal: Path | None = None
         self._committed = False
 
@@ -453,7 +494,9 @@ class WorkflowTransaction:
                 self._descriptors.append(_acquire_sidecar(path))
             self._recover_journals(journals)
             for path in self.paths:
-                if path.is_file():
+                if _is_cas_transaction_path(self.project_root, path):
+                    self._snapshots[path] = self._capture_cas_snapshot(path)
+                elif path.is_file():
                     stat_result = path.stat()
                     self._snapshots[path] = _FileSnapshot(
                         True, path.read_bytes(), stat_result.st_mode & 0o777, stat_result.st_mtime_ns
@@ -533,6 +576,8 @@ class WorkflowTransaction:
     def stage_bytes(self, path: Path, content: bytes, mode: int | None = None) -> None:
         """Stage bytes for one selected file with fsync and its original mode."""
         self._assert_path(path)
+        if path in self._unsafe_cas_paths:
+            raise TransactionError(f"unsafe CAS target cannot be staged: {path}")
         snapshot = self._snapshots[path]
         target_mode = _validate_mode(mode, path) if mode is not None else (snapshot.mode if snapshot.exists else 0o666)
         temporary = _temporary_path(path)
@@ -572,6 +617,9 @@ class WorkflowTransaction:
         if self._committed:
             raise TransactionError("transaction already committed")
         ordered_stages = [self._stages[path] for path in sorted(self._stages, key=_path_key)]
+        if not ordered_stages:
+            self._committed = True
+            return
         try:
             self._before_commit()
             self._write_journal(ordered_stages)
@@ -597,6 +645,50 @@ class WorkflowTransaction:
         """Reject unselected files before reading or staging them."""
         if path not in self._snapshots:
             raise ValueError(f"Path is outside transaction: {path}")
+
+    def _capture_cas_snapshot(self, path: Path) -> _FileSnapshot:
+        """Capture a CAS preimage without following an unsafe object symlink."""
+        try:
+            metadata = os.lstat(path)
+        except FileNotFoundError:
+            return _FileSnapshot(False, b"", 0)
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+            self._unsafe_cas_paths.add(path)
+            return _FileSnapshot(False, b"", 0)
+        if not hasattr(os, "O_NOFOLLOW"):
+            raise TransactionError(f"CAS snapshots require os.O_NOFOLLOW: {path}")
+        descriptor = os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW)
+        try:
+            opened = os.fstat(descriptor)
+            if not stat.S_ISREG(opened.st_mode):
+                self._unsafe_cas_paths.add(path)
+                return _FileSnapshot(False, b"", 0)
+            chunks: list[bytes] = []
+            while True:
+                chunk = os.read(descriptor, 64 * 1024)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            closed = os.fstat(descriptor)
+        finally:
+            os.close(descriptor)
+        if (
+            opened.st_dev != closed.st_dev
+            or opened.st_ino != closed.st_ino
+            or opened.st_size != closed.st_size
+            or opened.st_mtime_ns != closed.st_mtime_ns
+            or opened.st_ctime_ns != closed.st_ctime_ns
+        ):
+            raise TransactionError(f"CAS object changed while capturing preimage: {path}")
+        content = b"".join(chunks)
+        if len(content) != opened.st_size:
+            raise TransactionError(f"CAS object short read while capturing preimage: {path}")
+        return _FileSnapshot(
+            True,
+            content,
+            opened.st_mode & 0o777,
+            opened.st_mtime_ns,
+        )
 
     def _notify_locked(self) -> None:
         """Provide a deterministic test hook after all locks are held."""
@@ -646,6 +738,18 @@ class WorkflowTransaction:
 
     def _restore_snapshot(self, path: Path, snapshot: _FileSnapshot) -> None:
         """Restore one preimage exactly, including existence and mode."""
+        if _is_cas_transaction_path(self.project_root, path):
+            try:
+                current_metadata = os.lstat(path)
+            except FileNotFoundError:
+                current_metadata = None
+            if current_metadata is not None and (
+                stat.S_ISLNK(current_metadata.st_mode)
+                or not stat.S_ISREG(current_metadata.st_mode)
+            ):
+                raise TransactionError(
+                    f"CAS recovery target must be a regular no-follow file: {path}"
+                )
         if not snapshot.exists:
             if path.exists():
                 path.unlink()

@@ -48,6 +48,22 @@ def test_transaction_order_matches_nested_writer_order(tmp_path: Path) -> None:
     assert transaction.paths == (modules, assignments, artifacts, requests)
 
 
+def test_transaction_orders_canonical_cas_target_after_event_shard(tmp_path: Path) -> None:
+    """A canonical CAS object locks after an event shard in durable ordering."""
+    event = tmp_path / ".research/presentations/events/2026-08-09.jsonl"
+    digest = "a" * 64
+    cas_object = (
+        tmp_path
+        / ".research/presentations/evidence/sha256"
+        / digest[:2]
+        / digest
+    )
+
+    transaction = WorkflowTransaction([cas_object, event], tmp_path)
+
+    assert transaction.paths == (event, cas_object)
+
+
 @pytest.mark.parametrize(
     "relative",
     [
