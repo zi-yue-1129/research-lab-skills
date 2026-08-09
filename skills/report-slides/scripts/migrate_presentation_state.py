@@ -15,12 +15,13 @@ import ctypes
 import errno
 import json
 import os
+import re
 import shutil
 import stat
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator, Mapping
+from typing import Any, Mapping
 
 import yaml
 
@@ -29,6 +30,11 @@ from presentation_contracts import contract_sha256
 from presentation_events import effective_review_results
 from presentation_transactions import WorkflowTransaction, incomplete_transaction_journals
 from validate_deck_plan import validate_deck_approval, validate_deck_plan
+from migration_scope import (
+    MigrationError,
+    assert_no_symlink_ancestors as _assert_no_symlink_ancestors,
+    iter_scope_entries as _iter_scope_entries,
+)
 
 
 STATE_VERSION = 1
@@ -36,6 +42,7 @@ LEGACY_VERSION = 0
 PRESENTATIONS_RELATIVE = Path(".research/presentations")
 STATE_RELATIVE = PRESENTATIONS_RELATIVE / "state"
 EVENTS_RELATIVE = PRESENTATIONS_RELATIVE / "events"
+TRANSACTIONS_RELATIVE = PRESENTATIONS_RELATIVE / "transactions"
 STATE_NAMES: dict[str, str] = {
     "decks.yaml": "decks",
     "plans.yaml": "plans",
@@ -45,6 +52,7 @@ STATE_NAMES: dict[str, str] = {
     "artifacts.yaml": "artifacts",
     "revision_requests.yaml": "revision_requests",
 }
+EVENT_SHARD_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}\.jsonl$")
 APPROVED_STATUSES = frozenset(
     {"approved", "producing", "draft_review", "revising", "validating", "completed"}
 )
@@ -63,11 +71,6 @@ DECK_STATUSES = frozenset(
     }
 )
 SHA256_LENGTH = 64
-OPERATIONAL_DIRS = frozenset({"transactions", "cache"})
-
-
-class MigrationError(RuntimeError):
-    """Raised when persisted presentation state is unsafe to migrate."""
 
 
 class _UniqueKeyLoader(yaml.SafeLoader):
@@ -149,65 +152,16 @@ def _fsync_directory(directory: Path) -> None:
         os.close(descriptor)
 
 
-def _iter_scope_entries(root: Path) -> Iterator[Path]:
-    """Yield regular files below ``root`` while rejecting symlink entries."""
-    if not root.exists():
-        return
-    try:
-        root_metadata = os.lstat(root)
-    except OSError as exc:
-        raise MigrationError(f"unable to inspect state/event scope {root}: {exc}") from exc
-    if stat.S_ISLNK(root_metadata.st_mode):
-        raise MigrationError(f"state/event scope must not be a symlink: {root}")
-    if not stat.S_ISDIR(root_metadata.st_mode):
-        raise MigrationError(f"state/event scope must be a directory: {root}")
-    pending = [root]
-    while pending:
-        current = pending.pop()
-        try:
-            entries = sorted(os.scandir(current), key=lambda item: item.name, reverse=True)
-        except OSError as exc:
-            raise MigrationError(f"unable to inspect state/event scope {current}: {exc}") from exc
-        for entry in entries:
-            entry_path = Path(entry.path)
-            try:
-                metadata = entry.stat(follow_symlinks=False)
-            except OSError as exc:
-                raise MigrationError(f"unable to inspect state/event entry {entry_path}: {exc}") from exc
-            if stat.S_ISLNK(metadata.st_mode):
-                raise MigrationError(f"state/event entry must not be a symlink: {entry_path}")
-            if stat.S_ISDIR(metadata.st_mode):
-                if entry.name in OPERATIONAL_DIRS:
-                    continue
-                pending.append(entry_path)
-            elif stat.S_ISREG(metadata.st_mode):
-                yield entry_path
-            else:
-                raise MigrationError(f"state/event entry must be regular or directory: {entry_path}")
+def _canonical_project_relative(
+    project_root: Path, raw_value: object, *, allow_directory: bool = False
+) -> str:
+    """Validate one existing POSIX project-relative path safely.
 
-
-def _assert_no_symlink_ancestors(path: Path, project_root: Path) -> None:
-    """Reject a state/event scope whose parent path redirects elsewhere."""
-    root = project_root.resolve()
-    try:
-        relative_parts = path.relative_to(root).parts
-    except ValueError as exc:
-        raise MigrationError(f"scope escapes project root: {path}") from exc
-    current = root
-    for part in relative_parts:
-        current /= part
-        try:
-            metadata = os.lstat(current)
-        except FileNotFoundError:
-            continue
-        except OSError as exc:
-            raise MigrationError(f"unable to inspect scope ancestor {current}: {exc}") from exc
-        if stat.S_ISLNK(metadata.st_mode):
-            raise MigrationError(f"state/event scope contains a symlink ancestor: {current}")
-
-
-def _canonical_project_relative(project_root: Path, raw_value: object) -> str:
-    """Validate one POSIX project-relative path and reject symlink escapes."""
+    Args:
+        project_root: Root against which the path is resolved.
+        raw_value: Candidate project-relative path.
+        allow_directory: Whether this field explicitly permits a directory.
+    """
     if not isinstance(raw_value, str) or not raw_value or "\x00" in raw_value:
         raise MigrationError(f"path must be a non-empty relative path: {raw_value!r}")
     if raw_value.startswith("/") or "\\" in raw_value:
@@ -218,6 +172,7 @@ def _canonical_project_relative(project_root: Path, raw_value: object) -> str:
     root = project_root.resolve()
     candidate = root.joinpath(*parts)
     current = root
+    final_metadata: os.stat_result | None = None
     for part in parts:
         current = current / part
         try:
@@ -232,6 +187,12 @@ def _canonical_project_relative(project_root: Path, raw_value: object) -> str:
             raise MigrationError(f"path ancestor is not a directory: {raw_value!r}")
         if part == parts[-1] and not stat.S_ISREG(metadata.st_mode) and not stat.S_ISDIR(metadata.st_mode):
             raise MigrationError(f"path refers to a special file: {raw_value!r}")
+        if part == parts[-1]:
+            final_metadata = metadata
+    if final_metadata is None:
+        raise MigrationError(f"path target does not exist: {raw_value!r}")
+    if stat.S_ISDIR(final_metadata.st_mode) and not allow_directory:
+        raise MigrationError(f"path target must be a regular file: {raw_value!r}")
     try:
         candidate.resolve(strict=False).relative_to(root)
     except (OSError, ValueError) as exc:
@@ -255,6 +216,8 @@ _PATH_KEYS = frozenset(
         "rendered_slide_paths",
     }
 )
+_PATH_LIST_MEMBERS = frozenset({"path", "relative_path"})
+_DIRECTORY_PATH_KEYS = frozenset()
 
 
 def _validate_record_paths(
@@ -283,13 +246,25 @@ def _validate_record_paths(
                     if isinstance(child_value, list):
                         for item in child_value:
                             if isinstance(item, Mapping):
+                                if not any(member in item for member in _PATH_LIST_MEMBERS):
+                                    raise MigrationError(
+                                        f"path list field {child_key!r} item requires a canonical path member"
+                                    )
                                 _validate_record_paths(project_root, item, stack=active)
                             else:
-                                _canonical_project_relative(project_root, item)
+                                _canonical_project_relative(
+                                    project_root,
+                                    item,
+                                    allow_directory=child_key in _DIRECTORY_PATH_KEYS,
+                                )
                     elif isinstance(child_value, Mapping):
-                        _validate_record_paths(project_root, child_value, stack=active)
+                        raise MigrationError(f"path field {child_key!r} must be a path string or list")
                     else:
-                        _canonical_project_relative(project_root, child_value)
+                        _canonical_project_relative(
+                            project_root,
+                            child_value,
+                            allow_directory=child_key in _DIRECTORY_PATH_KEYS,
+                        )
                 _validate_record_paths(project_root, child_value, str(child_key), active)
         elif isinstance(value, list):
             for item in value:
@@ -728,16 +703,28 @@ def _scope_paths(project_root: Path) -> tuple[tuple[Path, ...], tuple[Path, ...]
     state_paths: list[Path] = []
     event_paths: list[Path] = []
     for path in _iter_scope_entries(state_root):
-        if path.name.endswith(".lock") or path.name.endswith(".tmp"):
-            continue
+        if path.name.endswith(".lock"):
+            if path.name.removesuffix(".lock") in STATE_NAMES:
+                continue
+            raise MigrationError(f"unknown presentation state sidecar: {path}")
+        if path.name.endswith(".tmp"):
+            raise MigrationError(f"temporary presentation state file is not allowed: {path}")
         if path.suffix != ".yaml" or path.name not in STATE_NAMES:
             raise MigrationError(f"unknown presentation state store: {path}")
         state_paths.append(path)
     for path in _iter_scope_entries(events_root):
-        if path.name.endswith(".lock") or path.name.endswith(".tmp"):
-            continue
-        if path.suffix != ".jsonl":
+        if path.name.endswith(".lock"):
+            if EVENT_SHARD_PATTERN.fullmatch(path.name.removesuffix(".lock")):
+                continue
+            raise MigrationError(f"unknown presentation event sidecar: {path}")
+        if path.name.endswith(".tmp"):
+            raise MigrationError(f"temporary presentation event file is not allowed: {path}")
+        if EVENT_SHARD_PATTERN.fullmatch(path.name) is None:
             raise MigrationError(f"unknown presentation event file: {path}")
+        try:
+            datetime.strptime(path.stem, "%Y-%m-%d")
+        except ValueError as exc:
+            raise MigrationError(f"invalid presentation event shard date: {path}") from exc
         event_paths.append(path)
     return tuple(sorted(state_paths)), tuple(sorted(event_paths))
 
@@ -752,7 +739,10 @@ def _scope_files(
     Discovery itself is metadata-only.  Non-dry migration invokes this helper
     only after a transaction has acquired every discovered sidecar lock.
     """
-    discovered_state, discovered_events = _scope_paths(project_root)
+    if state_paths is None or event_paths is None:
+        discovered_state, discovered_events = _scope_paths(project_root)
+    else:
+        discovered_state, discovered_events = state_paths, event_paths
     state_files: dict[Path, tuple[bytes, int]] = {}
     event_files: dict[Path, tuple[bytes, int]] = {}
     selected_state_paths = discovered_state if state_paths is None else state_paths
@@ -866,16 +856,24 @@ def migrate_state(project_root: Path | str, dry_run: bool = False) -> dict[str, 
             pass
 
     state_paths, event_paths = _scope_paths(root)
-    transaction_paths = tuple(sorted(state_paths + event_paths, key=lambda item: item.as_posix()))
-    if dry_run:
-        state_files, event_files = _scope_files(root, state_paths, event_paths)
-        report, _, _, _ = _analyze_migration(root, state_files, event_files)
-        return report
-    if not transaction_paths:
-        report, _, _, _ = _analyze_migration(root, {}, {})
-        return report
+    state_files, event_files = _scope_files(root, state_paths, event_paths)
+    initial_report, _, _, initial_source_version = _analyze_migration(root, state_files, event_files)
+    if dry_run or initial_source_version == STATE_VERSION:
+        return initial_report
 
+    transaction_paths = tuple(sorted(state_paths + event_paths, key=lambda item: item.as_posix()))
+    if not transaction_paths:
+        return initial_report
+
+    preexisting_sidecars = {
+        path.with_suffix(path.suffix + ".lock")
+        for path in transaction_paths
+        if path.with_suffix(path.suffix + ".lock").exists()
+    }
+    transactions_directory = root / TRANSACTIONS_RELATIVE
+    transactions_directory_preexisting = transactions_directory.exists()
     backup_path: Path | None = None
+    commit_completed = False
     try:
         with WorkflowTransaction(transaction_paths, root) as transaction_handle:
             locked_state_paths, locked_event_paths = _scope_paths(root)
@@ -901,8 +899,9 @@ def migrate_state(project_root: Path | str, dry_run: bool = False) -> dict[str, 
             for path, (content, mode) in sorted(event_files.items(), key=lambda item: item[0].as_posix()):
                 transaction_handle.stage_bytes(path, content, mode=mode)
             transaction_handle.commit()
+            commit_completed = True
     except Exception:
-        if backup_path is not None:
+        if backup_path is not None and not commit_completed:
             try:
                 _remove_backup_tree(backup_path)
                 _fsync_directory(backup_path.parent)
@@ -912,6 +911,20 @@ def migrate_state(project_root: Path | str, dry_run: bool = False) -> dict[str, 
     changed_paths = [path.relative_to(root).as_posix() for path in transaction_paths]
     if backup_path is not None:
         changed_paths.append(backup_path.relative_to(root).as_posix())
+    changed_paths.extend(
+        sidecar.relative_to(root).as_posix()
+        for sidecar in sorted(
+            {
+                path.with_suffix(path.suffix + ".lock")
+                for path in transaction_paths
+                if path.with_suffix(path.suffix + ".lock").exists()
+                and path.with_suffix(path.suffix + ".lock") not in preexisting_sidecars
+            },
+            key=lambda item: item.as_posix(),
+        )
+    )
+    if not transactions_directory_preexisting and transactions_directory.exists():
+        changed_paths.append(transactions_directory.relative_to(root).as_posix())
     report["changed_paths"] = sorted(changed_paths)
     return report
 
@@ -958,7 +971,7 @@ def main(argv: list[str] | None = None) -> int:
 
     Returns:
         Zero on a successful migration or validation, one on a structured
-        migration error.
+        migration error, or exit 2 for structured argument errors.
     """
     return _main(argv)
 
