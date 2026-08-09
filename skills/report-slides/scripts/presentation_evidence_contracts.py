@@ -350,15 +350,19 @@ def legacy_nullable_path_fields(
 
     Returns:
         The documented path fields that may be null for this exact record.
+
+    Raises:
+        EvidenceContractError: If a slide or visual-module record does not
+            satisfy its intrinsic authoritative contract.
     """
-    if store_name == "slides" and record.get("status") == "planned":
-        keys = set(record)
-        if keys in {_SLIDE_FIELDS, _SLIDE_RETRY_FIELDS}:
+    candidate = _mapping(record, f"{store_name} record")
+    if store_name == "slides":
+        _validate_slide_intrinsic(candidate)
+        if candidate.get("status") == "planned":
             return frozenset({"slide_spec_path"})
-    if store_name == "visual_modules" and record.get("status") == "planned":
-        keys = set(record)
-        valid_fields = {_MODULE_FIELDS, _MODULE_RETRY_FIELDS}
-        if keys in valid_fields or keys - {"spec_sha256", "visual_spec_sha256"} in valid_fields:
+    if store_name == "visual_modules":
+        _validate_visual_module_intrinsic(candidate)
+        if candidate.get("status") == "planned":
             return frozenset(
                 {"visual_spec_path", "assignment_path", "artifact_manifest_path"}
             )
@@ -573,6 +577,17 @@ def _validate_visual_module(
     record: Mapping[str, Any], relations: Mapping[str, Mapping[str, Any]]
 ) -> None:
     """Validate a fresh or targeted module-replacement record explicitly."""
+    retry = _validate_visual_module_intrinsic(record, relations)
+    _relation_record(relations, "slides", record.get("slide_id"), "visual_modules.slide_id")
+    if retry:
+        _validate_module_retry(record, relations)
+
+
+def _validate_visual_module_intrinsic(
+    record: Mapping[str, Any],
+    relations: Mapping[str, Mapping[str, Any]] | None = None,
+) -> bool:
+    """Validate intrinsic module shape and lifecycle without inventing relations."""
     actual_fields = set(record)
     retry = "revision_request_id" in record or "revision_kind" in record
     expected_fields = _MODULE_RETRY_FIELDS if retry else _MODULE_FIELDS
@@ -582,29 +597,34 @@ def _validate_visual_module(
         _require_text(record.get(field), f"visual_modules.{field}")
     _require_positive_int(record.get("attempt"), "visual_modules.attempt")
     _validate_text_list(record.get("dependencies"), "visual_modules.dependencies")
-    _relation_record(relations, "slides", record.get("slide_id"), "visual_modules.slide_id")
     _validate_module_spec(record, relations)
     if retry:
-        _validate_module_retry(record, relations)
+        _validate_module_retry_intrinsic(record)
     else:
         _require_text(record.get("updated_at"), "visual_modules.updated_at")
         if record.get("supersedes_module_id") is not None:
             _require_text(record.get("supersedes_module_id"), "visual_modules.supersedes_module_id")
+    return retry
 
 
 def _validate_module_spec(
-    record: Mapping[str, Any], relations: Mapping[str, Mapping[str, Any]]
+    record: Mapping[str, Any],
+    relations: Mapping[str, Mapping[str, Any]] | None,
 ) -> None:
     """Validate visual-spec path, digest aliases, and placeholder nullability."""
     path = record.get("visual_spec_path")
     canonical_digest = record.get("visual_spec_sha256")
     legacy_digest = record.get("spec_sha256")
+    canonical_present = "visual_spec_sha256" in record
+    legacy_present = "spec_sha256" in record
+    if canonical_present and legacy_present and canonical_digest != legacy_digest:
+        raise EvidenceContractError(
+            "visual_modules.spec_sha256 conflicts with visual_spec_sha256"
+        )
     if canonical_digest is not None:
         _require_digest(canonical_digest, "visual_modules.visual_spec_sha256")
     if legacy_digest is not None:
         _require_digest(legacy_digest, "visual_modules.spec_sha256")
-    if canonical_digest is not None and legacy_digest is not None and canonical_digest != legacy_digest:
-        raise EvidenceContractError("visual_modules.spec_sha256 conflicts with visual_spec_sha256")
     resolved_digest = canonical_digest if canonical_digest is not None else legacy_digest
     if path is None:
         if record.get("status") != "planned":
@@ -615,15 +635,16 @@ def _validate_module_spec(
         canonical_path = _canonical_relative_path(path, "visual_modules.visual_spec_path")
         if resolved_digest is None:
             raise EvidenceContractError("visual_modules visual_spec_path requires a digest alias")
-        specs = relations.get("visual_specs")
-        if specs is None:
-            raise EvidenceContractError("relations must provide visual_specs for visual_spec_path")
-        spec = specs.get(canonical_path)
-        if spec is None:
-            raise EvidenceContractError("visual_modules visual_spec_path does not resolve")
-        spec_record = _mapping(spec, "visual_specs record")
-        if spec_record.get("sha256") != resolved_digest:
-            raise EvidenceContractError("visual_modules visual spec digest does not match relation")
+        if relations is not None:
+            specs = relations.get("visual_specs")
+            if specs is None:
+                raise EvidenceContractError("relations must provide visual_specs for visual_spec_path")
+            spec = specs.get(canonical_path)
+            if spec is None:
+                raise EvidenceContractError("visual_modules visual_spec_path does not resolve")
+            spec_record = _mapping(spec, "visual_specs record")
+            if spec_record.get("sha256") != resolved_digest:
+                raise EvidenceContractError("visual_modules visual spec digest does not match relation")
     for field in ("assignment_path", "artifact_manifest_path"):
         value = record.get(field)
         if value is None:
@@ -637,10 +658,6 @@ def _validate_module_retry(
     record: Mapping[str, Any], relations: Mapping[str, Mapping[str, Any]]
 ) -> None:
     """Validate the exact targeted module-retry replacement relation."""
-    if record.get("status") != "planned" or record.get("revision_kind") != "module_retry":
-        raise EvidenceContractError("visual_modules module retry must be planned with revision_kind module_retry")
-    if record.get("assignment_path") is not None or record.get("artifact_manifest_path") is not None:
-        raise EvidenceContractError("visual_modules module retry must reset assignment and artifact paths")
     source = _relation_record(
         relations,
         "visual_modules",
@@ -671,6 +688,24 @@ def _validate_module_retry(
     for field, value in expected.items():
         if revision.get(field) != value:
             raise EvidenceContractError(f"visual_modules.revision_request_id has wrong {field}")
+
+
+def _validate_module_retry_intrinsic(record: Mapping[str, Any]) -> None:
+    """Validate retry lifecycle fields before resolving authoritative relations."""
+    if record.get("status") != "planned" or record.get("revision_kind") != "module_retry":
+        raise EvidenceContractError(
+            "visual_modules module retry must be planned with revision_kind module_retry"
+        )
+    if record.get("assignment_path") is not None or record.get("artifact_manifest_path") is not None:
+        raise EvidenceContractError(
+            "visual_modules module retry must reset assignment and artifact paths"
+        )
+    _require_text(
+        record.get("supersedes_module_id"), "visual_modules.supersedes_module_id"
+    )
+    _require_text(
+        record.get("revision_request_id"), "visual_modules.revision_request_id"
+    )
 
 
 def _validate_assignment(
@@ -718,13 +753,27 @@ def _validate_assignment(
 
 def _validate_slide(record: Mapping[str, Any], relations: Mapping[str, Mapping[str, Any]]) -> None:
     """Validate the public fresh or targeted slide-replacement schema."""
+    retry = _validate_slide_intrinsic(record)
+    _relation_record(relations, "decks", record.get("deck_id"), "slides.deck_id")
+    if retry:
+        source = _relation_record(
+            relations, "slides", record.get("supersedes_slide_id"), "slides.supersedes_slide_id"
+        )
+        if source.get("deck_id") != record["deck_id"] or source.get("plan_slide_id") != record["plan_slide_id"]:
+            raise EvidenceContractError("slides retry must preserve source deck and plan slide")
+        _require_positive_int(source.get("attempt"), "source slides.attempt")
+        if record["attempt"] != source["attempt"] + 1:
+            raise EvidenceContractError("slides retry attempt must increment source attempt")
+
+
+def _validate_slide_intrinsic(record: Mapping[str, Any]) -> bool:
+    """Validate intrinsic slide shape and lifecycle without relation context."""
     retry = "revision_request_id" in record or "revision_kind" in record
     expected_fields = _SLIDE_RETRY_FIELDS if retry else _SLIDE_FIELDS
     _require_exact_fields(record, expected_fields, "slides")
     for field in ("id", "deck_id", "plan_slide_id", "title", "status", "created_at", "created_by"):
         _require_text(record.get(field), f"slides.{field}")
     _require_positive_int(record.get("attempt"), "slides.attempt")
-    _relation_record(relations, "decks", record.get("deck_id"), "slides.deck_id")
     path = record.get("slide_spec_path")
     if path is None:
         if record.get("status") != "planned":
@@ -737,16 +786,11 @@ def _validate_slide(record: Mapping[str, Any], relations: Mapping[str, Mapping[s
     if retry:
         if record.get("status") != "planned" or record.get("revision_kind") != "slide_retry":
             raise EvidenceContractError("slides retry must be planned with revision_kind slide_retry")
-        source = _relation_record(
-            relations, "slides", record.get("supersedes_slide_id"), "slides.supersedes_slide_id"
-        )
-        if source.get("deck_id") != record["deck_id"] or source.get("plan_slide_id") != record["plan_slide_id"]:
-            raise EvidenceContractError("slides retry must preserve source deck and plan slide")
-        _require_positive_int(source.get("attempt"), "source slides.attempt")
-        if record["attempt"] != source["attempt"] + 1:
-            raise EvidenceContractError("slides retry attempt must increment source attempt")
+        _require_text(record.get("supersedes_slide_id"), "slides.supersedes_slide_id")
+        _require_text(record.get("revision_request_id"), "slides.revision_request_id")
     else:
         _require_text(record.get("updated_at"), "slides.updated_at")
+    return retry
 
 
 def _validate_text_list(value: object, field: str) -> None:

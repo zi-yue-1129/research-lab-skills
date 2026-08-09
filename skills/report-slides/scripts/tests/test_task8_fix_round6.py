@@ -422,6 +422,27 @@ def test_exact_public_planned_slide_and_module_records_keep_nullable_paths(
 
 
 @pytest.mark.parametrize(
+    "alias_fields",
+    [
+        {"visual_spec_sha256": "1" * 64},
+        {"visual_spec_sha256": None, "spec_sha256": "1" * 64},
+        {"visual_spec_sha256": True, "spec_sha256": True},
+    ],
+)
+def test_migration_scope_rejects_invalid_planned_module_alias_path_combinations(
+    tmp_path: Path,
+    alias_fields: dict[str, Any],
+) -> None:
+    """Nullable paths cannot hide invalid visual-spec digest alias state."""
+    project = _project(tmp_path)
+    record = _public_module_record()
+    record.update(alias_fields)
+
+    with pytest.raises(MigrationError, match="visual_modules|spec|schema|digest"):
+        validate_record_paths(project, record, store_name="visual_modules")
+
+
+@pytest.mark.parametrize(
     ("store_name", "record"),
     [
         ("slides", _replacement_slide_record()),

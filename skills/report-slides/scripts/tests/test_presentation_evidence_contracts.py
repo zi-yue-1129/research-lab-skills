@@ -13,6 +13,7 @@ from presentation_evidence_contracts import (
     EvidenceContractError,
     artifact_policy_for_event,
     envelope_sha256,
+    legacy_nullable_path_fields,
     validate_deck_evidence_pointers,
     validate_envelope,
     validate_store_record,
@@ -111,6 +112,21 @@ def _real_assignment_record() -> dict[str, Any]:
         "assigned_at": "2026-08-09T00:00:00Z",
         "created_at": "2026-08-09T00:00:00Z",
     }
+
+
+def _public_planned_module_record() -> dict[str, Any]:
+    """Return the exact planned module shape emitted by the public constructor."""
+    record = deepcopy(_relations()["visual_modules"]["mod-source"])
+    record.update(
+        {
+            "status": "planned",
+            "visual_spec_path": None,
+            "assignment_path": None,
+            "artifact_manifest_path": None,
+        }
+    )
+    record.pop("visual_spec_sha256")
+    return record
 
 
 def _artifact_ref(
@@ -284,6 +300,55 @@ def test_module_retry_rejects_conflicting_digest_aliases() -> None:
 
     with pytest.raises(EvidenceContractError, match="spec_sha256"):
         validate_store_record("visual_modules", record, relations=_relations())
+
+
+@pytest.mark.parametrize(
+    ("canonical_digest", "legacy_digest"),
+    [
+        (None, _DIGEST),
+        (_DIGEST, None),
+        (True, True),
+        (7, 7),
+        (None, None),
+    ],
+)
+def test_module_retry_rejects_invalid_present_digest_alias_pairs(
+    canonical_digest: object,
+    legacy_digest: object,
+) -> None:
+    """Present aliases must be equal valid digests for a non-null spec path."""
+    record = _real_module_retry_record()
+    record["visual_spec_sha256"] = canonical_digest
+    record["spec_sha256"] = legacy_digest
+
+    with pytest.raises(EvidenceContractError, match="spec_sha256|digest"):
+        validate_store_record("visual_modules", record, relations=_relations())
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        {"visual_spec_sha256": _DIGEST},
+        {"visual_spec_sha256": None, "spec_sha256": _DIGEST},
+        {"unexpected_nullable_shape": True},
+    ],
+)
+def test_nullable_bridge_rejects_invalid_planned_module_contracts(
+    mutation: dict[str, Any],
+) -> None:
+    """The nullable bridge rejects invalid aliases and non-public record shapes."""
+    record = _public_planned_module_record()
+    record.update(mutation)
+
+    with pytest.raises(EvidenceContractError, match="visual_modules|spec|schema"):
+        legacy_nullable_path_fields("visual_modules", record)
+
+
+def test_nullable_bridge_accepts_exact_public_planned_module_shape() -> None:
+    """The nullable bridge accepts the unmodified public module constructor shape."""
+    assert legacy_nullable_path_fields(
+        "visual_modules", _public_planned_module_record()
+    ) == {"visual_spec_path", "assignment_path", "artifact_manifest_path"}
 
 
 @pytest.mark.parametrize(

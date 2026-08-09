@@ -11,6 +11,7 @@ import pytest
 import yaml
 
 from presentation_contracts import contract_sha256
+from presentation_evidence_contracts import EvidenceContractError, validate_store_record
 from presentation_events import (
     create_artifact_record,
     load_events,
@@ -807,6 +808,53 @@ def test_targeted_revision_supersedes_passed_module_without_restarting_it(tmp_pa
     records = load_visual_modules(project)
     assert records[module["id"]]["status"] == "superseded"
     assert records[result["replacement"]["id"]]["status"] == "planned"
+
+
+def test_targeted_module_revision_output_satisfies_evidence_record_contract(
+    tmp_path: Path,
+) -> None:
+    """The public retry producer emits a relation-bound module contract."""
+    project, deck_id, _ = _approved_project(tmp_path)
+    slide = create_slide(project, deck_id, "slide-01", "Evidence changes decisions")
+    source = create_visual_module(project, slide["id"], "module-a", "architecture")
+    for status in ("ready", "assigned", "producing", "review_required", "passed"):
+        set_module_status(project, source["id"], status)
+    revision_path = project / "module-contract-revision.yaml"
+    revision_path.write_text(
+        yaml.safe_dump(
+            {
+                "subject_type": "module",
+                "subject_id": source["id"],
+                "requested_by": "reviewer",
+                "instructions": "Retry the module.",
+                "revision_kind": "module_retry",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = request_targeted_revision(project, revision_path)
+    modules = load_visual_modules(project)
+    replacement = modules[result["replacement"]["id"]]
+    relations = {
+        "slides": load_slides(project),
+        "visual_modules": modules,
+        "revision_requests": load_revision_requests(project),
+    }
+
+    assert validate_store_record(
+        "visual_modules", replacement, relations=relations
+    ) == replacement
+    alias_drift = dict(replacement)
+    alias_drift["spec_sha256"] = "a" * 64
+    with pytest.raises(EvidenceContractError, match="spec|path"):
+        validate_store_record("visual_modules", alias_drift, relations=relations)
+    relation_drift = copy.deepcopy(relations)
+    relation_drift["revision_requests"][replacement["revision_request_id"]][
+        "target_id"
+    ] = "mod-other"
+    with pytest.raises(EvidenceContractError, match="revision_request_id"):
+        validate_store_record("visual_modules", replacement, relations=relation_drift)
 
 
 def _file_preimage(path: Path) -> tuple[bool, bytes, int]:

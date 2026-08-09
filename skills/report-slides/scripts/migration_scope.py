@@ -11,7 +11,10 @@ from typing import Any, Iterator, Mapping
 
 from presentation_artifact_provenance import canonical_source_digest
 from presentation_contracts import contract_sha256
-from presentation_evidence_contracts import legacy_nullable_path_fields
+from presentation_evidence_contracts import (
+    EvidenceContractError,
+    legacy_nullable_path_fields,
+)
 
 
 class MigrationError(RuntimeError):
@@ -345,7 +348,10 @@ def _nullable_fields_for_record(
     """
     if store_name not in {"slides", "visual_modules"} or value.get("status") != "planned":
         return frozenset()
-    nullable_fields = legacy_nullable_path_fields(store_name, value)
+    try:
+        nullable_fields = legacy_nullable_path_fields(store_name, value)
+    except EvidenceContractError as exc:
+        raise MigrationError(f"invalid {store_name} record contract: {exc}") from exc
     if nullable_fields:
         return nullable_fields
     nullable_path_fields = {
