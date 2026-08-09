@@ -44,7 +44,14 @@ def _write_store(
 
 def _write_events(project: Path, events: list[dict[str, Any]]) -> Path:
     """Write exact JSONL bytes for immutable event fixtures."""
-    path = project / ".research" / "presentations" / "events" / "2026-08-09.jsonl"
+    return _write_event_shard(project, "2026-08-09", events)
+
+
+def _write_event_shard(
+    project: Path, shard_date: str, events: list[dict[str, Any]]
+) -> Path:
+    """Write one exact dated JSONL shard for deterministic-order fixtures."""
+    path = project / ".research" / "presentations" / "events" / f"{shard_date}.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(
         b"".join(
@@ -384,6 +391,93 @@ def test_historical_preview_rejects_intrinsic_tampering(
         project_historical_evidence(build_snapshot(project))
 
 
+@pytest.mark.parametrize("schema_version", [True, "1"])
+def test_preview_rejects_nonexact_schema_version(
+    tmp_path: Path, schema_version: object
+) -> None:
+    """Preview schema_version must be the exact integer one."""
+    project, preview, _event_path = _historical_project(tmp_path)
+    preview["schema_version"] = schema_version
+    _refresh_preview_digest(preview)
+    _write_events(project, [preview])
+
+    with pytest.raises(ProjectionError, match="schema_version"):
+        project_historical_evidence(build_snapshot(project))
+
+
+@pytest.mark.parametrize("schema_version", [True, "1"])
+def test_completion_rejects_nonexact_schema_version(
+    tmp_path: Path, schema_version: object
+) -> None:
+    """Completion schema_version must be the exact integer one."""
+    project, preview, _event_path = _historical_project(tmp_path, completion=True)
+    completion_events, evidence = _completion_events(project)
+    completion = completion_events[-1]
+    completion["schema_version"] = schema_version
+    _refresh_completion_digest(completion)
+    _write_events(project, [preview, *completion_events])
+    _write_store(project, "evidence.yaml", "evidence", evidence)
+
+    with pytest.raises(ProjectionError, match="schema_version"):
+        project_historical_evidence(build_snapshot(project))
+
+
+@pytest.mark.parametrize("schema_version", [True, "1"])
+def test_visual_review_rejects_nonexact_schema_version(
+    tmp_path: Path, schema_version: object
+) -> None:
+    """Visual-review source schema_version must be the exact integer one."""
+    project, preview, _event_path = _historical_project(tmp_path, completion=True)
+    completion_events, evidence = _completion_events(project)
+    review = completion_events[1]
+    review["schema_version"] = schema_version
+    _write_events(project, [preview, *completion_events])
+    _write_store(project, "evidence.yaml", "evidence", evidence)
+
+    with pytest.raises(ProjectionError, match="schema_version"):
+        project_historical_evidence(build_snapshot(project))
+
+
+def test_completion_accepts_sources_from_earlier_dated_shards(tmp_path: Path) -> None:
+    """Source events in an earlier shard causally precede a completion event."""
+    project, preview, _event_path = _historical_project(tmp_path)
+    completion_events, evidence = _completion_events(project)
+    approval, review, completion = completion_events
+    _write_event_shard(project, "2026-08-08", [approval, review])
+    _write_event_shard(project, "2026-08-09", [preview, completion])
+    _write_store(project, "evidence.yaml", "evidence", evidence)
+
+    snapshot = build_snapshot(project)
+    projection = project_historical_evidence(snapshot)
+
+    assert [event["id"] for event in snapshot.events] == [
+        approval["id"],
+        review["id"],
+        preview["id"],
+        completion["id"],
+    ]
+    assert projection.by_source_event_id[completion["id"]]["availability"] == "available"
+
+
+@pytest.mark.parametrize("separate_shards", [False, True])
+def test_completion_rejects_sources_after_its_audit_event(
+    tmp_path: Path, separate_shards: bool
+) -> None:
+    """Completion cannot derive evidence from a later immutable audit event."""
+    project, preview, _event_path = _historical_project(tmp_path)
+    completion_events, evidence = _completion_events(project)
+    approval, review, completion = completion_events
+    if separate_shards:
+        _write_event_shard(project, "2026-08-08", [preview, completion])
+        _write_event_shard(project, "2026-08-09", [approval, review])
+    else:
+        _write_events(project, [preview, completion, approval, review])
+    _write_store(project, "evidence.yaml", "evidence", evidence)
+
+    with pytest.raises(ProjectionError, match="must precede deck_completion"):
+        project_historical_evidence(build_snapshot(project))
+
+
 def test_snapshot_preserves_jsonl_bytes_and_never_reloads_live_artifacts(tmp_path: Path) -> None:
     """Projection consumes frozen event and artifact bytes after construction."""
     project, preview, event_path = _historical_project(tmp_path)
@@ -519,6 +613,16 @@ def test_completion_rejects_preview_style_artifact_bindings(tmp_path: Path) -> N
 
     with pytest.raises(ProjectionError, match="artifact_bindings"):
         project_historical_evidence(build_snapshot(project))
+
+
+def _refresh_preview_digest(preview: dict[str, Any]) -> None:
+    """Recompute a mutated fixture's intrinsic preview digest."""
+    payload = {
+        key: value
+        for key, value in preview.items()
+        if key not in {"event", "id", "preview_sha256", "ts"}
+    }
+    preview["preview_sha256"] = contract_sha256(payload)
 
 
 def _refresh_completion_digest(completion: dict[str, Any]) -> None:

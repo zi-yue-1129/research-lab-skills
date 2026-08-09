@@ -167,8 +167,9 @@ def _project_preview(
     _require_text(event.get("id"), "draft_preview.id")
     _require_text(event.get("deck_id"), "draft_preview.deck_id")
     _require_text(event.get("ts"), "draft_preview.ts")
-    if event.get("event") != "draft_preview" or event.get("schema_version") != 1:
-        raise ProjectionError("draft_preview event or schema_version is invalid")
+    if event.get("event") != "draft_preview":
+        raise ProjectionError("draft_preview event is invalid")
+    _require_exact_int(event.get("schema_version"), 1, "draft_preview.schema_version")
     _require_positive_int(event.get("plan_version"), "draft_preview.plan_version")
     _require_digest(event.get("plan_sha256"), "draft_preview.plan_sha256")
     payload = {field: event[field] for field in _PREVIEW_FIELDS}
@@ -220,8 +221,11 @@ def _project_completion(
         "ts",
     ):
         _require_text(event.get(field), f"deck_completion.{field}")
-    if event.get("event") != "deck_completion" or event.get("schema_version") != 1:
-        raise ProjectionError("deck_completion event or schema_version is invalid")
+    if event.get("event") != "deck_completion":
+        raise ProjectionError("deck_completion event is invalid")
+    _require_exact_int(
+        event.get("schema_version"), 1, "deck_completion.schema_version"
+    )
     _require_positive_int(event.get("plan_version"), "deck_completion.plan_version")
     for field in (
         "plan_sha256",
@@ -343,7 +347,12 @@ def _validate_approval_source_event(
     completion: Mapping[str, Any],
 ) -> None:
     """Validate the immutable approval event linked by its source envelope."""
-    source = _source_event(snapshot, approval["source_event_id"], "draft_approval")
+    source = _source_event(
+        snapshot,
+        approval["source_event_id"],
+        "draft_approval",
+        completion_event_id=completion["id"],
+    )
     if source.get("event") != "deck_approval":
         raise ProjectionError("draft_approval source event must be deck_approval")
     errors = validate_deck_approval(source)
@@ -362,10 +371,18 @@ def _validate_visual_review_source_event(
     completion: Mapping[str, Any],
 ) -> None:
     """Validate a frozen visual-review source event without live reads."""
-    source = _source_event(snapshot, review["source_event_id"], "visual_review")
+    source = _source_event(
+        snapshot,
+        review["source_event_id"],
+        "visual_review",
+        completion_event_id=completion["id"],
+    )
     _require_exact_fields(source, _VISUAL_REVIEW_SOURCE_FIELDS, "visual_review")
-    if source.get("event") != "visual_review" or source.get("schema_version") != 1:
-        raise ProjectionError("visual_review source event or schema_version is invalid")
+    if source.get("event") != "visual_review":
+        raise ProjectionError("visual_review source event is invalid")
+    _require_exact_int(
+        source.get("schema_version"), 1, "visual_review.schema_version"
+    )
     for field in ("id", "deck_id", "plan_id", "producer_id", "ts"):
         _require_text(source.get(field), f"visual_review.{field}")
     _require_positive_int(source.get("plan_version"), "visual_review.plan_version")
@@ -389,7 +406,12 @@ def _review_artifact_paths(
     review = _thaw(evidence[review_id])
     if not isinstance(review, dict):
         raise ProjectionError("deck_completion visual review source must be a mapping")
-    source = _source_event(snapshot, review.get("source_event_id"), "visual_review")
+    source = _source_event(
+        snapshot,
+        review.get("source_event_id"),
+        "visual_review",
+        completion_event_id=completion["id"],
+    )
     document = _frozen_visual_review_document(snapshot, source)
     if document.get("deck_id") != completion["deck_id"]:
         raise ProjectionError("visual review document deck_id does not match completion")
@@ -492,19 +514,51 @@ def _validate_completion_artifact_records(
 
 
 def _source_event(
-    snapshot: EvidenceSnapshot, source_event_id: object, label: str
+    snapshot: EvidenceSnapshot,
+    source_event_id: object,
+    label: str,
+    *,
+    completion_event_id: object | None = None,
 ) -> dict[str, Any]:
-    """Resolve one immutable raw event without inspecting the live JSONL shard."""
+    """Resolve one immutable raw event and enforce completion causality.
+
+    Args:
+        snapshot: Frozen event order and source values.
+        source_event_id: Event identifier declared by an immutable envelope.
+        label: Stable source category for typed diagnostics.
+        completion_event_id: Optional completion event that the source must
+            precede in the frozen audit sequence.
+
+    Returns:
+        The unique thawed source event.
+
+    Raises:
+        ProjectionError: If either event is ambiguous, unresolved, or ordered
+            at or after the completion event.
+    """
     _require_text(source_event_id, f"{label}.source_event_id")
     assert isinstance(source_event_id, str)
     matches = [
-        _thaw(event)
-        for event in snapshot.events
+        (index, _thaw(event))
+        for index, event in enumerate(snapshot.events)
         if isinstance(event, Mapping) and event.get("id") == source_event_id
     ]
-    if len(matches) != 1 or not isinstance(matches[0], dict):
+    if len(matches) != 1 or not isinstance(matches[0][1], dict):
         raise ProjectionError(f"{label}.source_event_id does not resolve")
-    return matches[0]
+    source_index, source = matches[0]
+    if completion_event_id is not None:
+        _require_text(completion_event_id, "deck_completion.id")
+        assert isinstance(completion_event_id, str)
+        completion_indices = [
+            index
+            for index, event in enumerate(snapshot.events)
+            if isinstance(event, Mapping) and event.get("id") == completion_event_id
+        ]
+        if len(completion_indices) != 1:
+            raise ProjectionError("deck_completion event must resolve uniquely")
+        if source_index >= completion_indices[0]:
+            raise ProjectionError(f"{label}.source_event_id must precede deck_completion")
+    return source
 
 
 def _validate_preview_artifacts(
@@ -775,6 +829,12 @@ def _require_positive_int(value: object, field: str) -> None:
     """Require one positive integral field while rejecting booleans."""
     if type(value) is not int or value <= 0:
         raise ProjectionError(f"{field} must be a positive integer")
+
+
+def _require_exact_int(value: object, expected: int, field: str) -> None:
+    """Require one exact integer while rejecting booleans and other types."""
+    if type(value) is not int or value != expected:
+        raise ProjectionError(f"{field} must be integer {expected}")
 
 
 def _require_digest(value: object, field: str) -> None:
