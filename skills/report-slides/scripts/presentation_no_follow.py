@@ -230,6 +230,11 @@ def read_regular_siblings(directory_anchor: AnchoredPath) -> dict[str, bytes]:
             name,
             directory_anchor.display_path.with_name(name),
         )
+        metadata = sibling.stat_leaf()
+        if metadata is None or not stat.S_ISREG(metadata.st_mode):
+            raise NoFollowPathError(
+                f"journal child must be a regular no-follow file: {sibling.display_path}"
+            )
         contents[name], _ = read_stable_regular(sibling)
     return contents
 
@@ -246,7 +251,13 @@ def read_stable_regular(anchored: AnchoredPath) -> tuple[bytes, os.stat_result]:
     Raises:
         NoFollowPathError: If the leaf is not regular or changes while read.
     """
-    descriptor = anchored.open_leaf(os.O_RDONLY)
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
+    try:
+        descriptor = anchored.open_leaf(flags)
+    except OSError as exc:
+        raise NoFollowPathError(
+            f"cannot open regular leaf safely: {anchored.display_path}"
+        ) from exc
     try:
         opened = os.fstat(descriptor)
         if not stat.S_ISREG(opened.st_mode):

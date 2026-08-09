@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import os
+import stat
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -441,6 +444,70 @@ def test_cas_recovery_uses_anchored_target_and_journal_directories(
     assert _tree_snapshot(redirect) == redirect_before
     assert not (moved_research / target.relative_to(research)).exists()
     assert not list((moved_research / "presentations/transactions").glob("*.json"))
+
+
+def test_validly_named_fifo_journal_fails_without_blocking_or_mutation(
+    tmp_path: Path,
+) -> None:
+    """A FIFO journal is rejected within a bounded child process."""
+    target = tmp_path / ".research/presentations/state/slides.yaml"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"target-sentinel")
+    journal_dir = tmp_path / ".research/presentations/transactions"
+    journal_dir.mkdir(parents=True)
+    journal = journal_dir / ("a" * 32 + ".json")
+    os.mkfifo(journal)
+    outside = tmp_path / "outside-sentinel"
+    outside.write_bytes(b"outside-sentinel")
+    target_before = _tree_snapshot(target.parent)
+    outside_before = _tree_snapshot(outside.parent)
+    child_code = """
+import sys
+from pathlib import Path
+from presentation_transactions import TransactionError, WorkflowTransaction
+try:
+    with WorkflowTransaction([], Path(sys.argv[1])):
+        pass
+except TransactionError:
+    print("structured-error")
+    raise SystemExit(0)
+raise SystemExit(2)
+"""
+
+    completed = subprocess.run(
+        [sys.executable, "-c", child_code, str(tmp_path)],
+        cwd=Path(__file__).parent.parent,
+        text=True,
+        capture_output=True,
+        timeout=2,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == "structured-error"
+    assert journal.is_fifo()
+    assert _tree_snapshot(target.parent) == target_before
+    assert _tree_snapshot(outside.parent) == outside_before
+
+
+def test_validly_named_socket_journal_fails_with_structured_error(
+    tmp_path: Path,
+) -> None:
+    """A Unix socket journal fails closed without an unwrapped OS error."""
+    journal_dir = tmp_path / ".research/presentations/transactions"
+    journal_dir.mkdir(parents=True)
+    journal = journal_dir / ("b" * 32 + ".json")
+    os.mknod(journal, stat.S_IFSOCK | 0o600)
+    outside = tmp_path / "outside-sentinel"
+    outside.write_bytes(b"outside-sentinel")
+    outside_before = _tree_snapshot(outside.parent)
+
+    with pytest.raises(TransactionError, match="journal|regular|no-follow"):
+        with WorkflowTransaction([], tmp_path):
+            pass
+
+    assert journal.exists()
+    assert _tree_snapshot(outside.parent) == outside_before
 
 
 def test_stage_cas_objects_retains_existing_valid_object_metadata(tmp_path: Path) -> None:
