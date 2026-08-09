@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+import presentation_evidence_cas
 import presentation_transactions
 from presentation_evidence_cas import (
     CasObject,
@@ -52,6 +53,22 @@ def _planned_target(project_root: Path, content: bytes) -> tuple[Path, dict[str,
     source = fixture_regular_artifact(project_root, content)
     planned = plan_cas_objects(project_root, {"output/deck.pptx": source})
     return _cas_target(project_root, content), planned
+
+
+def _tree_snapshot(root: Path) -> dict[str, tuple[str, bytes, int, int]]:
+    """Capture exact file bytes plus mode and mtime for one sentinel tree."""
+    snapshot: dict[str, tuple[str, bytes, int, int]] = {}
+    for path in [root, *sorted(root.rglob("*"))]:
+        metadata = path.lstat()
+        kind = "symlink" if path.is_symlink() else "file" if path.is_file() else "directory"
+        content = path.read_bytes() if kind == "file" else b""
+        snapshot[path.relative_to(root.parent).as_posix()] = (
+            kind,
+            content,
+            metadata.st_mode & 0o777,
+            metadata.st_mtime_ns,
+        )
+    return snapshot
 
 
 def test_plan_cas_object_hashes_source_without_following_symlink(tmp_path: Path) -> None:
@@ -129,6 +146,50 @@ def test_read_verified_source_rejects_symlink_without_reading_target(tmp_path: P
         read_verified_source(tmp_path, "output/deck.pptx")
 
     assert outside.read_bytes() == b"outside"
+
+
+def test_read_verified_source_anchors_parent_before_directory_swap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A checked source directory swap cannot redirect the later leaf open."""
+    project = tmp_path / "project"
+    project.mkdir()
+    source = fixture_regular_artifact(project, b"original")
+    outside_directory = tmp_path / "outside-output"
+    outside_directory.mkdir()
+    outside_source = outside_directory / "deck.pptx"
+    outside_source.write_bytes(b"outside")
+    outside_before = _tree_snapshot(outside_directory)
+    moved_directory = project / ".output-anchored"
+    original_open = presentation_evidence_cas.os.open
+    swapped = False
+
+    def open_after_directory_swap(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        """Swap the checked source directory immediately before its leaf open."""
+        nonlocal swapped
+        path_text = os.fsdecode(path)
+        leaf_open = Path(path_text) == source if dir_fd is None else path_text == source.name
+        if leaf_open and not swapped:
+            source.parent.rename(moved_directory)
+            source.parent.symlink_to(outside_directory, target_is_directory=True)
+            swapped = True
+        if dir_fd is None:
+            return original_open(path, flags, mode)
+        return original_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(presentation_evidence_cas.os, "open", open_after_directory_swap)
+
+    object_ = read_verified_source(project, "output/deck.pptx")
+
+    assert swapped
+    assert object_.content == b"original"
+    assert _tree_snapshot(outside_directory) == outside_before
 
 
 def test_read_verified_source_rejects_fifo_without_blocking(tmp_path: Path) -> None:
@@ -222,12 +283,164 @@ def test_stage_cas_objects_materializes_deduplicated_content_once(tmp_path: Path
     )
     target = _cas_target(tmp_path, b"shared")
 
-    with WorkflowTransaction([target], tmp_path) as transaction:
-        assert stage_cas_objects(transaction, tmp_path, planned) == (target,)
-        transaction.commit()
+    previous_umask = os.umask(0o077)
+    try:
+        with WorkflowTransaction([target], tmp_path) as transaction:
+            assert stage_cas_objects(transaction, tmp_path, planned) == (target,)
+            transaction.commit()
+    finally:
+        os.umask(previous_umask)
 
     assert target.read_bytes() == b"shared"
     assert target.stat().st_mode & 0o777 == 0o444
+
+
+@pytest.mark.parametrize("redirect_inside_project", [False, True])
+@pytest.mark.parametrize("operation", ["commit", "rollback"])
+def test_cas_transaction_anchors_directories_against_checked_path_swap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    redirect_inside_project: bool,
+    operation: str,
+) -> None:
+    """Locking, publication, and rollback never mutate a swapped-in tree."""
+    project = tmp_path / "project"
+    project.mkdir()
+    research = project / ".research"
+    research.mkdir()
+    target, planned = _planned_target(project, b"anchored-transaction")
+    digest = target.name
+    redirect = (
+        project / "redirect-research"
+        if redirect_inside_project
+        else tmp_path / "outside-research"
+    )
+    (redirect / "presentations/evidence/sha256" / digest[:2]).mkdir(parents=True)
+    (redirect / "presentations/transactions").mkdir(parents=True)
+    (redirect / "sentinel").write_bytes(b"outside")
+    redirect_before = _tree_snapshot(redirect)
+    moved_research = project / ".research-anchored"
+    original_mkdir = Path.mkdir
+    original_open = presentation_transactions.os.open
+    swapped = False
+
+    def swap_research_directory() -> None:
+        """Replace the checked project directory with an adversarial symlink."""
+        nonlocal swapped
+        research.rename(moved_research)
+        research.symlink_to(redirect, target_is_directory=True)
+        swapped = True
+
+    def mkdir_after_directory_swap(
+        path: Path,
+        mode: int = 0o777,
+        parents: bool = False,
+        exist_ok: bool = False,
+    ) -> None:
+        """Trigger the legacy full-path race before CAS parent creation."""
+        if path == target.parent and not swapped:
+            swap_research_directory()
+        original_mkdir(path, mode=mode, parents=parents, exist_ok=exist_ok)
+
+    def open_after_directory_swap(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        """Trigger the openat race after the parent descriptor is retained."""
+        if dir_fd is not None and os.fsdecode(path) == "evidence" and not swapped:
+            swap_research_directory()
+        if dir_fd is None:
+            return original_open(path, flags, mode)
+        return original_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(Path, "mkdir", mkdir_after_directory_swap)
+    monkeypatch.setattr(presentation_transactions.os, "open", open_after_directory_swap)
+    if operation == "rollback":
+        monkeypatch.setenv("PRESENTATION_TRANSACTION_FAIL_AT", "1")
+
+    try:
+        with WorkflowTransaction([target], project) as transaction:
+            stage_cas_objects(transaction, project, planned)
+            transaction.commit()
+    except (CasError, OSError, RuntimeError, TransactionError):
+        pass
+
+    assert swapped
+    assert _tree_snapshot(redirect) == redirect_before
+    assert not (redirect / "presentations/evidence/sha256" / digest[:2] / digest).exists()
+    assert not (redirect / "presentations/evidence/sha256" / digest[:2] / f"{digest}.lock").exists()
+
+
+def test_cas_recovery_uses_anchored_target_and_journal_directories(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Crash recovery survives a post-validation directory swap without escape."""
+    project = tmp_path / "project"
+    project.mkdir()
+    target, planned = _planned_target(project, b"anchored-recovery")
+    monkeypatch.setenv("PRESENTATION_TRANSACTION_CRASH_AT", "1")
+    with pytest.raises(SimulatedProcessDeath, match="simulated process death"):
+        with WorkflowTransaction([target], project) as transaction:
+            stage_cas_objects(transaction, project, planned)
+            transaction.commit()
+    monkeypatch.delenv("PRESENTATION_TRANSACTION_CRASH_AT")
+    research = project / ".research"
+    moved_research = project / ".research-anchored"
+    redirect = tmp_path / "outside-recovery"
+    digest = target.name
+    (redirect / "presentations/evidence/sha256" / digest[:2]).mkdir(parents=True)
+    (redirect / "presentations/transactions").mkdir(parents=True)
+    (redirect / "sentinel").write_bytes(b"outside")
+    redirect_before = _tree_snapshot(redirect)
+    original_mkdir = Path.mkdir
+    original_open = presentation_transactions.os.open
+    swapped = False
+
+    def swap_research_directory() -> None:
+        """Replace the recovered project directory with an outside symlink."""
+        nonlocal swapped
+        research.rename(moved_research)
+        research.symlink_to(redirect, target_is_directory=True)
+        swapped = True
+
+    def mkdir_after_directory_swap(
+        path: Path,
+        mode: int = 0o777,
+        parents: bool = False,
+        exist_ok: bool = False,
+    ) -> None:
+        """Trigger the legacy recovery race before CAS sidecar acquisition."""
+        if path == target.parent and not swapped:
+            swap_research_directory()
+        original_mkdir(path, mode=mode, parents=parents, exist_ok=exist_ok)
+
+    def open_after_directory_swap(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        """Swap after an anchored presentations directory is open."""
+        if dir_fd is not None and os.fsdecode(path) == "evidence" and not swapped:
+            swap_research_directory()
+        if dir_fd is None:
+            return original_open(path, flags, mode)
+        return original_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(Path, "mkdir", mkdir_after_directory_swap)
+    monkeypatch.setattr(presentation_transactions.os, "open", open_after_directory_swap)
+
+    with WorkflowTransaction([], project):
+        pass
+
+    assert swapped
+    assert _tree_snapshot(redirect) == redirect_before
+    assert not (moved_research / target.relative_to(research)).exists()
+    assert not list((moved_research / "presentations/transactions").glob("*.json"))
 
 
 def test_stage_cas_objects_retains_existing_valid_object_metadata(tmp_path: Path) -> None:
@@ -278,22 +491,24 @@ def test_cas_replace_failure_rolls_back_absent_object(tmp_path: Path, monkeypatc
 def test_cas_fsync_failure_rolls_back_absent_object(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A post-replace directory fsync failure restores the absent preimage."""
     target, planned = _planned_target(tmp_path, b"fsync-failure")
-    original_directory_fsync = presentation_transactions._directory_fsync
+    original_directory_fsync = presentation_transactions.AnchoredPath.fsync_parent
     failed = False
 
-    def fail_once_for_cas_directory(path: Path) -> None:
+    def fail_once_for_cas_directory(
+        anchored: presentation_transactions.AnchoredPath,
+    ) -> None:
         """Fail the first durability sync after the visible CAS replacement."""
         nonlocal failed
-        if path == target.parent and not failed:
+        if anchored.display_path == target and target.exists() and not failed:
             failed = True
             raise OSError("injected CAS directory fsync failure")
-        original_directory_fsync(path)
+        original_directory_fsync(anchored)
 
     with WorkflowTransaction([target], tmp_path) as transaction:
         stage_cas_objects(transaction, tmp_path, planned)
         monkeypatch.setattr(
-            presentation_transactions,
-            "_directory_fsync",
+            presentation_transactions.AnchoredPath,
+            "fsync_parent",
             fail_once_for_cas_directory,
         )
         with pytest.raises(RuntimeError, match="transaction commit failed"):

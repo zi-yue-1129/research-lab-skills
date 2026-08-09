@@ -9,7 +9,6 @@ responsibility.  Planned objects can then be staged through one already-locked
 
 from __future__ import annotations
 
-import errno
 import hashlib
 import os
 import stat
@@ -17,7 +16,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
-from presentation_transactions import WorkflowTransaction
+from presentation_no_follow import (
+    AnchoredPath,
+    MissingPathError,
+    NoFollowPathError,
+    open_parent_no_follow,
+)
+from presentation_transactions import TransactionError, WorkflowTransaction
 
 
 _SHA256_HEX = frozenset("0123456789abcdef")
@@ -78,9 +83,7 @@ def read_verified_source(project_root: Path, relative_path: str) -> CasObject:
     """
     canonical_relative = _canonical_relative_path(relative_path)
     root = _project_root(project_root)
-    source = root / canonical_relative
-    _reject_symlink_components(root, source, canonical_relative)
-    descriptor = _open_regular_source(source, canonical_relative)
+    descriptor, anchored = _open_regular_source(root, canonical_relative)
     try:
         before = os.fstat(descriptor)
         if not stat.S_ISREG(before.st_mode):
@@ -91,6 +94,7 @@ def read_verified_source(project_root: Path, relative_path: str) -> CasObject:
         after = os.fstat(descriptor)
     finally:
         os.close(descriptor)
+        anchored.close()
     if _identity(before) != _identity(after) or len(content) != before.st_size:
         raise CasError(f"source changed while reading: {canonical_relative}")
     digest = hashlib.sha256(content).hexdigest()
@@ -181,17 +185,20 @@ def stage_cas_objects(
         target = root / object_.relative_path
         targets.append(target)
         try:
-            snapshot_content, _, _ = transaction.snapshot(target)
+            exists, snapshot_content = transaction.cas_snapshot(target)
         except ValueError as exc:
             raise CasError(f"CAS transaction target is not selected: {target}") from exc
-        existing = _read_existing_object(target, object_.relative_path, digest)
-        if existing is None:
+        except TransactionError as exc:
+            raise CasError(
+                f"CAS object must be a regular no-follow file: {object_.relative_path}"
+            ) from exc
+        if not exists:
             transaction.stage_bytes(target, object_.content, mode=0o444)
             continue
-        if existing != object_.content:
+        if hashlib.sha256(snapshot_content).hexdigest() != digest:
             raise CasError(f"CAS object bytes do not match digest: {digest}")
-        if snapshot_content != existing:
-            raise CasError(f"CAS object changed after transaction lock: {target}")
+        if snapshot_content != object_.content:
+            raise CasError(f"CAS object content collision at digest: {digest}")
     return tuple(targets)
 
 
@@ -240,42 +247,44 @@ def _source_relative_path(project_root: Path, source: Path) -> str:
     return _canonical_relative_path(relative)
 
 
-def _reject_symlink_components(project_root: Path, source: Path, relative_path: str) -> None:
-    """Reject every existing symlink in a declared source path."""
-    try:
-        components = source.relative_to(project_root).parts
-    except ValueError as exc:
-        raise CasError(f"source path escapes project root: {relative_path}") from exc
-    current = project_root
-    for component in components:
-        current = current / component
-        try:
-            metadata = os.lstat(current)
-        except FileNotFoundError:
-            return
-        except OSError as exc:
-            raise CasError(f"cannot inspect source path {relative_path}: {exc}") from exc
-        if stat.S_ISLNK(metadata.st_mode):
-            raise CasError(f"source path contains a symlink: {relative_path}")
-
-
-def _open_regular_source(source: Path, relative_path: str) -> int:
-    """Open one artifact descriptor without following links or blocking FIFOs."""
-    if not hasattr(os, "O_NOFOLLOW"):
-        raise CasError(
-            f"source reading requires os.O_NOFOLLOW: {relative_path}"
-        )
+def _open_regular_source(
+    project_root: Path, relative_path: str
+) -> tuple[int, AnchoredPath]:
+    """Open one source through a retained no-follow parent descriptor."""
     flags = os.O_RDONLY | os.O_NOFOLLOW
     if hasattr(os, "O_NONBLOCK"):
         flags |= os.O_NONBLOCK
     try:
-        return os.open(str(source), flags)
-    except FileNotFoundError as exc:
+        anchored = open_parent_no_follow(
+            project_root,
+            relative_path,
+            create_parents=False,
+        )
+    except MissingPathError as exc:
         raise CasError(f"missing source artifact: {relative_path}") from exc
-    except OSError as exc:
-        if exc.errno in (errno.ELOOP, errno.EISDIR):
-            raise CasError(f"source path is not a regular no-follow file: {relative_path}") from exc
+    except NoFollowPathError as exc:
+        raise CasError(
+            f"source path contains a symlink or unsafe directory: {relative_path}"
+        ) from exc
+    metadata = anchored.stat_leaf()
+    if metadata is None:
+        anchored.close()
+        raise CasError(f"missing source artifact: {relative_path}")
+    if stat.S_ISLNK(metadata.st_mode):
+        anchored.close()
+        raise CasError(f"source path contains a symlink: {relative_path}")
+    if not stat.S_ISREG(metadata.st_mode):
+        anchored.close()
+        raise CasError(f"source must be a regular file: {relative_path}")
+    try:
+        descriptor = anchored.open_leaf(flags)
+    except FileNotFoundError as exc:
+        anchored.close()
+        raise CasError(f"missing source artifact: {relative_path}") from exc
+    except (NoFollowPathError, OSError) as exc:
+        anchored.close()
         raise CasError(f"cannot open source artifact {relative_path}: {exc}") from exc
+    return descriptor, anchored
 
 
 def _read_all(descriptor: int, relative_path: str) -> bytes:
@@ -315,36 +324,3 @@ def _validate_planned_object(digest: object, object_: object) -> None:
         raise CasError(f"CAS object content does not match object digest: {digest}")
     if object_.mode != 0o444:
         raise CasError(f"CAS object mode is invalid: {digest}")
-
-
-def _read_existing_object(
-    target: Path, relative_path: Path, expected_digest: str
-) -> bytes | None:
-    """Return verified existing CAS bytes without following a target symlink."""
-    try:
-        metadata = os.lstat(target)
-    except FileNotFoundError:
-        return None
-    except OSError as exc:
-        raise CasError(f"cannot inspect CAS object {relative_path}: {exc}") from exc
-    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
-        raise CasError(f"CAS object must be a regular no-follow file: {relative_path}")
-    if not hasattr(os, "O_NOFOLLOW"):
-        raise CasError(f"CAS verification requires os.O_NOFOLLOW: {relative_path}")
-    try:
-        descriptor = os.open(str(target), os.O_RDONLY | os.O_NOFOLLOW)
-    except OSError as exc:
-        raise CasError(f"cannot open CAS object {relative_path}: {exc}") from exc
-    try:
-        opened = os.fstat(descriptor)
-        if not stat.S_ISREG(opened.st_mode):
-            raise CasError(f"CAS object must be a regular file: {relative_path}")
-        content = _read_all(descriptor, relative_path.as_posix())
-        closed = os.fstat(descriptor)
-    finally:
-        os.close(descriptor)
-    if _identity(opened) != _identity(closed) or len(content) != opened.st_size:
-        raise CasError(f"CAS object changed while reading: {relative_path}")
-    if hashlib.sha256(content).hexdigest() != expected_digest:
-        raise CasError(f"CAS object bytes do not match digest: {expected_digest}")
-    return content

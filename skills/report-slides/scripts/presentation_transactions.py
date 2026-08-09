@@ -26,6 +26,14 @@ from typing import Any, Iterator, Mapping, Sequence
 
 import yaml
 
+from presentation_no_follow import (
+    AnchoredPath,
+    NoFollowPathError,
+    acquire_sidecar as acquire_anchored_sidecar,
+    open_parent_no_follow,
+    write_bytes_at,
+)
+
 
 class TransactionError(RuntimeError):
     """Raised when a multi-file commit or rollback cannot complete safely."""
@@ -258,6 +266,8 @@ def _validate_journal_target(project_root: Path, raw_path: object) -> Path:
             raise TransactionError(f"journal event shard has invalid date: {relative}") from exc
     root = project_root.resolve()
     candidate = root / relative
+    if cas_match is not None:
+        return candidate
     try:
         resolved = candidate.resolve(strict=False)
         resolved.relative_to(root)
@@ -430,7 +440,13 @@ def _load_validated_journals(project_root: Path) -> list[tuple[Path, list[tuple[
     return journals
 
 
-def _write_fsync(path: Path, content: bytes, mode: int) -> None:
+def _write_fsync(
+    path: Path,
+    content: bytes,
+    mode: int,
+    *,
+    exact_mode: bool = False,
+) -> None:
     """Write bytes to a fresh path, fsyncing data and parent directory."""
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
@@ -441,6 +457,8 @@ def _write_fsync(path: Path, content: bytes, mode: int) -> None:
             if written <= 0:
                 raise OSError(f"short write while staging {path}")
             offset += written
+        applied_mode = mode if exact_mode else os.fstat(descriptor).st_mode & 0o777
+        os.fchmod(descriptor, applied_mode)
         os.fsync(descriptor)
     except BaseException:
         os.close(descriptor)
@@ -481,6 +499,8 @@ class WorkflowTransaction:
         self._snapshots: dict[Path, _FileSnapshot] = {}
         self._stages: dict[Path, _FileStage] = {}
         self._unsafe_cas_paths: set[Path] = set()
+        self._cas_anchors: dict[Path, AnchoredPath] = {}
+        self._journal_anchor: AnchoredPath | None = None
         self._journal: Path | None = None
         self._committed = False
 
@@ -490,8 +510,35 @@ class WorkflowTransaction:
             journals = self._load_incomplete_journals()
             journal_paths = [path for _, entries in journals for path, _ in entries]
             self._lock_paths = tuple(sorted(set(self.paths) | set(journal_paths), key=_path_key))
+            if any(
+                _is_cas_transaction_path(self.project_root, path)
+                for path in self._lock_paths
+            ):
+                self._journal_anchor = open_parent_no_follow(
+                    self.project_root,
+                    ".research/presentations/transactions/.journal-anchor",
+                    create_parents=True,
+                )
             for path in self._lock_paths:
-                self._descriptors.append(_acquire_sidecar(path))
+                if _is_cas_transaction_path(self.project_root, path):
+                    relative = path.relative_to(self.project_root).as_posix()
+                    anchored = open_parent_no_follow(
+                        self.project_root,
+                        relative,
+                        create_parents=True,
+                    )
+                    self._cas_anchors[path] = anchored
+                    timeout = int(
+                        os.environ.get(
+                            "PRESENTATION_STATE_LOCK_TIMEOUT_SECONDS",
+                            "30",
+                        )
+                    )
+                    self._descriptors.append(
+                        acquire_anchored_sidecar(anchored, timeout)
+                    )
+                else:
+                    self._descriptors.append(_acquire_sidecar(path))
             self._recover_journals(journals)
             for path in self.paths:
                 if _is_cas_transaction_path(self.project_root, path):
@@ -506,6 +553,9 @@ class WorkflowTransaction:
             if self.paths or journals:
                 self._notify_locked()
             return self
+        except NoFollowPathError as exc:
+            self._release_locks()
+            raise TransactionError(f"unsafe no-follow transaction path: {exc}") from exc
         except BaseException:
             self._release_locks()
             raise
@@ -533,8 +583,12 @@ class WorkflowTransaction:
             try:
                 for path, snapshot in sorted(entries, key=lambda item: _path_key(item[0])):
                     self._restore_snapshot(path, snapshot)
-                journal.unlink()
-                _directory_fsync(journal.parent)
+                if self._journal_anchor is not None:
+                    os.unlink(journal.name, dir_fd=self._journal_anchor.parent_fd)
+                    self._journal_anchor.fsync_parent()
+                else:
+                    journal.unlink()
+                    _directory_fsync(journal.parent)
             except Exception as exc:  # noqa: BLE001 - report every recovery failure
                 failures.append(f"{journal}: {exc}")
         if failures:
@@ -543,6 +597,8 @@ class WorkflowTransaction:
     def read_bytes(self, path: Path) -> bytes:
         """Read one locked transaction file, returning empty bytes when absent."""
         self._assert_path(path)
+        if _is_cas_transaction_path(self.project_root, path):
+            return self._snapshots[path].content
         return path.read_bytes() if path.is_file() else b""
 
     def snapshot(self, path: Path) -> tuple[bytes, int, int | None]:
@@ -559,6 +615,27 @@ class WorkflowTransaction:
         self._assert_path(path)
         snapshot = self._snapshots[path]
         return snapshot.content, snapshot.mode, snapshot.mtime_ns
+
+    def cas_snapshot(self, path: Path) -> tuple[bool, bytes]:
+        """Return existence and anchored bytes for one selected CAS target.
+
+        Args:
+            path: Selected canonical CAS object path.
+
+        Returns:
+            A pair containing exact preimage existence and content bytes.
+
+        Raises:
+            TransactionError: If the selected CAS leaf is unsafe.
+            ValueError: If ``path`` is unselected or not a canonical CAS path.
+        """
+        self._assert_path(path)
+        if not _is_cas_transaction_path(self.project_root, path):
+            raise ValueError(f"Path is not a CAS transaction target: {path}")
+        if path in self._unsafe_cas_paths:
+            raise TransactionError(f"unsafe CAS target cannot be read: {path}")
+        snapshot = self._snapshots[path]
+        return snapshot.exists, snapshot.content
 
     def read_yaml(self, path: Path, top_key: str) -> dict[str, Any]:
         """Read one locked versioned YAML map without reacquiring its lock."""
@@ -582,21 +659,30 @@ class WorkflowTransaction:
         target_mode = _validate_mode(mode, path) if mode is not None else (snapshot.mode if snapshot.exists else 0o666)
         temporary = _temporary_path(path)
         try:
-            _write_fsync(temporary, content, target_mode)
-            if snapshot.exists:
-                os.chmod(temporary, target_mode)
+            if _is_cas_transaction_path(self.project_root, path):
+                write_bytes_at(
+                    self._cas_anchors[path],
+                    temporary.name,
+                    content,
+                    target_mode,
+                    exact_mode=True,
+                )
+            else:
+                _write_fsync(
+                    temporary,
+                    content,
+                    target_mode,
+                    exact_mode=mode is not None or snapshot.exists,
+                )
         except BaseException:
-            try:
-                temporary.unlink()
-            except OSError:
-                pass
+            self._remove_temporary_for_path(path, temporary)
             raise
         old = self._stages.get(path)
         if old is not None:
             try:
-                self._remove_temporary(old.temporary)
+                self._remove_temporary_for_path(path, old.temporary)
             except BaseException:
-                self._remove_temporary(temporary)
+                self._remove_temporary_for_path(path, temporary)
                 raise
         self._stages[path] = _FileStage(path, temporary, target_mode)
 
@@ -626,8 +712,13 @@ class WorkflowTransaction:
             for position, stage in enumerate(ordered_stages, start=1):
                 path = stage.path
                 self._inject_failure(position, path)
-                os.replace(stage.temporary, path)
-                _directory_fsync(path.parent)
+                if _is_cas_transaction_path(self.project_root, path):
+                    anchored = self._cas_anchors[path]
+                    anchored.replace_leaf(stage.temporary.name)
+                    anchored.fsync_parent()
+                else:
+                    os.replace(stage.temporary, path)
+                    _directory_fsync(path.parent)
                 self._inject_process_death(position, path)
             self._remove_journal()
             cleanup_failures = self._cleanup_stages()
@@ -648,16 +739,14 @@ class WorkflowTransaction:
 
     def _capture_cas_snapshot(self, path: Path) -> _FileSnapshot:
         """Capture a CAS preimage without following an unsafe object symlink."""
-        try:
-            metadata = os.lstat(path)
-        except FileNotFoundError:
+        anchored = self._cas_anchors[path]
+        metadata = anchored.stat_leaf()
+        if metadata is None:
             return _FileSnapshot(False, b"", 0)
         if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
             self._unsafe_cas_paths.add(path)
             return _FileSnapshot(False, b"", 0)
-        if not hasattr(os, "O_NOFOLLOW"):
-            raise TransactionError(f"CAS snapshots require os.O_NOFOLLOW: {path}")
-        descriptor = os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW)
+        descriptor = anchored.open_leaf(os.O_RDONLY)
         try:
             opened = os.fstat(descriptor)
             if not stat.S_ISREG(opened.st_mode):
@@ -672,23 +761,14 @@ class WorkflowTransaction:
             closed = os.fstat(descriptor)
         finally:
             os.close(descriptor)
-        if (
-            opened.st_dev != closed.st_dev
-            or opened.st_ino != closed.st_ino
-            or opened.st_size != closed.st_size
-            or opened.st_mtime_ns != closed.st_mtime_ns
-            or opened.st_ctime_ns != closed.st_ctime_ns
-        ):
+        opened_identity = (opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns, opened.st_ctime_ns)
+        closed_identity = (closed.st_dev, closed.st_ino, closed.st_size, closed.st_mtime_ns, closed.st_ctime_ns)
+        if opened_identity != closed_identity:
             raise TransactionError(f"CAS object changed while capturing preimage: {path}")
         content = b"".join(chunks)
         if len(content) != opened.st_size:
             raise TransactionError(f"CAS object short read while capturing preimage: {path}")
-        return _FileSnapshot(
-            True,
-            content,
-            opened.st_mode & 0o777,
-            opened.st_mtime_ns,
-        )
+        return _FileSnapshot(True, content, opened.st_mode & 0o777, opened.st_mtime_ns)
 
     def _notify_locked(self) -> None:
         """Provide a deterministic test hook after all locks are held."""
@@ -739,17 +819,8 @@ class WorkflowTransaction:
     def _restore_snapshot(self, path: Path, snapshot: _FileSnapshot) -> None:
         """Restore one preimage exactly, including existence and mode."""
         if _is_cas_transaction_path(self.project_root, path):
-            try:
-                current_metadata = os.lstat(path)
-            except FileNotFoundError:
-                current_metadata = None
-            if current_metadata is not None and (
-                stat.S_ISLNK(current_metadata.st_mode)
-                or not stat.S_ISREG(current_metadata.st_mode)
-            ):
-                raise TransactionError(
-                    f"CAS recovery target must be a regular no-follow file: {path}"
-                )
+            self._restore_cas_snapshot(path, snapshot)
+            return
         if not snapshot.exists:
             if path.exists():
                 path.unlink()
@@ -757,8 +828,12 @@ class WorkflowTransaction:
             return
         temporary = _temporary_path(path)
         try:
-            _write_fsync(temporary, snapshot.content, snapshot.mode)
-            os.chmod(temporary, snapshot.mode)
+            _write_fsync(
+                temporary,
+                snapshot.content,
+                snapshot.mode,
+                exact_mode=True,
+            )
             os.replace(temporary, path)
         except BaseException:
             try:
@@ -772,6 +847,49 @@ class WorkflowTransaction:
             os.utime(path, ns=(snapshot.mtime_ns, snapshot.mtime_ns), follow_symlinks=False)
             _file_fsync(path)
             _directory_fsync(path.parent)
+
+    def _restore_cas_snapshot(self, path: Path, snapshot: _FileSnapshot) -> None:
+        """Restore one CAS preimage through the retained parent descriptor."""
+        anchored = self._cas_anchors[path]
+        metadata = anchored.stat_leaf()
+        if metadata is not None and (
+            stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode)
+        ):
+            raise TransactionError(
+                f"CAS recovery target must be a regular no-follow file: {path}"
+            )
+        if not snapshot.exists:
+            if metadata is not None:
+                anchored.unlink_leaf()
+                anchored.fsync_parent()
+            return
+        temporary = _temporary_path(path)
+        try:
+            write_bytes_at(
+                anchored,
+                temporary.name,
+                snapshot.content,
+                snapshot.mode,
+                exact_mode=True,
+            )
+            anchored.replace_leaf(temporary.name)
+        except BaseException:
+            self._remove_temporary_for_path(path, temporary)
+            raise
+        anchored.fsync_parent()
+        if snapshot.mtime_ns is not None:
+            os.utime(
+                anchored.leaf_name,
+                ns=(snapshot.mtime_ns, snapshot.mtime_ns),
+                dir_fd=anchored.parent_fd,
+                follow_symlinks=False,
+            )
+            descriptor = anchored.open_leaf(os.O_RDONLY)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+            anchored.fsync_parent()
 
     def _write_journal(self, stages: Sequence[_FileStage]) -> None:
         """Persist exact preimages before the first visible replacement."""
@@ -787,9 +905,26 @@ class WorkflowTransaction:
             ],
         }
         temporary = _temporary_path(journal)
-        _write_fsync(temporary, json.dumps(document, sort_keys=True).encode("utf-8"), 0o666)
-        os.replace(temporary, journal)
-        _directory_fsync(journal.parent)
+        content = json.dumps(document, sort_keys=True).encode("utf-8")
+        if self._journal_anchor is not None:
+            write_bytes_at(
+                self._journal_anchor,
+                temporary.name,
+                content,
+                0o666,
+                exact_mode=False,
+            )
+            os.replace(
+                temporary.name,
+                journal.name,
+                src_dir_fd=self._journal_anchor.parent_fd,
+                dst_dir_fd=self._journal_anchor.parent_fd,
+            )
+            self._journal_anchor.fsync_parent()
+        else:
+            _write_fsync(temporary, content, 0o666)
+            os.replace(temporary, journal)
+            _directory_fsync(journal.parent)
         self._journal = journal
 
     def _remove_journal(self) -> None:
@@ -797,7 +932,19 @@ class WorkflowTransaction:
         if self._journal is None:
             return
         journal = self._journal
-        if journal.exists():
+        if self._journal_anchor is not None:
+            try:
+                os.stat(
+                    journal.name,
+                    dir_fd=self._journal_anchor.parent_fd,
+                    follow_symlinks=False,
+                )
+            except FileNotFoundError:
+                pass
+            else:
+                os.unlink(journal.name, dir_fd=self._journal_anchor.parent_fd)
+                self._journal_anchor.fsync_parent()
+        elif journal.exists():
             journal.unlink()
             _directory_fsync(journal.parent)
         self._journal = None
@@ -808,22 +955,38 @@ class WorkflowTransaction:
         for path in sorted(self._stages, key=_path_key):
             stage = self._stages[path]
             try:
-                self._remove_temporary(stage.temporary)
+                self._remove_temporary_for_path(path, stage.temporary)
             except Exception as exc:  # noqa: BLE001 - recovery must be explicit
                 failures.append(f"{stage.temporary}: {exc}")
         return failures
 
-    @staticmethod
-    def _remove_temporary(path: Path) -> None:
-        """Remove one temporary path when it still exists."""
-        if path.exists():
-            path.unlink()
+    def _remove_temporary_for_path(self, target: Path, temporary: Path) -> None:
+        """Remove one staged sibling through its target's retained directory."""
+        if _is_cas_transaction_path(self.project_root, target):
+            anchored = self._cas_anchors[target]
+            try:
+                os.stat(
+                    temporary.name,
+                    dir_fd=anchored.parent_fd,
+                    follow_symlinks=False,
+                )
+            except FileNotFoundError:
+                return
+            os.unlink(temporary.name, dir_fd=anchored.parent_fd)
+        elif temporary.exists():
+            temporary.unlink()
 
     def _release_locks(self) -> None:
         """Release held descriptors in reverse deterministic order."""
         for descriptor in reversed(self._descriptors):
             _release_sidecar(descriptor)
         self._descriptors.clear()
+        for anchored in self._cas_anchors.values():
+            anchored.close()
+        self._cas_anchors.clear()
+        if self._journal_anchor is not None:
+            self._journal_anchor.close()
+            self._journal_anchor = None
 
 
 @contextmanager
