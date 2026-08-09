@@ -11,6 +11,7 @@ from typing import Any, Iterator, Mapping
 
 from presentation_artifact_provenance import canonical_source_digest
 from presentation_contracts import contract_sha256
+from presentation_evidence_contracts import legacy_nullable_path_fields
 
 
 class MigrationError(RuntimeError):
@@ -46,14 +47,6 @@ SINGULAR_PATH_KEYS = frozenset(
         "manifest_path",
     }
 )
-NULLABLE_PATH_FIELDS = frozenset(
-    {
-        "slide_spec_path",
-        "visual_spec_path",
-        "assignment_path",
-        "artifact_manifest_path",
-    }
-)
 PLURAL_PATH_KEYS = frozenset(
     {
         "source_paths",
@@ -81,47 +74,6 @@ _STORE_NAMES = frozenset(
         "events",
     }
 )
-_PUBLIC_SLIDE_RECORD_FIELDS = frozenset(
-    {
-        "id",
-        "deck_id",
-        "plan_slide_id",
-        "title",
-        "status",
-        "created_at",
-        "updated_at",
-        "created_by",
-        "approved_takeaway_sha256",
-        "approved_evidence_sha256",
-        "slide_spec_path",
-        "slide_spec_sha256",
-        "attempt",
-    }
-)
-_PUBLIC_MODULE_RECORD_FIELDS = frozenset(
-    {
-        "id",
-        "slide_id",
-        "module_key",
-        "module_type",
-        "dependencies",
-        "status",
-        "visual_spec_path",
-        "assignment_path",
-        "artifact_manifest_path",
-        "attempt",
-        "supersedes_module_id",
-        "created_at",
-        "updated_at",
-        "created_by",
-    }
-)
-_PUBLIC_SLIDE_REPLACEMENT_FIELDS = (
-    _PUBLIC_SLIDE_RECORD_FIELDS - {"updated_at"}
-) | frozenset({"supersedes_slide_id", "revision_request_id", "revision_kind"})
-_PUBLIC_MODULE_REPLACEMENT_FIELDS = (
-    _PUBLIC_MODULE_RECORD_FIELDS - {"updated_at"}
-) | frozenset({"revision_request_id", "revision_kind"})
 _PREVIEW_FIELDS = frozenset(
     {
         "schema_version",
@@ -393,18 +345,16 @@ def _nullable_fields_for_record(
     """
     if store_name not in {"slides", "visual_modules"} or value.get("status") != "planned":
         return frozenset()
-    keys = set(value)
-    if store_name == "slides" and (
-        keys == _PUBLIC_SLIDE_RECORD_FIELDS
-        or keys == _PUBLIC_SLIDE_REPLACEMENT_FIELDS
-    ):
-        return frozenset({"slide_spec_path"})
-    if store_name == "visual_modules" and (
-        keys == _PUBLIC_MODULE_RECORD_FIELDS
-        or keys == _PUBLIC_MODULE_REPLACEMENT_FIELDS
-    ):
-        return frozenset({"visual_spec_path", "assignment_path", "artifact_manifest_path"})
-    if any(value.get(field) is None for field in NULLABLE_PATH_FIELDS if field in value):
+    nullable_fields = legacy_nullable_path_fields(store_name, value)
+    if nullable_fields:
+        return nullable_fields
+    nullable_path_fields = {
+        "slide_spec_path",
+        "visual_spec_path",
+        "assignment_path",
+        "artifact_manifest_path",
+    }
+    if any(value.get(field) is None for field in nullable_path_fields if field in value):
         raise MigrationError(
             f"planned {store_name} record with nullable paths must match its exact public schema"
         )

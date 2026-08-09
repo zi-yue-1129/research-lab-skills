@@ -13,6 +13,7 @@ import yaml
 
 import migrate_presentation_state as migration
 from migration_scope import MigrationError, validate_record_paths
+from presentation_evidence_contracts import legacy_nullable_path_fields
 
 
 STORE_TOP_KEYS = {
@@ -403,11 +404,19 @@ def test_exact_public_planned_slide_and_module_records_keep_nullable_paths(
 ) -> None:
     """Authoritative planned public records retain only documented nulls."""
     project = _project(tmp_path)
+    slide = _public_slide_record()
+    module = _public_module_record()
 
-    validate_record_paths(project, _public_slide_record(), store_name="slides")
+    assert legacy_nullable_path_fields("slides", slide) == {"slide_spec_path"}
+    assert legacy_nullable_path_fields("visual_modules", module) == {
+        "visual_spec_path",
+        "assignment_path",
+        "artifact_manifest_path",
+    }
+    validate_record_paths(project, slide, store_name="slides")
     validate_record_paths(
         project,
-        _public_module_record(),
+        module,
         store_name="visual_modules",
     )
 
