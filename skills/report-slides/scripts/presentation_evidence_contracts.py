@@ -115,6 +115,20 @@ _SLIDE_FIELDS = frozenset(
 _SLIDE_RETRY_FIELDS = (_SLIDE_FIELDS - {"updated_at"}) | frozenset(
     {"supersedes_slide_id", "revision_request_id", "revision_kind"}
 )
+_LEGACY_SLIDE_REQUIRED_FIELDS = frozenset(
+    {"id", "deck_id", "plan_slide_id", "title", "status"}
+)
+_LEGACY_SLIDE_OPTIONAL_FIELDS = (
+    _SLIDE_FIELDS | _SLIDE_RETRY_FIELDS
+) - _LEGACY_SLIDE_REQUIRED_FIELDS
+_LEGACY_MODULE_REQUIRED_FIELDS = frozenset(
+    {"id", "slide_id", "module_key", "module_type", "dependencies", "status"}
+)
+_LEGACY_MODULE_OPTIONAL_FIELDS = (
+    _MODULE_FIELDS
+    | _MODULE_RETRY_FIELDS
+    | frozenset({"visual_spec_sha256", "spec_sha256"})
+) - _LEGACY_MODULE_REQUIRED_FIELDS
 _ASSIGNMENT_FIELDS = frozenset(
     {
         "id",
@@ -339,10 +353,12 @@ def artifact_policy_for_event(event_kind: str) -> str:
 def legacy_nullable_path_fields(
     store_name: str | None, record: Mapping[object, object]
 ) -> frozenset[str]:
-    """Return legacy nullable fields using explicit public record schemas.
+    """Return nullable paths for documented schema-0 and schema-1 records.
 
-    This compatibility helper keeps record-shape ownership in the v2 kernel
-    while the schema-v1 migration still validates path existence separately.
+    Schema-v2 records retain their exact intrinsic validation. The explicitly
+    legacy branch accepts only a required identity/status schema plus a closed
+    set of known optional fields; it never infers a record kind from a key
+    subset. Migration still validates non-null paths against the filesystem.
 
     Args:
         store_name: Legacy top-level store name, if known.
@@ -352,21 +368,173 @@ def legacy_nullable_path_fields(
         The documented path fields that may be null for this exact record.
 
     Raises:
-        EvidenceContractError: If a slide or visual-module record does not
-            satisfy its intrinsic authoritative contract.
+        EvidenceContractError: If a record has an unknown, mixed, or invalid
+            documented legacy field/path/digest combination.
     """
     candidate = _mapping(record, f"{store_name} record")
     if store_name == "slides":
-        _validate_slide_intrinsic(candidate)
-        if candidate.get("status") == "planned":
-            return frozenset({"slide_spec_path"})
+        if set(candidate) in {_SLIDE_FIELDS, _SLIDE_RETRY_FIELDS}:
+            _validate_slide_intrinsic(candidate)
+            if candidate.get("status") != "planned":
+                return frozenset()
+        else:
+            _validate_legacy_planned_slide(candidate)
+        return frozenset({"slide_spec_path"})
     if store_name == "visual_modules":
-        _validate_visual_module_intrinsic(candidate)
-        if candidate.get("status") == "planned":
-            return frozenset(
-                {"visual_spec_path", "assignment_path", "artifact_manifest_path"}
-            )
+        if set(candidate) - {"spec_sha256", "visual_spec_sha256"} in {
+            _MODULE_FIELDS,
+            _MODULE_RETRY_FIELDS,
+        }:
+            _validate_visual_module_intrinsic(candidate)
+            if candidate.get("status") != "planned":
+                return frozenset()
+        else:
+            _validate_legacy_planned_module(candidate)
+        return frozenset(
+            {"visual_spec_path", "assignment_path", "artifact_manifest_path"}
+        )
     return frozenset()
+
+
+def _validate_legacy_planned_slide(record: Mapping[str, Any]) -> None:
+    """Validate the closed schema-0/1 planned-slide compatibility shape."""
+    _require_legacy_record_fields(
+        record,
+        _LEGACY_SLIDE_REQUIRED_FIELDS,
+        _LEGACY_SLIDE_OPTIONAL_FIELDS,
+        "slides",
+    )
+    for field in ("id", "deck_id", "plan_slide_id", "title"):
+        _require_text(record.get(field), f"slides.{field}")
+    _require_legacy_planned_status(record, "slides")
+    _validate_legacy_optional_texts(
+        record, ("created_at", "updated_at", "created_by"), "slides"
+    )
+    _validate_legacy_optional_positive_int(record, "attempt", "slides")
+    _validate_legacy_optional_digest_fields(
+        record, ("approved_takeaway_sha256", "approved_evidence_sha256"), "slides"
+    )
+    _validate_legacy_retry_fields(
+        record, ("supersedes_slide_id", "revision_request_id", "revision_kind"), "slides"
+    )
+    path = record.get("slide_spec_path")
+    digest = record.get("slide_spec_sha256")
+    if path is None:
+        if digest is not None:
+            raise EvidenceContractError("slides.slide_spec_sha256 requires slide_spec_path")
+        return
+    _canonical_relative_path(path, "slides.slide_spec_path")
+    if digest is not None:
+        _require_digest(digest, "slides.slide_spec_sha256")
+
+
+def _validate_legacy_planned_module(record: Mapping[str, Any]) -> None:
+    """Validate the closed schema-0/1 planned-module compatibility shape."""
+    _require_legacy_record_fields(
+        record,
+        _LEGACY_MODULE_REQUIRED_FIELDS,
+        _LEGACY_MODULE_OPTIONAL_FIELDS,
+        "visual_modules",
+    )
+    for field in ("id", "slide_id", "module_key", "module_type"):
+        _require_text(record.get(field), f"visual_modules.{field}")
+    _require_legacy_planned_status(record, "visual_modules")
+    _validate_text_list(record.get("dependencies"), "visual_modules.dependencies")
+    _validate_legacy_optional_texts(
+        record, ("created_at", "updated_at", "created_by"), "visual_modules"
+    )
+    _validate_legacy_optional_positive_int(record, "attempt", "visual_modules")
+    if "supersedes_module_id" in record and record["supersedes_module_id"] is not None:
+        _require_text(record["supersedes_module_id"], "visual_modules.supersedes_module_id")
+    _validate_legacy_retry_fields(
+        record, ("revision_request_id", "revision_kind"), "visual_modules"
+    )
+    _validate_legacy_module_spec(record)
+    for field in ("assignment_path", "artifact_manifest_path"):
+        if record.get(field) is not None:
+            _canonical_relative_path(record[field], f"visual_modules.{field}")
+
+
+def _require_legacy_record_fields(
+    record: Mapping[str, Any],
+    required_fields: frozenset[str],
+    optional_fields: frozenset[str],
+    store_name: str,
+) -> None:
+    """Require documented legacy fields and reject all unknown/mixed fields."""
+    actual_fields = set(record)
+    missing_fields = sorted(required_fields - actual_fields)
+    unknown_fields = sorted(actual_fields - required_fields - optional_fields)
+    if not missing_fields and not unknown_fields:
+        return
+    details: list[str] = []
+    if missing_fields:
+        details.append(f"missing {missing_fields}")
+    if unknown_fields:
+        details.append(f"unknown {unknown_fields}")
+    raise EvidenceContractError(f"{store_name} legacy fields are invalid: {', '.join(details)}")
+
+
+def _require_legacy_planned_status(record: Mapping[str, Any], store_name: str) -> None:
+    """Require the sole lifecycle that can use legacy nullable paths."""
+    if record.get("status") != "planned":
+        raise EvidenceContractError(f"{store_name} legacy nullable paths require planned status")
+
+
+def _validate_legacy_optional_texts(
+    record: Mapping[str, Any], fields: tuple[str, ...], store_name: str
+) -> None:
+    """Validate any declared optional legacy text values."""
+    for field in fields:
+        if field in record:
+            _require_text(record[field], f"{store_name}.{field}")
+
+
+def _validate_legacy_optional_positive_int(
+    record: Mapping[str, Any], field: str, store_name: str
+) -> None:
+    """Validate one declared optional positive integer legacy value."""
+    if field in record:
+        _require_positive_int(record[field], f"{store_name}.{field}")
+
+
+def _validate_legacy_optional_digest_fields(
+    record: Mapping[str, Any], fields: tuple[str, ...], store_name: str
+) -> None:
+    """Validate non-null optional legacy digest values."""
+    for field in fields:
+        if field in record and record[field] is not None:
+            _require_digest(record[field], f"{store_name}.{field}")
+
+
+def _validate_legacy_retry_fields(
+    record: Mapping[str, Any], fields: tuple[str, ...], store_name: str
+) -> None:
+    """Reject partial retry refinements that cannot bind authoritative relations."""
+    if any(field in record for field in fields):
+        raise EvidenceContractError(
+            f"{store_name} legacy records cannot mix partial retry fields with placeholder paths"
+        )
+
+
+def _validate_legacy_module_spec(record: Mapping[str, Any]) -> None:
+    """Validate a schema-0/1 module path and its optional digest aliases."""
+    canonical_present = "visual_spec_sha256" in record
+    legacy_present = "spec_sha256" in record
+    canonical_digest = record.get("visual_spec_sha256")
+    legacy_digest = record.get("spec_sha256")
+    if canonical_present and legacy_present and canonical_digest != legacy_digest:
+        raise EvidenceContractError("visual_modules.spec_sha256 conflicts with visual_spec_sha256")
+    _validate_legacy_optional_digest_fields(
+        record, ("visual_spec_sha256", "spec_sha256"), "visual_modules"
+    )
+    if record.get("visual_spec_path") is None:
+        if canonical_digest is not None or legacy_digest is not None:
+            raise EvidenceContractError(
+                "visual_modules visual_spec digest requires visual_spec_path"
+            )
+        return
+    _canonical_relative_path(record["visual_spec_path"], "visual_modules.visual_spec_path")
 
 
 def _mapping(value: object, field: str) -> Mapping[str, Any]:

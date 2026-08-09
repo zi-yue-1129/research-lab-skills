@@ -129,6 +129,29 @@ def _public_planned_module_record() -> dict[str, Any]:
     return record
 
 
+def _schema_zero_planned_slide_record() -> dict[str, str]:
+    """Return the documented minimal schema-0 planned slide record."""
+    return {
+        "id": "sld-legacy",
+        "deck_id": "deck-legacy",
+        "plan_slide_id": "slide-01",
+        "title": "Legacy title",
+        "status": "planned",
+    }
+
+
+def _schema_zero_planned_module_record() -> dict[str, Any]:
+    """Return the documented minimal schema-0 planned module record."""
+    return {
+        "id": "mod-legacy",
+        "slide_id": "sld-legacy",
+        "module_key": "hero",
+        "module_type": "architecture",
+        "dependencies": [],
+        "status": "planned",
+    }
+
+
 def _artifact_ref(
     digest: str,
     artifact_kind: str,
@@ -349,6 +372,109 @@ def test_nullable_bridge_accepts_exact_public_planned_module_shape() -> None:
     assert legacy_nullable_path_fields(
         "visual_modules", _public_planned_module_record()
     ) == {"visual_spec_path", "assignment_path", "artifact_manifest_path"}
+
+
+@pytest.mark.parametrize(
+    ("store_name", "record", "expected_paths"),
+    [
+        ("slides", _schema_zero_planned_slide_record(), {"slide_spec_path"}),
+        (
+            "visual_modules",
+            _schema_zero_planned_module_record(),
+            {"visual_spec_path", "assignment_path", "artifact_manifest_path"},
+        ),
+    ],
+)
+def test_nullable_bridge_accepts_minimal_schema_zero_planned_records(
+    store_name: str, record: dict[str, Any], expected_paths: set[str]
+) -> None:
+    """Schema-0 planned records may omit fields introduced by later schemas."""
+    assert legacy_nullable_path_fields(store_name, record) == expected_paths
+
+
+@pytest.mark.parametrize(
+    ("store_name", "record", "expected_paths"),
+    [
+        (
+            "slides",
+            {**_schema_zero_planned_slide_record(), "updated_at": "2026-08-09T00:00:00Z"},
+            {"slide_spec_path"},
+        ),
+        (
+            "visual_modules",
+            {**_schema_zero_planned_module_record(), "updated_at": "2026-08-09T00:00:00Z"},
+            {"visual_spec_path", "assignment_path", "artifact_manifest_path"},
+        ),
+    ],
+)
+def test_nullable_bridge_accepts_known_legacy_optional_timestamp_fields(
+    store_name: str, record: dict[str, Any], expected_paths: set[str]
+) -> None:
+    """Recognized legacy fields remain optional independently of one another."""
+    assert legacy_nullable_path_fields(store_name, record) == expected_paths
+
+
+def test_nullable_bridge_accepts_schema_zero_module_spec_path_without_digest() -> None:
+    """A schema-0 module path may predate both documented digest aliases."""
+    record = _schema_zero_planned_module_record()
+    record["visual_spec_path"] = "contracts/hero.yaml"
+
+    assert legacy_nullable_path_fields("visual_modules", record) == {
+        "visual_spec_path",
+        "assignment_path",
+        "artifact_manifest_path",
+    }
+
+
+@pytest.mark.parametrize(
+    ("store_name", "record", "expected"),
+    [
+        (
+            "slides",
+            {**_schema_zero_planned_slide_record(), "module_key": "spoofed"},
+            "slides",
+        ),
+        (
+            "visual_modules",
+            {**_schema_zero_planned_module_record(), "deck_id": "spoofed"},
+            "visual_modules",
+        ),
+        (
+            "visual_modules",
+            {
+                **_schema_zero_planned_module_record(),
+                "visual_spec_path": None,
+                "spec_sha256": _DIGEST,
+            },
+            "visual_spec",
+        ),
+        (
+            "visual_modules",
+            {
+                **_schema_zero_planned_module_record(),
+                "visual_spec_path": "contracts/hero.yaml",
+                "visual_spec_sha256": _DIGEST,
+                "spec_sha256": _SECOND_DIGEST,
+            },
+            "spec_sha256",
+        ),
+        (
+            "slides",
+            {
+                **_schema_zero_planned_slide_record(),
+                "slide_spec_path": None,
+                "slide_spec_sha256": _DIGEST,
+            },
+            "slide_spec_sha256",
+        ),
+    ],
+)
+def test_nullable_bridge_rejects_spoofed_and_invalid_legacy_path_records(
+    store_name: str, record: dict[str, Any], expected: str
+) -> None:
+    """The legacy bridge rejects mixed identities and invalid path-digest states."""
+    with pytest.raises(EvidenceContractError, match=expected):
+        legacy_nullable_path_fields(store_name, record)
 
 
 @pytest.mark.parametrize(
