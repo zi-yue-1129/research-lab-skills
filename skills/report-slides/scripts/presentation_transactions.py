@@ -35,6 +35,9 @@ class TransactionRecoveryRequiredError(TransactionError):
     """Raised when a low-level writer runs before a durable journal is recovered."""
 
 
+MAX_MTIME_NS = 9_223_372_036_854_775_807
+
+
 class SimulatedProcessDeath(BaseException):
     """Test-only process-death signal that bypasses in-process rollback."""
 
@@ -138,6 +141,20 @@ def _directory_fsync(path: Path) -> None:
     """Fsync a parent directory after replacing a file."""
     descriptor = os.open(str(path), os.O_RDONLY)
     try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _file_fsync(path: Path) -> None:
+    """Fsync one restored regular file without following a symlink."""
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise TransactionError(f"restored-file fsync requires os.O_NOFOLLOW: {path}")
+    descriptor = os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise TransactionError(f"restored target must be a regular file: {path}")
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
@@ -333,12 +350,26 @@ def _decode_journal(project_root: Path, path: Path) -> tuple[str, list[tuple[Pat
         mode = entry.get("mode")
         if not isinstance(exists, bool):
             raise TransactionError(f"invalid transaction journal metadata: {path}")
-        mtime_ns = entry.get("mtime_ns")
-        if mtime_ns is not None and (
-            isinstance(mtime_ns, bool) or not isinstance(mtime_ns, int) or mtime_ns < 0
-        ):
-            raise TransactionError(f"invalid transaction journal metadata: {path}")
-        decoded.append((target, _FileSnapshot(exists, content, _validate_mode(mode, path), mtime_ns)))
+        if "mtime_ns" in entry:
+            mtime_ns = entry["mtime_ns"]
+            if (
+                mtime_ns is None
+                or isinstance(mtime_ns, bool)
+                or not isinstance(mtime_ns, int)
+                or mtime_ns < 0
+                or mtime_ns > MAX_MTIME_NS
+            ):
+                raise TransactionError(f"invalid transaction journal mtime metadata: {path}")
+        else:
+            # Journals written before mtime support intentionally omit this
+            # field; recovery must preserve that legacy behavior.
+            mtime_ns = None
+        validated_mode = _validate_mode(mode, path)
+        if not exists and (content or validated_mode != 0 or "mtime_ns" in entry):
+            raise TransactionError(
+                f"non-existent transaction snapshot carries metadata: {path}"
+            )
+        decoded.append((target, _FileSnapshot(exists, content, validated_mode, mtime_ns)))
     return transaction_id, decoded
 
 
@@ -471,6 +502,21 @@ class WorkflowTransaction:
         self._assert_path(path)
         return path.read_bytes() if path.is_file() else b""
 
+    def snapshot(self, path: Path) -> tuple[bytes, int, int | None]:
+        """Return the exact preimage captured while this transaction held locks.
+
+        Args:
+            path: Selected transaction target.
+
+        Returns:
+            A tuple of exact bytes, permission bits, and optional nanosecond
+            mtime.  The returned values are immutable preimages, not a fresh
+            unlocked filesystem read.
+        """
+        self._assert_path(path)
+        snapshot = self._snapshots[path]
+        return snapshot.content, snapshot.mode, snapshot.mtime_ns
+
     def read_yaml(self, path: Path, top_key: str) -> dict[str, Any]:
         """Read one locked versioned YAML map without reacquiring its lock."""
         raw = self.read_bytes(path)
@@ -590,10 +636,11 @@ class WorkflowTransaction:
                 self._restore_snapshot(path, self._snapshots[path])
             except Exception as exc:  # noqa: BLE001 - aggregate every recovery error
                 failures.append(f"{path}: {exc}")
-        try:
-            self._remove_journal()
-        except Exception as exc:  # noqa: BLE001 - aggregate journal cleanup failures
-            failures.append(f"{self._journal or 'transaction journal'}: {exc}")
+        if not failures:
+            try:
+                self._remove_journal()
+            except Exception as exc:  # noqa: BLE001 - aggregate journal cleanup failures
+                failures.append(f"{self._journal or 'transaction journal'}: {exc}")
         failures.extend(self._cleanup_stages())
         return failures
 
@@ -605,12 +652,21 @@ class WorkflowTransaction:
                 _directory_fsync(path.parent)
             return
         temporary = _temporary_path(path)
-        _write_fsync(temporary, snapshot.content, snapshot.mode)
-        os.chmod(temporary, snapshot.mode)
-        os.replace(temporary, path)
+        try:
+            _write_fsync(temporary, snapshot.content, snapshot.mode)
+            os.chmod(temporary, snapshot.mode)
+            os.replace(temporary, path)
+        except BaseException:
+            try:
+                if temporary.exists():
+                    temporary.unlink()
+            except OSError:
+                pass
+            raise
         _directory_fsync(path.parent)
         if snapshot.mtime_ns is not None:
             os.utime(path, ns=(snapshot.mtime_ns, snapshot.mtime_ns), follow_symlinks=False)
+            _file_fsync(path)
             _directory_fsync(path.parent)
 
     def _write_journal(self, stages: Sequence[_FileStage]) -> None:

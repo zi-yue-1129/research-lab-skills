@@ -11,7 +11,8 @@ invented or rewritten.
 from __future__ import annotations
 
 import argparse
-import hashlib
+import ctypes
+import errno
 import json
 import os
 import shutil
@@ -24,7 +25,10 @@ from typing import Any, Iterator, Mapping
 import yaml
 
 from presentation_events import StateParseError
+from presentation_contracts import contract_sha256
+from presentation_events import effective_review_results
 from presentation_transactions import WorkflowTransaction, incomplete_transaction_journals
+from validate_deck_plan import validate_deck_approval, validate_deck_plan
 
 
 STATE_VERSION = 1
@@ -59,6 +63,7 @@ DECK_STATUSES = frozenset(
     }
 )
 SHA256_LENGTH = 64
+OPERATIONAL_DIRS = frozenset({"transactions", "cache"})
 
 
 class MigrationError(RuntimeError):
@@ -172,6 +177,8 @@ def _iter_scope_entries(root: Path) -> Iterator[Path]:
             if stat.S_ISLNK(metadata.st_mode):
                 raise MigrationError(f"state/event entry must not be a symlink: {entry_path}")
             if stat.S_ISDIR(metadata.st_mode):
+                if entry.name in OPERATIONAL_DIRS:
+                    continue
                 pending.append(entry_path)
             elif stat.S_ISREG(metadata.st_mode):
                 yield entry_path
@@ -221,6 +228,10 @@ def _canonical_project_relative(project_root: Path, raw_value: object) -> str:
             raise MigrationError(f"unable to inspect path {raw_value!r}: {exc}") from exc
         if stat.S_ISLNK(metadata.st_mode):
             raise MigrationError(f"path contains a symlink and cannot be verified: {raw_value!r}")
+        if part != parts[-1] and not stat.S_ISDIR(metadata.st_mode):
+            raise MigrationError(f"path ancestor is not a directory: {raw_value!r}")
+        if part == parts[-1] and not stat.S_ISREG(metadata.st_mode) and not stat.S_ISDIR(metadata.st_mode):
+            raise MigrationError(f"path refers to a special file: {raw_value!r}")
     try:
         candidate.resolve(strict=False).relative_to(root)
     except (OSError, ValueError) as exc:
@@ -246,27 +257,45 @@ _PATH_KEYS = frozenset(
 )
 
 
-def _validate_record_paths(project_root: Path, value: object, key: str | None = None) -> None:
-    """Validate all persisted path-bearing fields recursively."""
-    if isinstance(value, Mapping):
-        for child_key, child_value in value.items():
-            if isinstance(child_key, str) and (
-                child_key in _PATH_KEYS or child_key.endswith("_path") or child_key.endswith("_paths")
-            ):
-                if child_value is None:
-                    continue
-                if isinstance(child_value, list):
-                    for item in child_value:
-                        if isinstance(item, Mapping):
-                            _validate_record_paths(project_root, item)
-                        else:
-                            _canonical_project_relative(project_root, item)
-                else:
-                    _canonical_project_relative(project_root, child_value)
-            _validate_record_paths(project_root, child_value, str(child_key))
-    elif isinstance(value, list):
-        for item in value:
-            _validate_record_paths(project_root, item, key)
+def _validate_record_paths(
+    project_root: Path,
+    value: object,
+    key: str | None = None,
+    stack: set[int] | None = None,
+) -> None:
+    """Validate path-bearing fields recursively with alias-cycle detection."""
+    active = stack if stack is not None else set()
+    if isinstance(value, (Mapping, list)):
+        identity = id(value)
+        if identity in active:
+            raise MigrationError("recursive YAML alias cycle in path-bearing state")
+        active.add(identity)
+    else:
+        return
+    try:
+        if isinstance(value, Mapping):
+            for child_key, child_value in value.items():
+                if isinstance(child_key, str) and (
+                    child_key in _PATH_KEYS or child_key.endswith("_path") or child_key.endswith("_paths")
+                ):
+                    if child_value is None:
+                        raise MigrationError(f"path field {child_key!r} must not be null")
+                    if isinstance(child_value, list):
+                        for item in child_value:
+                            if isinstance(item, Mapping):
+                                _validate_record_paths(project_root, item, stack=active)
+                            else:
+                                _canonical_project_relative(project_root, item)
+                    elif isinstance(child_value, Mapping):
+                        _validate_record_paths(project_root, child_value, stack=active)
+                    else:
+                        _canonical_project_relative(project_root, child_value)
+                _validate_record_paths(project_root, child_value, str(child_key), active)
+        elif isinstance(value, list):
+            for item in value:
+                _validate_record_paths(project_root, item, key, active)
+    finally:
+        active.remove(id(value))
 
 
 def _parse_yaml(path: Path, content: bytes) -> dict[str, Any]:
@@ -387,17 +416,23 @@ def _safe_plan_evidence(
     plans: Mapping[str, Any],
     events: list[Mapping[str, Any]],
 ) -> list[str]:
-    """Return deterministic blockers for an approved deck's evidence chain."""
+    """Return deterministic blockers for an approved deck's evidence chain.
+
+    The migration deliberately consumes the same contracts as the workflow
+    gates.  It never repairs an incomplete document by inferring a digest,
+    approval identity, or review result.
+    """
     deck_id = str(deck.get("id", "<unknown>"))
     blockers: set[str] = set()
     current_plan_id = deck.get("current_plan_id")
+    plan_record: Mapping[str, Any] | None = None
     if not isinstance(current_plan_id, str) or not current_plan_id:
         blockers.add("approval evidence: missing current plan id")
-        plan_record: Mapping[str, Any] | None = None
     else:
         candidate = plans.get(current_plan_id)
-        plan_record = candidate if isinstance(candidate, Mapping) else None
-        if plan_record is None:
+        if isinstance(candidate, Mapping):
+            plan_record = candidate
+        else:
             blockers.add("approval evidence: missing plan record")
 
     plan_document: Mapping[str, Any] | None = None
@@ -412,20 +447,15 @@ def _safe_plan_evidence(
         else:
             plan_version = raw_version
         raw_path = plan_record.get("plan_path", plan_record.get("path"))
-        try:
-            relative_path = _canonical_project_relative(project_root, raw_path)
-        except MigrationError:
-            raise
+        relative_path = _canonical_project_relative(project_root, raw_path)
         plan_path = project_root / relative_path
-        raw_digest = plan_record.get("plan_sha256", plan_record.get("sha256"))
-        if (
-            not isinstance(raw_digest, str)
-            or len(raw_digest) != SHA256_LENGTH
-            or any(character not in "0123456789abcdef" for character in raw_digest)
+        raw_digest = plan_record.get("sha256", plan_record.get("plan_sha256"))
+        if isinstance(raw_digest, str) and len(raw_digest) == SHA256_LENGTH and all(
+            character in "0123456789abcdef" for character in raw_digest
         ):
-            blockers.add("approval evidence: invalid plan digest")
-        else:
             plan_digest = raw_digest
+        else:
+            blockers.add("approval evidence: invalid plan digest")
         try:
             plan_bytes, _ = _read_regular_file(plan_path)
         except MigrationError as exc:
@@ -434,73 +464,139 @@ def _safe_plan_evidence(
             else:
                 raise
         else:
-            actual_digest = hashlib.sha256(plan_bytes).hexdigest()
-            if plan_digest is not None and actual_digest != plan_digest:
-                blockers.add("approval evidence: plan digest mismatch")
             try:
                 parsed_plan = _parse_yaml(plan_path, plan_bytes)
             except (MigrationError, StateParseError):
                 blockers.add("approval evidence: plan document is malformed")
             else:
-                if not isinstance(parsed_plan, Mapping):
-                    blockers.add("approval evidence: plan document is not a mapping")
-                else:
-                    plan_document = parsed_plan
-                    if parsed_plan.get("deck_id") != deck_id:
-                        blockers.add("approval evidence: plan document deck binding mismatch")
-                    document_version = parsed_plan.get("plan_version", parsed_plan.get("version"))
-                    if plan_version is not None and document_version != plan_version:
-                        blockers.add("approval evidence: plan document version mismatch")
+                plan_document = parsed_plan
+                contract_errors = validate_deck_plan(parsed_plan)
+                blockers.update(f"approval evidence: plan contract: {error}" for error in contract_errors)
+                try:
+                    canonical_digest = contract_sha256(parsed_plan)
+                except (TypeError, ValueError, RecursionError):
+                    canonical_digest = None
+                    blockers.add("approval evidence: plan canonical digest is unavailable")
+                if plan_digest != canonical_digest:
+                    blockers.add("approval evidence: plan digest mismatch")
+                if parsed_plan.get("deck_id") != deck_id:
+                    blockers.add("approval evidence: plan document deck binding mismatch")
+                if plan_version is not None and parsed_plan.get("plan_version") != plan_version:
+                    blockers.add("approval evidence: plan document version mismatch")
 
     if deck.get("approved_plan_version") != plan_version:
         blockers.add("approval evidence: approved plan version mismatch")
     if deck.get("approved_plan_sha256") != plan_digest:
         blockers.add("approval evidence: approved plan digest mismatch")
+    deck_identity = deck.get("identity_verifiable", True)
+    if type(deck_identity) is not bool or deck_identity is False:
+        blockers.add("approval evidence: deck identity is unverifiable")
 
     approval_id = deck.get("approval_id")
     if not isinstance(approval_id, str) or not approval_id:
         blockers.add("approval evidence: missing approval evidence")
-    approval_events = [
+    approval_candidates = [
         event
         for event in events
         if event.get("event") == "deck_approval"
         and event.get("deck_id") == deck_id
-        and (approval_id is None or event.get("id") == approval_id)
+        and event.get("id") == approval_id
     ]
     matching_approval = False
-    for event in approval_events:
-        if event.get("plan_version") != plan_version or event.get("plan_sha256") != plan_digest:
+    for event in approval_candidates:
+        contract_errors = validate_deck_approval(event)
+        if contract_errors:
+            blockers.update(f"approval evidence: approval contract: {error}" for error in contract_errors)
             continue
-        if not isinstance(event.get("approved_by"), str) or not event.get("approved_by"):
+        if event.get("decision") != "approve":
+            blockers.add("approval evidence: decision must be approve")
             continue
-        if event.get("approved_by") == (plan_document or {}).get("authored_by"):
+        identity_flag = event.get("identity_verifiable", True)
+        if type(identity_flag) is not bool or identity_flag is False:
+            blockers.add("approval evidence: approver identity is unverifiable")
             continue
-        if not isinstance(event.get("approved_at"), str) or not event.get("approval_mode"):
+        approved_by = event.get("approved_by")
+        if not isinstance(approved_by, str) or not approved_by.strip() or approved_by != approved_by.strip():
+            blockers.add("approval evidence: approver identity is invalid")
+            continue
+        if (
+            event.get("plan_version") != plan_version
+            or event.get("plan_sha256") != plan_digest
+            or event.get("approved_by") != deck.get("approved_by")
+            or event.get("approved_at") != deck.get("approved_at")
+            or event.get("approval_mode") != deck.get("approval_mode")
+        ):
+            blockers.add("approval evidence: approval binding mismatch")
+            continue
+        if plan_document is not None and event.get("approved_by") == plan_document.get("authored_by"):
+            blockers.add("approval evidence: approver must differ from plan author")
             continue
         matching_approval = True
         break
     if not matching_approval:
         blockers.add("approval evidence: missing or unverifiable approval event")
 
-    matching_review = False
-    for event in events:
+    candidate_reviews = [
+        event
+        for event in events
+        if event.get("event") == "review_result"
+        and event.get("subject_type") == "deck"
+        and event.get("subject_id") == deck_id
+        and event.get("reviewer_role") in {"content", "content_reviewer"}
+    ]
+    # Select the effective review round before checking the current-plan
+    # binding.  Filtering by plan first would let an older passing review for
+    # the current plan hide a newer failed or stale-plan review.
+    effective_reviews = effective_review_results(candidate_reviews)
+    if len(effective_reviews) > 1:
+        effective_reviews = [
+            max(
+                effective_reviews,
+                key=lambda review: (
+                    review.get("round") if type(review.get("round")) is int else 1,
+                    str(review.get("ts", "")),
+                    str(review.get("id", "")),
+                ),
+            )
+        ]
+    valid_review = False
+    for review in effective_reviews:
+        identity_flag = review.get("identity_verifiable", True)
+        if type(identity_flag) is not bool or identity_flag is False:
+            blockers.add("approval evidence: content reviewer identity is unverifiable")
+            continue
+        raw_round = review.get("round", 1)
+        if type(raw_round) is not int or raw_round < 1:
+            blockers.add("approval evidence: content review round is invalid")
+            continue
+        reviewer_id = review.get("reviewer_id")
         if (
-            event.get("event") == "review_result"
-            and event.get("subject_type") == "deck"
-            and event.get("subject_id") == deck_id
-            and event.get("reviewer_role") in {"content", "content_reviewer"}
-            and event.get("status") == "passed"
-            and event.get("current_plan_id") == current_plan_id
-            and event.get("current_plan_version") == plan_version
-            and event.get("current_plan_sha256") == plan_digest
-            and isinstance(event.get("reviewer_id"), str)
-            and bool(event.get("reviewer_id"))
-            and event.get("reviewer_id") != (plan_document or {}).get("authored_by")
+            not isinstance(reviewer_id, str)
+            or not reviewer_id.strip()
+            or reviewer_id != reviewer_id.strip()
+            or (plan_document is not None and reviewer_id == plan_document.get("authored_by"))
         ):
-            matching_review = True
-            break
-    if not matching_review:
+            blockers.add("approval evidence: content reviewer identity is invalid")
+            continue
+        if (
+            review.get("current_plan_id") != current_plan_id
+            or review.get("current_plan_version") != plan_version
+            or review.get("current_plan_sha256") != plan_digest
+        ):
+            blockers.add("approval evidence: content review binding mismatch")
+            continue
+        if review.get("status") != "passed" or review.get("findings") != []:
+            blockers.add("approval evidence: latest content review did not pass with no findings")
+            continue
+        valid_review = True
+    if not effective_reviews:
         blockers.add("approval evidence: missing or unverifiable content review")
+    elif not valid_review:
+        blockers.add("approval evidence: missing or unverifiable content review")
+
+    status = deck.get("status")
+    if status in APPROVED_STATUSES and status != "approved":
+        blockers.add(f"status evidence: missing target evidence for {status}")
     return sorted(blockers)
 
 
@@ -520,12 +616,40 @@ def _backup_file(destination: Path, content: bytes, mode: int) -> None:
             handle.flush()
             os.fsync(handle.fileno())
         os.chmod(destination, mode)
+        descriptor = os.open(str(destination), os.O_RDONLY | os.O_NOFOLLOW)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
     except BaseException:
         try:
             destination.unlink()
         except OSError:
             pass
         raise
+
+
+def _publish_backup_no_replace(temporary: Path, final: Path) -> None:
+    """Atomically publish a backup directory without replacing a raced name."""
+    if final.exists() or final.is_symlink():
+        raise FileExistsError(errno.EEXIST, "backup destination already exists", str(final))
+    libc = ctypes.CDLL(None, use_errno=True)
+    renameat2 = getattr(libc, "renameat2", None)
+    if renameat2 is not None:
+        renameat2.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+        renameat2.restype = ctypes.c_int
+        result = renameat2(
+            -100,
+            os.fsencode(temporary),
+            -100,
+            os.fsencode(final),
+            1,
+        )
+        if result != 0:
+            error_number = ctypes.get_errno()
+            raise OSError(error_number, os.strerror(error_number), str(final))
+        return
+    raise MigrationError("atomic no-overwrite backup publication is unavailable on this platform")
 
 
 def _remove_backup_tree(path: Path) -> None:
@@ -554,53 +678,90 @@ def _build_backup(
     if final.exists() or final.is_symlink() or temporary.exists() or temporary.is_symlink():
         raise MigrationError(f"backup destination already exists: {final}")
     temporary.mkdir(mode=0o700)
+    published = False
     try:
         for source_path in sorted(preimages, key=lambda item: item.relative_to(project_root).as_posix()):
             relative = source_path.relative_to(presentations)
             destination = temporary / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             _backup_file(destination, preimages[source_path][0], preimages[source_path][1])
+        created_directories = {
+            destination.parent
+            for source_path in preimages
+            for destination in [temporary / source_path.relative_to(presentations)]
+        }
+        for directory in sorted(created_directories, key=lambda item: (len(item.parts), item.as_posix()), reverse=True):
+            _fsync_directory(directory)
         _fsync_directory(temporary)
-        os.replace(temporary, final)
+        _publish_backup_no_replace(temporary, final)
+        published = True
         _fsync_directory(presentations)
         return final
-    except BaseException:
-        if temporary.exists() or temporary.is_symlink():
-            _remove_backup_tree(temporary)
+    except BaseException as primary_error:
+        cleanup_failures: list[str] = []
+        removed_backup = False
+        for candidate in (temporary, final if published else None):
+            if candidate is None:
+                continue
+            try:
+                if candidate.exists() or candidate.is_symlink():
+                    _remove_backup_tree(candidate)
+                    removed_backup = True
+            except Exception as exc:  # noqa: BLE001 - aggregate cleanup evidence
+                cleanup_failures.append(f"{candidate}: {exc}")
+        if removed_backup:
+            try:
+                _fsync_directory(presentations)
+            except Exception as exc:  # noqa: BLE001 - aggregate cleanup evidence
+                cleanup_failures.append(f"{presentations}: {exc}")
+        if cleanup_failures:
+            raise MigrationError("backup cleanup failed: " + "; ".join(cleanup_failures)) from primary_error
         raise
 
 
-def _scope_files(project_root: Path) -> tuple[dict[Path, tuple[bytes, int]], dict[Path, tuple[bytes, int]]]:
-    """Collect state and event preimages using no-follow reads."""
+def _scope_paths(project_root: Path) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
+    """Discover state and event files using metadata-only, no-follow checks."""
     state_root = project_root / STATE_RELATIVE
     events_root = project_root / EVENTS_RELATIVE
     _assert_no_symlink_ancestors(state_root, project_root)
     _assert_no_symlink_ancestors(events_root, project_root)
-    state_files: dict[Path, tuple[bytes, int]] = {}
-    event_files: dict[Path, tuple[bytes, int]] = {}
+    state_paths: list[Path] = []
+    event_paths: list[Path] = []
     for path in _iter_scope_entries(state_root):
         if path.name.endswith(".lock") or path.name.endswith(".tmp"):
             continue
         if path.suffix != ".yaml" or path.name not in STATE_NAMES:
             raise MigrationError(f"unknown presentation state store: {path}")
-        state_files[path] = _read_regular_file(path)
+        state_paths.append(path)
     for path in _iter_scope_entries(events_root):
+        if path.name.endswith(".lock") or path.name.endswith(".tmp"):
+            continue
         if path.suffix != ".jsonl":
             raise MigrationError(f"unknown presentation event file: {path}")
+        event_paths.append(path)
+    return tuple(sorted(state_paths)), tuple(sorted(event_paths))
+
+
+def _scope_files(
+    project_root: Path,
+    state_paths: tuple[Path, ...] | None = None,
+    event_paths: tuple[Path, ...] | None = None,
+) -> tuple[dict[Path, tuple[bytes, int]], dict[Path, tuple[bytes, int]]]:
+    """Read discovered state/event files with no-follow descriptors.
+
+    Discovery itself is metadata-only.  Non-dry migration invokes this helper
+    only after a transaction has acquired every discovered sidecar lock.
+    """
+    discovered_state, discovered_events = _scope_paths(project_root)
+    state_files: dict[Path, tuple[bytes, int]] = {}
+    event_files: dict[Path, tuple[bytes, int]] = {}
+    selected_state_paths = discovered_state if state_paths is None else state_paths
+    selected_event_paths = discovered_events if event_paths is None else event_paths
+    for path in selected_state_paths:
+        state_files[path] = _read_regular_file(path)
+    for path in selected_event_paths:
         event_files[path] = _read_regular_file(path)
     return state_files, event_files
-
-
-def _restore_mtimes(mtimes: Mapping[Path, int]) -> None:
-    """Restore exact pre-transaction mtimes after an in-process rollback."""
-    failures: list[str] = []
-    for path, modified_ns in sorted(mtimes.items(), key=lambda item: item[0].as_posix()):
-        try:
-            os.utime(path, ns=(modified_ns, modified_ns), follow_symlinks=False)
-        except OSError as exc:
-            failures.append(f"{path}: {exc}")
-    if failures:
-        raise MigrationError("transaction rollback mtime restoration failed: " + "; ".join(failures))
 
 
 def _dump_state(top_key: str, records: Mapping[str, Any]) -> bytes:
@@ -612,17 +773,82 @@ def _dump_state(top_key: str, records: Mapping[str, Any]) -> bytes:
     ).encode("utf-8")
 
 
+def _analyze_migration(
+    project_root: Path,
+    state_files: Mapping[Path, tuple[bytes, int]],
+    event_files: Mapping[Path, tuple[bytes, int]],
+) -> tuple[
+    dict[str, Any],
+    dict[Path, tuple[int, str, dict[str, Any]]],
+    list[dict[str, Any]],
+    int,
+]:
+    """Parse read-only preimages and construct a deterministic report."""
+    parsed: dict[Path, tuple[int, str, dict[str, Any]]] = {}
+    versions: set[int] = set()
+    all_ids: set[str] = set()
+    for path, (content, _) in sorted(state_files.items(), key=lambda item: item[0].as_posix()):
+        top_key = STATE_NAMES[path.name]
+        document = _parse_yaml(path, content)
+        version = _schema_version(path, document)
+        records = _records_from_document(path, document, top_key, version)
+        _validate_record_paths(project_root, records)
+        if top_key == "decks":
+            for record in records.values():
+                status = record.get("status")
+                if status is not None and (not isinstance(status, str) or status not in DECK_STATUSES):
+                    raise StateParseError(f"Invalid deck status {status!r} in {path}")
+        for record_id in records:
+            if record_id in all_ids:
+                raise MigrationError(f"duplicate id {record_id!r} across state stores")
+            all_ids.add(record_id)
+        parsed[path] = (version, top_key, records)
+        versions.add(version)
+    if len(versions) > 1:
+        raise MigrationError("mixed schema versions across presentation state stores")
+    events = _validate_events(project_root, event_files)
+    source_version = next(iter(versions), STATE_VERSION)
+    report: dict[str, Any] = {
+        "source_schema_version": source_version,
+        "target_schema_version": STATE_VERSION,
+        "migrated_ids": [],
+        "blocked_ids": [],
+        "blockers": {},
+        "changed_paths": [],
+    }
+    if source_version == STATE_VERSION:
+        return report, parsed, events, source_version
+
+    decks: dict[str, Any] = {}
+    plans: dict[str, Any] = {}
+    for _, top_key, records in parsed.values():
+        if top_key == "decks":
+            decks = records
+        elif top_key == "plans":
+            plans = records
+    blockers: dict[str, list[str]] = {}
+    for deck_id in sorted(decks):
+        deck = decks[deck_id]
+        if deck.get("status") in APPROVED_STATUSES:
+            deck_blockers = _safe_plan_evidence(project_root, deck, plans, events)
+            if deck_blockers:
+                blockers[deck_id] = deck_blockers
+                deck["status"] = "blocked"
+    report["blocked_ids"] = sorted(blockers)
+    report["blockers"] = {deck_id: blockers[deck_id] for deck_id in sorted(blockers)}
+    report["migrated_ids"] = sorted(all_ids - set(blockers))
+    return report, parsed, events, source_version
+
+
 def migrate_state(project_root: Path | str, dry_run: bool = False) -> dict[str, Any]:
-    """Migrate legacy presentation state under ``project_root``.
+    """Migrate legacy presentation state while locking before reads.
 
     Args:
         project_root: Root containing ``.research/presentations``.
-        dry_run: Validate and report without creating any directory, lock,
-            backup, temporary file, or other filesystem side effect.
+        dry_run: Validate and report without filesystem writes or locks.
 
     Returns:
-        A deterministic report with source/target versions, migrated IDs,
-        blocked IDs, blockers, and changed paths.
+        A deterministic migration report.
 
     Raises:
         MigrationError: If state, events, paths, or evidence are unsafe.
@@ -636,107 +862,87 @@ def migrate_state(project_root: Path | str, dry_run: bool = False) -> dict[str, 
             + ", ".join(path.name for path in pending_journals)
         )
     if not dry_run and pending_journals:
-        # Recover a journal left by a process death before parsing.  Otherwise
-        # a partially replaced v1/v0 set would be rejected as mixed schema
-        # before WorkflowTransaction gets a chance to restore its preimages.
         with WorkflowTransaction([], root):
             pass
-    state_files, event_files = _scope_files(root)
-    parsed: dict[Path, tuple[int, str, dict[str, Any]]] = {}
-    versions: set[int] = set()
-    all_ids: set[str] = set()
-    for path, (content, _) in sorted(state_files.items(), key=lambda item: item[0].name):
-        top_key = STATE_NAMES[path.name]
-        document = _parse_yaml(path, content)
-        version = _schema_version(path, document)
-        records = _records_from_document(path, document, top_key, version)
-        _validate_record_paths(root, records)
-        if top_key == "decks":
-            for record in records.values():
-                status = record.get("status")
-                if status is not None and status not in DECK_STATUSES:
-                    raise StateParseError(f"Invalid deck status {status!r} in {path}")
-        for record_id in records:
-            if record_id in all_ids:
-                raise MigrationError(f"duplicate id {record_id!r} across state stores")
-            all_ids.add(record_id)
-        parsed[path] = (version, top_key, records)
-        versions.add(version)
-    if len(versions) > 1:
-        raise MigrationError("mixed schema versions across presentation state stores")
-    events = _validate_events(root, event_files)
-    source_version = next(iter(versions), STATE_VERSION)
-    report: dict[str, Any] = {
-        "source_schema_version": source_version,
-        "target_schema_version": STATE_VERSION,
-        "migrated_ids": [],
-        "blocked_ids": [],
-        "blockers": {},
-        "changed_paths": [],
-    }
-    if source_version == STATE_VERSION:
-        return report
 
-    decks: dict[str, Any] = {}
-    plans: dict[str, Any] = {}
-    for _, top_key, records in parsed.values():
-        if top_key == "decks":
-            decks = records
-        elif top_key == "plans":
-            plans = records
-    blockers: dict[str, list[str]] = {}
-    for deck_id in sorted(decks):
-        deck = decks[deck_id]
-        if deck.get("status") in APPROVED_STATUSES:
-            deck_blockers = _safe_plan_evidence(root, deck, plans, events)
-            if deck_blockers:
-                blockers[deck_id] = deck_blockers
-                deck["status"] = "blocked"
-    report["blocked_ids"] = sorted(blockers)
-    report["blockers"] = {deck_id: blockers[deck_id] for deck_id in sorted(blockers)}
-    report["migrated_ids"] = sorted(all_ids - set(blockers))
+    state_paths, event_paths = _scope_paths(root)
+    transaction_paths = tuple(sorted(state_paths + event_paths, key=lambda item: item.as_posix()))
     if dry_run:
+        state_files, event_files = _scope_files(root, state_paths, event_paths)
+        report, _, _, _ = _analyze_migration(root, state_files, event_files)
+        return report
+    if not transaction_paths:
+        report, _, _, _ = _analyze_migration(root, {}, {})
         return report
 
-    preimages: dict[Path, tuple[bytes, int]] = {}
-    preimages.update(state_files)
-    preimages.update(event_files)
-    original_mtimes = {
-        path: os.stat(path, follow_symlinks=False).st_mtime_ns for path in preimages
-    }
-    backup_path = _build_backup(root, preimages)
-    transaction_paths = sorted(preimages, key=lambda item: item.as_posix())
+    backup_path: Path | None = None
     try:
         with WorkflowTransaction(transaction_paths, root) as transaction_handle:
-            for path, (version, top_key, records) in sorted(parsed.items(), key=lambda item: item[0].name):
-                del version
+            locked_state_paths, locked_event_paths = _scope_paths(root)
+            if locked_state_paths != state_paths or locked_event_paths != event_paths:
+                raise MigrationError("state/event scope changed while sidecar locks were held")
+            state_files: dict[Path, tuple[bytes, int]] = {}
+            event_files: dict[Path, tuple[bytes, int]] = {}
+            preimages: dict[Path, tuple[bytes, int]] = {}
+            for path in locked_state_paths + locked_event_paths:
+                content, mode, _ = transaction_handle.snapshot(path)
+                preimages[path] = (content, mode)
+                if path in locked_state_paths:
+                    state_files[path] = (content, mode)
+                else:
+                    event_files[path] = (content, mode)
+            report, parsed, _, source_version = _analyze_migration(root, state_files, event_files)
+            if source_version == STATE_VERSION:
+                return report
+
+            backup_path = _build_backup(root, preimages)
+            for path, (_, top_key, records) in sorted(parsed.items(), key=lambda item: item[0].as_posix()):
                 transaction_handle.stage_bytes(path, _dump_state(top_key, records))
             for path, (content, mode) in sorted(event_files.items(), key=lambda item: item[0].as_posix()):
                 transaction_handle.stage_bytes(path, content, mode=mode)
             transaction_handle.commit()
     except Exception:
-        try:
-            _restore_mtimes(original_mtimes)
-            _remove_backup_tree(backup_path)
-        except Exception as cleanup_error:
-            raise MigrationError(f"migration failed and backup cleanup failed: {cleanup_error}") from cleanup_error
+        if backup_path is not None:
+            try:
+                _remove_backup_tree(backup_path)
+                _fsync_directory(backup_path.parent)
+            except Exception as cleanup_error:
+                raise MigrationError(f"migration failed and backup cleanup failed: {cleanup_error}") from cleanup_error
         raise
     changed_paths = [path.relative_to(root).as_posix() for path in transaction_paths]
-    changed_paths.append(backup_path.relative_to(root).as_posix())
+    if backup_path is not None:
+        changed_paths.append(backup_path.relative_to(root).as_posix())
     report["changed_paths"] = sorted(changed_paths)
     return report
 
 
+class _ArgumentError(ValueError):
+    """Raised for command-line errors that should be JSON-serializable."""
+
+
+class _MigrationArgumentParser(argparse.ArgumentParser):
+    """Argument parser that reports errors to the migration caller."""
+
+    def error(self, message: str) -> None:
+        """Raise a typed error instead of exiting with a traceback."""
+        raise _ArgumentError(message)
+
+
 def _main(argv: list[str] | None = None) -> int:
     """Run the migration CLI and emit JSON on success or failure."""
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = _MigrationArgumentParser(description=__doc__)
     parser.add_argument("--project-root", type=Path, required=True)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--json", action="store_true", dest="as_json")
-    args = parser.parse_args(argv)
+    try:
+        args = parser.parse_args(argv)
+    except _ArgumentError as exc:
+        payload = {"error": "ArgumentError", "message": str(exc)}
+        print(json.dumps(payload, sort_keys=True))
+        return 2
     try:
         report = migrate_state(args.project_root, dry_run=args.dry_run)
-    except (MigrationError, StateParseError, OSError, ValueError) as exc:
+    except (MigrationError, StateParseError, OSError, ValueError, TypeError, RuntimeError, RecursionError) as exc:
         payload = {"error": type(exc).__name__, "message": str(exc)}
         print(json.dumps(payload, sort_keys=True))
         return 1

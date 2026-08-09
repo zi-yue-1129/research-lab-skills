@@ -200,8 +200,8 @@ def _journal_entry(path: str, *, exists: bool = False, mode: int = 0o644) -> dic
     return {
         "path": path,
         "exists": exists,
-        "mode": mode,
-        "content": base64.b64encode(b"before").decode("ascii"),
+        "mode": mode if exists else 0,
+        "content": base64.b64encode(b"before").decode("ascii") if exists else "",
     }
 
 
@@ -481,7 +481,7 @@ def test_crafted_journal_rejects_non_permission_modes(tmp_path: Path, mode: int)
     """Recovery accepts only ordinary permission-bit modes."""
     _write_journal(
         tmp_path,
-        [_journal_entry(".research/presentations/state/slides.yaml", mode=mode)],
+        [_journal_entry(".research/presentations/state/slides.yaml", exists=True, mode=mode)],
     )
 
     with pytest.raises(TransactionError, match="mode|metadata|journal"):

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import stat
@@ -14,6 +13,7 @@ from typing import Any
 import pytest
 import yaml
 
+from presentation_contracts import contract_sha256
 from presentation_events import load_events
 from presentation_state import load_decks, load_slides, load_visual_modules
 
@@ -89,15 +89,36 @@ def _approved_legacy_project(tmp_path: Path, *, evidence: bool) -> tuple[Path, s
     project, deck_id = _legacy_project(tmp_path, deck_status="approved")
     plan_path = project / "plans" / "legacy-plan.yaml"
     plan = {
+        "schema_version": 1,
         "deck_id": deck_id,
         "plan_version": 1,
         "purpose": "A verifiable plan",
-        "slides": [],
+        "audience": "Research audience",
+        "core_narrative": "Evidence changes decisions.",
+        "authored_by": "planner",
+        "status": "reviewed",
+        "estimated_duration_minutes": 10,
+        "excluded_content": [],
+        "known_gaps": [],
+        "slides": [
+            {
+                "slide_id": "slide-01",
+                "title": "Evidence",
+                "purpose": "Orient the audience",
+                "key_takeaway": "Evidence changes decisions.",
+                "intended_visual_type": "none",
+                "visual_rationale": "No visual needed",
+                "speaker_message": "Evidence changes decisions.",
+                "evidence_refs": ["E-1"],
+                "dependencies": [],
+                "open_questions": [],
+            }
+        ],
     }
     if evidence:
         plan_path.parent.mkdir(parents=True, exist_ok=True)
         plan_path.write_text(yaml.safe_dump(plan, sort_keys=True), encoding="utf-8")
-        plan_digest = hashlib.sha256(plan_path.read_bytes()).hexdigest()
+        plan_digest = contract_sha256(plan)
         _write_store(
             project,
             "plans.yaml",
@@ -116,6 +137,7 @@ def _approved_legacy_project(tmp_path: Path, *, evidence: bool) -> tuple[Path, s
             project,
             [
                 {
+                    "schema_version": 1,
                     "event": "review_result",
                     "id": "review_content",
                     "subject_type": "deck",
@@ -127,10 +149,12 @@ def _approved_legacy_project(tmp_path: Path, *, evidence: bool) -> tuple[Path, s
                     "reviewer_role": "content",
                     "status": "passed",
                     "findings": [],
+                    "identity_verifiable": True,
                     "round": 1,
                     "ts": "2026-08-08T00:00:00Z",
                 },
                 {
+                    "schema_version": 1,
                     "event": "deck_approval",
                     "id": "approval_legacy",
                     "deck_id": deck_id,
@@ -139,6 +163,8 @@ def _approved_legacy_project(tmp_path: Path, *, evidence: bool) -> tuple[Path, s
                     "approved_by": "reviewer",
                     "approved_at": "2026-08-08T00:01:00Z",
                     "approval_mode": "interactive",
+                    "decision": "approve",
+                    "identity_verifiable": True,
                     "ts": "2026-08-08T00:01:00Z",
                 },
             ],
@@ -201,7 +227,7 @@ def test_verifiable_approved_deck_preserves_ids_digest_and_history(tmp_path: Pat
     """Verifiable approval evidence survives migration without replacement IDs."""
     project, deck_id, plan = _approved_legacy_project(tmp_path, evidence=True)
     before_events = load_events(project)
-    plan_digest = hashlib.sha256((project / "plans" / "legacy-plan.yaml").read_bytes()).hexdigest()
+    plan_digest = contract_sha256(plan)
 
     report = _migrate(project)
 
