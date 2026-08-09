@@ -28,6 +28,11 @@ import yaml
 from presentation_events import StateParseError
 from presentation_contracts import contract_sha256
 from presentation_events import effective_review_results
+from presentation_evidence_snapshot import (
+    parse_event_shard as _parse_event_shard,
+    parse_state_document as _parse_state_document,
+    parse_yaml_document as _parse_yaml_document,
+)
 from presentation_transactions import WorkflowTransaction, incomplete_transaction_journals
 from validate_deck_plan import validate_deck_approval, validate_deck_plan
 from migration_scope import (
@@ -75,20 +80,6 @@ DECK_STATUSES = frozenset(
     }
 )
 SHA256_LENGTH = 64
-
-
-class _UniqueKeyLoader(yaml.SafeLoader):
-    """PyYAML loader that rejects duplicate mapping keys."""
-
-    def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict[Any, Any]:
-        """Construct a mapping while rejecting repeated keys."""
-        mapping: dict[Any, Any] = {}
-        for key_node, value_node in node.value:
-            key = self.construct_object(key_node, deep=deep)
-            if key in mapping:
-                raise MigrationError(f"duplicate YAML key {key!r}")
-            mapping[key] = self.construct_object(value_node, deep=deep)
-        return mapping
 
 
 def _utc_timestamp() -> str:
@@ -159,91 +150,6 @@ def _fsync_directory(directory: Path) -> None:
 _PATH_KEYS = _SINGULAR_PATH_KEYS | _PLURAL_PATH_KEYS
 
 
-def _parse_yaml(path: Path, content: bytes) -> dict[str, Any]:
-    """Parse one YAML state document using the duplicate-key loader."""
-    try:
-        value = yaml.load(content.decode("utf-8"), Loader=_UniqueKeyLoader)
-    except MigrationError:
-        raise
-    except (UnicodeError, TypeError, yaml.YAMLError) as exc:
-        raise StateParseError(f"Invalid YAML in {path}: {exc}") from exc
-    if value is None:
-        return {}
-    if not isinstance(value, dict):
-        raise StateParseError(f"Invalid state document in {path}: expected mapping")
-    return value
-
-
-def _schema_version(path: Path, document: Mapping[str, Any]) -> int:
-    """Read and validate one legacy/target schema marker."""
-    has_version = "version" in document
-    has_schema_version = "schema_version" in document
-    if has_version and has_schema_version:
-        raise MigrationError(f"mixed schema keys in {path}: version and schema_version")
-    marker = document.get("version", document.get("schema_version", LEGACY_VERSION))
-    if isinstance(marker, bool) or not isinstance(marker, int) or marker not in {LEGACY_VERSION, STATE_VERSION}:
-        raise StateParseError(f"Unsupported schema version {marker!r} in {path}")
-    return marker
-
-
-def _records_from_document(path: Path, document: Mapping[str, Any], top_key: str, version: int) -> dict[str, Any]:
-    """Extract records, converting legacy lists to an ID-keyed map."""
-    raw_records = document.get(top_key, {})
-    if raw_records is None:
-        raw_records = {}
-    if version == STATE_VERSION and not isinstance(raw_records, dict):
-        raise StateParseError(f"Invalid {top_key} map in {path}: expected mapping")
-    if not isinstance(raw_records, (dict, list)):
-        raise StateParseError(f"Invalid {top_key} records in {path}: expected mapping or list")
-    records: dict[str, Any] = {}
-    if isinstance(raw_records, dict):
-        for record_key, record in raw_records.items():
-            if not isinstance(record_key, str) or not record_key:
-                raise StateParseError(f"Invalid {top_key} record id in {path}: {record_key!r}")
-            if not isinstance(record, dict):
-                raise StateParseError(f"Invalid {top_key} record {record_key!r} in {path}: expected mapping")
-            records[record_key] = record
-    else:
-        for record in raw_records:
-            if not isinstance(record, dict):
-                raise StateParseError(f"Invalid {top_key} record in {path}: expected mapping")
-            record_id = record.get("id")
-            if not isinstance(record_id, str) or not record_id:
-                raise StateParseError(f"Invalid {top_key} record id in {path}: {record_id!r}")
-            if record_id in records:
-                raise MigrationError(f"duplicate id {record_id!r} in {path}")
-            records[record_id] = record
-    for record_key, record in records.items():
-        record_id = record.get("id")
-        if not isinstance(record_id, str) or not record_id:
-            raise StateParseError(f"Invalid {top_key} record {record_key!r} in {path}: missing id")
-        if record_id != record_key:
-            raise MigrationError(f"record id/key mismatch in {path}: {record_key!r} != {record_id!r}")
-    return records
-
-
-def _parse_event_line(path: Path, line_number: int, line: str) -> dict[str, Any]:
-    """Parse one JSONL event line and reject duplicate object keys."""
-    def pairs(pairs_list: list[tuple[str, Any]]) -> dict[str, Any]:
-        """Construct a JSON object while rejecting repeated keys."""
-        result: dict[str, Any] = {}
-        for key, value in pairs_list:
-            if key in result:
-                raise MigrationError(f"duplicate JSON key {key!r} in {path} line {line_number}")
-            result[key] = value
-        return result
-
-    try:
-        value = json.loads(line, object_pairs_hook=pairs)
-    except MigrationError:
-        raise
-    except (json.JSONDecodeError, UnicodeError) as exc:
-        raise StateParseError(f"Malformed JSON in event shard {path} line {line_number}: {exc}") from exc
-    if not isinstance(value, dict):
-        raise StateParseError(f"Malformed event in event shard {path} line {line_number}: expected object")
-    return value
-
-
 def _validate_events(
     project_root: Path,
     event_files: Mapping[Path, tuple[bytes, int]],
@@ -254,18 +160,11 @@ def _validate_events(
     events: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
     for path in sorted(event_files, key=lambda item: item.relative_to(item.parents[2]).as_posix()):
-        try:
-            text = event_files[path][0].decode("utf-8")
-        except UnicodeError as exc:
-            raise StateParseError(f"Malformed JSON in event shard {path}: invalid UTF-8") from exc
-        for line_number, line in enumerate(text.splitlines(), start=1):
-            if not line.strip():
-                continue
-            event = _parse_event_line(path, line_number, line)
+        for event in _parse_event_shard(path, event_files[path][0]):
             event_id = event.get("id")
             if event_id is not None:
                 if not isinstance(event_id, str) or not event_id:
-                    raise StateParseError(f"Invalid event id in {path} line {line_number}")
+                    raise StateParseError(f"Invalid event id in event shard {path}")
                 if event_id in seen_ids:
                     raise MigrationError(f"duplicate event id {event_id!r}")
                 seen_ids.add(event_id)
@@ -334,7 +233,7 @@ def _safe_plan_evidence(
                 raise
         else:
             try:
-                parsed_plan = _parse_yaml(plan_path, plan_bytes)
+                parsed_plan = _parse_yaml_document(plan_path, plan_bytes)
             except (MigrationError, StateParseError):
                 blockers.add("approval evidence: plan document is malformed")
             else:
@@ -695,9 +594,9 @@ def _analyze_migration(
     all_ids: set[str] = set()
     for path, (content, _) in sorted(state_files.items(), key=lambda item: item[0].as_posix()):
         top_key = STATE_NAMES[path.name]
-        document = _parse_yaml(path, content)
-        version = _schema_version(path, document)
-        records = _records_from_document(path, document, top_key, version)
+        version, records = _parse_state_document(path, content, top_key)
+        if version not in {LEGACY_VERSION, STATE_VERSION}:
+            raise StateParseError(f"Unsupported schema version {version!r} in {path}")
         for record in records.values():
             _validate_record_paths(
                 project_root,

@@ -191,13 +191,8 @@ def canonical_project_relative(
         MigrationError: If the value is malformed, missing, special, a
             symlink, outside the project, or an unallowed directory.
     """
-    if not isinstance(raw_value, str) or not raw_value or "\x00" in raw_value:
-        raise MigrationError(f"path must be a non-empty relative path: {raw_value!r}")
-    if raw_value.startswith("/") or "\\" in raw_value:
-        raise MigrationError(f"path must be project-relative and POSIX-normalized: {raw_value!r}")
-    parts = raw_value.split("/")
-    if any(part in {"", ".", ".."} for part in parts):
-        raise MigrationError(f"path traversal or non-normalized path rejected: {raw_value!r}")
+    relative_path = canonical_relative_path(raw_value)
+    parts = relative_path.split("/")
     root = project_root.resolve()
     candidate = root.joinpath(*parts)
     current = root
@@ -227,6 +222,38 @@ def canonical_project_relative(
     except (OSError, ValueError) as exc:
         raise MigrationError(f"path escapes project root: {raw_value!r}") from exc
     return "/".join(parts)
+
+
+def canonical_relative_path(raw_value: object) -> str:
+    """Return one lexically canonical project-relative POSIX path.
+
+    This helper performs no filesystem access. It is therefore suitable for
+    preserving an immutable historical declaration whose original bytes may no
+    longer be available. Callers that require a current file must use
+    :func:`canonical_project_relative` afterwards.
+
+    Args:
+        raw_value: Candidate project-relative POSIX path.
+
+    Returns:
+        The same validated canonical path string.
+
+    Raises:
+        MigrationError: If the path is empty, absolute, contains a backslash,
+            NUL, traversal component, or redundant separator.
+    """
+    if not isinstance(raw_value, str) or not raw_value or "\x00" in raw_value:
+        raise MigrationError(f"path must be a non-empty relative path: {raw_value!r}")
+    if raw_value.startswith("/") or "\\" in raw_value:
+        raise MigrationError(
+            f"path must be project-relative and POSIX-normalized: {raw_value!r}"
+        )
+    parts = raw_value.split("/")
+    if any(part in {"", ".", ".."} for part in parts):
+        raise MigrationError(
+            f"path traversal or non-normalized path rejected: {raw_value!r}"
+        )
+    return raw_value
 
 
 def validate_record_paths(
