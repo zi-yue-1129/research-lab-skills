@@ -14,6 +14,7 @@ import yaml
 import migrate_presentation_state as migration
 from migration_scope import validate_record_paths
 from presentation_state import create_deck, create_slide, create_visual_module
+from render_plan_preview import _canonical_source_digest
 
 
 STORE_TOP_KEYS = {
@@ -88,7 +89,7 @@ def _draft_preview_event(project: Path, *, deck_id: str = "deck-round4") -> dict
     slide_digest = hashlib.sha256(slide_path.read_bytes()).hexdigest()
     contact_digest = hashlib.sha256(contact_path.read_bytes()).hexdigest()
     plan_digest = "1" * 64
-    source_digest = hashlib.sha256(slide_digest.encode("ascii")).hexdigest()
+    source_digest = _canonical_source_digest([slide_relative], [slide_digest])
     return {
         "event": "draft_preview",
         "id": "draft-round4",
