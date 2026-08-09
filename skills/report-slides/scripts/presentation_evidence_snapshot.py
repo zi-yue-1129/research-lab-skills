@@ -20,7 +20,13 @@ from typing import Any, Mapping
 import yaml
 
 from migration_scope import MigrationError, canonical_relative_path
-from presentation_evidence_cas import CasError, CasObject, plan_cas_objects
+from presentation_evidence_cas import (
+    CasError,
+    CasObject,
+    plan_cas_objects,
+    read_verified_source,
+)
+from presentation_evidence_contracts import artifact_policy_for_event
 from presentation_events import StateParseError
 from presentation_no_follow import (
     MissingPathError,
@@ -116,6 +122,7 @@ def build_snapshot(project_root: Path, *, locked: bool = False) -> EvidenceSnaps
     for relative_path, content in event_bytes.items():
         file_preimages[root / relative_path] = content
     artifact_objects = _capture_artifact_objects(root, events, file_preimages)
+    _capture_visual_review_preimages(root, events, file_preimages)
     return EvidenceSnapshot(
         project_root=root,
         schema_version=schema_version,
@@ -273,8 +280,8 @@ def _read_scope(
     for name, content in sorted(contents.items()):
         if name.endswith(".lock"):
             target_name = name.removesuffix(".lock")
-            if target_name not in names or target_name not in contents:
-                raise SnapshotError(f"orphan or unknown presentation {scope} sidecar: {name}")
+            if name != "workflow.lock" and target_name not in names:
+                raise SnapshotError(f"unknown presentation {scope} sidecar: {name}")
             continue
         if name.endswith(".tmp") or name not in names:
             raise SnapshotError(f"unknown presentation {scope} file: {name}")
@@ -304,11 +311,8 @@ def _read_event_scope(project_root: Path) -> dict[str, bytes]:
     for name, content in sorted(contents.items()):
         if name.endswith(".lock"):
             target_name = name.removesuffix(".lock")
-            if (
-                _EVENT_SHARD_PATTERN.fullmatch(target_name) is None
-                or target_name not in contents
-            ):
-                raise SnapshotError(f"orphan or unknown presentation event sidecar: {name}")
+            if _EVENT_SHARD_PATTERN.fullmatch(target_name) is None:
+                raise SnapshotError(f"unknown presentation event sidecar: {name}")
             _validate_event_shard_date(target_name)
             continue
         if _EVENT_SHARD_PATTERN.fullmatch(name) is None:
@@ -476,9 +480,41 @@ def _capture_artifact_objects(
     return objects
 
 
+def _capture_visual_review_preimages(
+    project_root: Path,
+    events: list[dict[str, Any]],
+    file_preimages: dict[Path, bytes],
+) -> None:
+    """Freeze review-record bytes required by visual-review source events."""
+    source_paths: set[str] = set()
+    for event in events:
+        if event.get("event") != "visual_review":
+            continue
+        try:
+            source_paths.add(canonical_relative_path(event.get("visual_review_path")))
+        except MigrationError as exc:
+            raise SnapshotError("visual_review_path must be a canonical path") from exc
+    for relative_path in sorted(source_paths):
+        try:
+            object_ = read_verified_source(project_root, relative_path)
+        except CasError as exc:
+            raise SnapshotError(
+                f"cannot snapshot historical visual review {relative_path}: {exc}"
+            ) from exc
+        file_preimages[project_root / relative_path] = object_.content
+
+
 def _declared_artifact_paths(event: Mapping[str, Any]) -> tuple[str, ...]:
     """Return lexically safe artifact paths that may be captured before projection."""
     event_kind = event.get("event")
+    has_artifact_maps = (
+        "artifact_digests" in event or "artifact_bindings" in event
+    )
+    if not isinstance(event_kind, str) or (
+        has_artifact_maps and artifact_policy_for_event(event_kind) == "none"
+    ):
+        if has_artifact_maps:
+            raise SnapshotError("unregistered event kinds cannot carry artifact maps")
     raw_paths: list[object] = []
     if event_kind == "draft_preview":
         rendered = event.get("rendered_slide_paths")

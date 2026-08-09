@@ -9,6 +9,7 @@ does not inspect today's active slides, deck pointers, or mutable filesystem.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from types import MappingProxyType
 from typing import Any, Mapping
 
@@ -22,6 +23,7 @@ from presentation_evidence_contracts import (
     validate_envelope,
 )
 from presentation_evidence_snapshot import EvidenceSnapshot
+from validate_deck_plan import validate_deck_approval
 
 
 _SHA256_HEX = frozenset("0123456789abcdef")
@@ -54,11 +56,25 @@ _COMPLETION_FIELDS = frozenset(
         "visual_review_evidence_id",
         "visual_review_evidence_sha256",
         "artifact_digests",
-        "artifact_bindings",
     }
 )
 _PERSISTED_COMPLETION_FIELDS = _COMPLETION_FIELDS | frozenset(
     {"event", "id", "completion_sha256", "ts"}
+)
+_VISUAL_REVIEW_SOURCE_FIELDS = frozenset(
+    {
+        "schema_version",
+        "event",
+        "id",
+        "deck_id",
+        "plan_id",
+        "plan_version",
+        "plan_sha256",
+        "producer_id",
+        "visual_review_path",
+        "visual_review_sha256",
+        "ts",
+    }
 )
 
 
@@ -109,8 +125,12 @@ def project_historical_evidence(snapshot: EvidenceSnapshot) -> HistoricalProject
             raise ProjectionError("snapshot event must be a mapping")
         event_kind = event.get("event")
         if not isinstance(event_kind, str):
+            if "artifact_digests" in event or "artifact_bindings" in event:
+                raise ProjectionError("unregistered event kinds cannot carry artifact maps")
             continue
         if artifact_policy_for_event(event_kind) == "none":
+            if "artifact_digests" in event or "artifact_bindings" in event:
+                raise ProjectionError("unregistered event kinds cannot carry artifact maps")
             continue
         if event_kind == "draft_preview":
             envelope, objects = _project_preview(snapshot, event)
@@ -213,34 +233,22 @@ def _project_completion(
     payload = {field: event[field] for field in _COMPLETION_FIELDS}
     if event["completion_sha256"] != _canonical_digest(payload, "deck_completion"):
         raise ProjectionError("deck_completion canonical event digest mismatch")
-    artifact_digests = _mapping(event.get("artifact_digests"), "deck_completion.artifact_digests")
-    artifact_bindings = _mapping(event.get("artifact_bindings"), "deck_completion.artifact_bindings")
-    if len(artifact_digests) < 2 or set(artifact_digests) != set(artifact_bindings):
-        raise ProjectionError("deck_completion artifact declarations are incomplete")
-    final_path: str | None = None
-    rendered_paths: list[str] = []
-    for path, binding in artifact_bindings.items():
-        canonical_path = _canonical_path(path, "deck_completion artifact path")
+    artifact_digests = _mapping(
+        event.get("artifact_digests"), "deck_completion.artifact_digests"
+    )
+    _resolve_completion_sources(snapshot, event)
+    final_path, rendered_paths = _review_artifact_paths(snapshot, event)
+    expected_paths = [final_path, *rendered_paths]
+    if set(artifact_digests) != set(expected_paths):
+        raise ProjectionError(
+            "deck_completion artifacts must exactly match the visual review outputs"
+        )
+    for path in expected_paths:
         _require_digest(artifact_digests.get(path), f"deck_completion digest {path!r}")
-        binding_map = _mapping(binding, f"deck_completion binding {path!r}")
-        _require_exact_fields(binding_map, frozenset({"kind", "deck_id"}), "deck_completion binding")
-        if binding_map.get("deck_id") != event["deck_id"]:
-            raise ProjectionError(f"deck_completion binding deck mismatch for {path!r}")
-        kind = binding_map.get("kind")
-        if kind == "final_pptx":
-            if final_path is not None:
-                raise ProjectionError("deck_completion requires exactly one final_pptx")
-            final_path = canonical_path
-        elif kind == "rendered_png":
-            rendered_paths.append(canonical_path)
-        else:
-            raise ProjectionError(f"deck_completion artifact kind mismatch for {path!r}")
-    if final_path is None or not rendered_paths:
-        raise ProjectionError("deck_completion requires final_pptx and rendered_png artifacts")
     bindings = [(final_path, "final_pptx", event["deck_id"])] + [
-        (path, "rendered_png", event["deck_id"])
-        for path in sorted(rendered_paths)
+        (path, "rendered_png", event["deck_id"]) for path in rendered_paths
     ]
+    _validate_completion_artifact_records(snapshot, event["deck_id"], artifact_digests, bindings)
     artifact_refs, objects, availability = _artifact_references(
         snapshot, artifact_digests, bindings
     )
@@ -266,6 +274,237 @@ def _project_completion(
     )
     envelope["evidence_sha256"] = envelope_sha256(envelope)
     return _validated_envelope(envelope), objects
+
+
+def _resolve_completion_sources(
+    snapshot: EvidenceSnapshot, completion: Mapping[str, Any]
+) -> None:
+    """Require exact immutable approval and review sources for completion."""
+    evidence = snapshot.stores.get("evidence")
+    if evidence is None:
+        raise ProjectionError("deck_completion immutable evidence sources are unavailable")
+    approval = _completion_source_envelope(
+        evidence,
+        completion,
+        "approval_evidence_id",
+        "approval_evidence_sha256",
+        "draft_approval",
+    )
+    review = _completion_source_envelope(
+        evidence,
+        completion,
+        "visual_review_evidence_id",
+        "visual_review_evidence_sha256",
+        "visual_review",
+    )
+    if approval.get("decision") != "approved":
+        raise ProjectionError("deck_completion approval source must be approved")
+    _validate_approval_source_event(snapshot, approval, completion)
+    _validate_visual_review_source_event(snapshot, review, completion)
+
+
+def _completion_source_envelope(
+    evidence: Mapping[str, Mapping[str, Any]],
+    completion: Mapping[str, Any],
+    id_field: str,
+    digest_field: str,
+    expected_kind: str,
+) -> dict[str, Any]:
+    """Resolve one completion reference from immutable envelope state."""
+    evidence_id = completion[id_field]
+    assert isinstance(evidence_id, str)
+    frozen_source = evidence.get(evidence_id)
+    if frozen_source is None:
+        raise ProjectionError(f"deck_completion {id_field} does not resolve")
+    source = _thaw(frozen_source)
+    if not isinstance(source, dict):
+        raise ProjectionError(f"deck_completion {id_field} source must be a mapping")
+    try:
+        validated = validate_envelope(source)
+    except EvidenceContractError as exc:
+        raise ProjectionError(
+            f"deck_completion {id_field} source is invalid: {exc}"
+        ) from exc
+    if validated["id"] != evidence_id or validated["evidence_kind"] != expected_kind:
+        raise ProjectionError(f"deck_completion {id_field} has the wrong evidence kind")
+    if validated["evidence_sha256"] != completion[digest_field]:
+        raise ProjectionError(f"deck_completion {digest_field} does not match its source")
+    for field in ("deck_id", "plan_id", "plan_version", "plan_sha256"):
+        if validated[field] != completion[field]:
+            raise ProjectionError(f"deck_completion {id_field} {field} does not match")
+    if validated["availability"] != "available":
+        raise ProjectionError(f"deck_completion {id_field} must be available")
+    return validated
+
+
+def _validate_approval_source_event(
+    snapshot: EvidenceSnapshot,
+    approval: Mapping[str, Any],
+    completion: Mapping[str, Any],
+) -> None:
+    """Validate the immutable approval event linked by its source envelope."""
+    source = _source_event(snapshot, approval["source_event_id"], "draft_approval")
+    if source.get("event") != "deck_approval":
+        raise ProjectionError("draft_approval source event must be deck_approval")
+    errors = validate_deck_approval(source)
+    if errors:
+        raise ProjectionError(f"draft_approval source event is invalid: {errors[0]}")
+    if source.get("decision") != "approve":
+        raise ProjectionError("draft_approval source event must approve")
+    for field in ("deck_id", "plan_version", "plan_sha256"):
+        if source.get(field) != completion[field]:
+            raise ProjectionError(f"draft_approval source event {field} does not match")
+
+
+def _validate_visual_review_source_event(
+    snapshot: EvidenceSnapshot,
+    review: Mapping[str, Any],
+    completion: Mapping[str, Any],
+) -> None:
+    """Validate a frozen visual-review source event without live reads."""
+    source = _source_event(snapshot, review["source_event_id"], "visual_review")
+    _require_exact_fields(source, _VISUAL_REVIEW_SOURCE_FIELDS, "visual_review")
+    if source.get("event") != "visual_review" or source.get("schema_version") != 1:
+        raise ProjectionError("visual_review source event or schema_version is invalid")
+    for field in ("id", "deck_id", "plan_id", "producer_id", "ts"):
+        _require_text(source.get(field), f"visual_review.{field}")
+    _require_positive_int(source.get("plan_version"), "visual_review.plan_version")
+    _require_digest(source.get("plan_sha256"), "visual_review.plan_sha256")
+    _require_digest(source.get("visual_review_sha256"), "visual_review.visual_review_sha256")
+    for field in ("deck_id", "plan_id", "plan_version", "plan_sha256"):
+        if source[field] != completion[field]:
+            raise ProjectionError(f"visual_review source event {field} does not match")
+    _frozen_visual_review_document(snapshot, source)
+
+
+def _review_artifact_paths(
+    snapshot: EvidenceSnapshot, completion: Mapping[str, Any]
+) -> tuple[str, list[str]]:
+    """Derive final artifact paths from the frozen referenced review record."""
+    evidence = snapshot.stores.get("evidence")
+    if evidence is None:
+        raise ProjectionError("deck_completion immutable evidence sources are unavailable")
+    review_id = completion["visual_review_evidence_id"]
+    assert isinstance(review_id, str)
+    review = _thaw(evidence[review_id])
+    if not isinstance(review, dict):
+        raise ProjectionError("deck_completion visual review source must be a mapping")
+    source = _source_event(snapshot, review.get("source_event_id"), "visual_review")
+    document = _frozen_visual_review_document(snapshot, source)
+    if document.get("deck_id") != completion["deck_id"]:
+        raise ProjectionError("visual review document deck_id does not match completion")
+    if document.get("output_format") != "pptx":
+        raise ProjectionError("visual review document must describe PPTX output")
+    artifacts = _mapping(document.get("artifacts"), "visual review artifacts")
+    final_path = _canonical_path(artifacts.get("pptx"), "visual review final PPTX")
+    statuses = _mapping(document.get("statuses"), "visual review statuses")
+    render_status = _mapping(
+        statuses.get("pptx_render"), "visual review pptx_render status"
+    )
+    raw_rendered = render_status.get("rendered_png_paths")
+    if not isinstance(raw_rendered, list) or not raw_rendered:
+        raise ProjectionError("visual review rendered_png_paths must be non-empty")
+    rendered_paths = [
+        _canonical_path(path, "visual review rendered PNG") for path in raw_rendered
+    ]
+    if len(set(rendered_paths)) != len(rendered_paths):
+        raise ProjectionError("visual review rendered PNG paths must be unique")
+    if any(not path.lower().endswith(".png") for path in rendered_paths):
+        raise ProjectionError("visual review rendered paths must be PNG files")
+    if final_path in rendered_paths:
+        raise ProjectionError("visual review final PPTX overlaps rendered PNG paths")
+    return final_path, rendered_paths
+
+
+def _frozen_visual_review_document(
+    snapshot: EvidenceSnapshot, source: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Parse a review document only from the snapshot's retained preimage."""
+    review_path = _canonical_path(
+        source.get("visual_review_path"), "visual_review.visual_review_path"
+    )
+    content = snapshot.file_preimages.get(snapshot.project_root / review_path)
+    if content is None:
+        raise ProjectionError("visual_review source bytes are unavailable")
+    document = _parse_frozen_json(content, review_path)
+    if source["visual_review_sha256"] != _canonical_digest(document, "visual_review"):
+        raise ProjectionError("visual_review source document digest mismatch")
+    return document
+
+
+def _parse_frozen_json(content: bytes, relative_path: str) -> dict[str, Any]:
+    """Parse one frozen JSON object while rejecting duplicate keys."""
+    def pairs(pairs_list: list[tuple[str, Any]]) -> dict[str, Any]:
+        """Build a mapping without allowing duplicate JSON keys."""
+        parsed: dict[str, Any] = {}
+        for key, value in pairs_list:
+            if key in parsed:
+                raise ProjectionError(
+                    f"visual review {relative_path} has duplicate JSON key {key!r}"
+                )
+            parsed[key] = value
+        return parsed
+
+    try:
+        value = json.loads(content.decode("utf-8"), object_pairs_hook=pairs)
+    except ProjectionError:
+        raise
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise ProjectionError(
+            f"visual review {relative_path} is not valid UTF-8 JSON"
+        ) from exc
+    if not isinstance(value, dict):
+        raise ProjectionError(f"visual review {relative_path} must be a mapping")
+    return value
+
+
+def _validate_completion_artifact_records(
+    snapshot: EvidenceSnapshot,
+    deck_id: str,
+    artifact_digests: Mapping[str, Any],
+    bindings: list[tuple[str, str, str]],
+) -> None:
+    """Require exactly one immutable persisted record per completion artifact."""
+    records = snapshot.stores.get("artifacts")
+    if records is None:
+        raise ProjectionError("deck_completion artifact records are unavailable")
+    record_kinds = {"final_pptx": "deck-pptx", "rendered_png": "slide-png"}
+    for path, evidence_kind, _subject_id in bindings:
+        matches: list[dict[str, Any]] = []
+        for frozen_record in records.values():
+            record = _thaw(frozen_record)
+            if not isinstance(record, dict) or record.get("deck_id") != deck_id:
+                continue
+            if record.get("path") != path:
+                continue
+            matches.append(record)
+        if len(matches) != 1:
+            raise ProjectionError(
+                f"deck_completion requires exactly one artifact record for {path!r}"
+            )
+        record = matches[0]
+        if record.get("artifact_kind") != record_kinds[evidence_kind]:
+            raise ProjectionError(f"deck_completion artifact record kind mismatch for {path!r}")
+        if record.get("sha256") != artifact_digests[path]:
+            raise ProjectionError(
+                f"deck_completion artifact record digest mismatch for {path!r}"
+            )
+
+
+def _source_event(
+    snapshot: EvidenceSnapshot, source_event_id: object, label: str
+) -> dict[str, Any]:
+    """Resolve one immutable raw event without inspecting the live JSONL shard."""
+    _require_text(source_event_id, f"{label}.source_event_id")
+    assert isinstance(source_event_id, str)
+    matches = [
+        _thaw(event)
+        for event in snapshot.events
+        if isinstance(event, Mapping) and event.get("id") == source_event_id
+    ]
+    if len(matches) != 1 or not isinstance(matches[0], dict):
+        raise ProjectionError(f"{label}.source_event_id does not resolve")
+    return matches[0]
 
 
 def _validate_preview_artifacts(
