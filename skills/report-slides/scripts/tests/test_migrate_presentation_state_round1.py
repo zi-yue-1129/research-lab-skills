@@ -236,11 +236,40 @@ def test_latest_failed_content_review_blocks_approved_deck(tmp_path: Path) -> No
     """An older passed review cannot override the latest bound failed round."""
     project = _project(tmp_path)
     deck_id = _write_deck(project, status="approved")
-    _write_store(project, "plans.yaml", {})
-    _write_event(project, {"event": "review_result", "id": "review-old", "subject_type": "deck", "subject_id": deck_id, "current_plan_id": "missing", "current_plan_version": 1, "current_plan_sha256": "0" * 64, "reviewer_id": "reviewer", "reviewer_role": "content", "status": "passed", "findings": [], "round": 1, "ts": "2026-08-09T00:00:00Z"})
-    _write_event(project, {"event": "review_result", "id": "review-new", "subject_type": "deck", "subject_id": deck_id, "current_plan_id": "missing", "current_plan_version": 1, "current_plan_sha256": "0" * 64, "reviewer_id": "reviewer", "reviewer_role": "content", "status": "failed", "findings": [{"code": "unsupported-claim"}], "round": 2, "ts": "2026-08-09T00:01:00Z"})
+    plan = {
+        "schema_version": 1,
+        "deck_id": deck_id,
+        "plan_version": 1,
+        "purpose": "Purpose",
+        "audience": "Audience",
+        "core_narrative": "Narrative",
+        "authored_by": "planner",
+        "status": "reviewed",
+        "estimated_duration_minutes": 5,
+        "excluded_content": [],
+        "known_gaps": [],
+        "slides": [{
+            "slide_id": "slide-01",
+            "title": "Title",
+            "purpose": "Purpose",
+            "key_takeaway": "Takeaway",
+            "intended_visual_type": "none",
+            "visual_rationale": "Rationale",
+            "speaker_message": "Message",
+            "evidence_refs": ["E1"],
+            "dependencies": [],
+            "open_questions": [],
+        }],
+    }
+    plan_path = project / "plans" / "latest-review.yaml"
+    plan_path.parent.mkdir(parents=True)
+    plan_path.write_text(yaml.safe_dump(plan, sort_keys=True), encoding="utf-8")
+    digest = contract_sha256(plan)
+    _write_store(project, "plans.yaml", {"plan-r1": {"id": "plan-r1", "deck_id": deck_id, "version": 1, "plan_path": "plans/latest-review.yaml", "plan_sha256": digest, "sha256": digest, "authored_by": "planner"}})
+    _write_event(project, {"event": "review_result", "id": "review-old", "subject_type": "deck", "subject_id": deck_id, "current_plan_id": "plan-r1", "current_plan_version": 1, "current_plan_sha256": digest, "reviewer_id": "reviewer", "reviewer_role": "content", "status": "passed", "findings": [], "round": 1, "ts": "2026-08-09T00:00:00Z"})
+    _write_event(project, {"event": "review_result", "id": "review-new", "subject_type": "deck", "subject_id": deck_id, "current_plan_id": "plan-r1", "current_plan_version": 1, "current_plan_sha256": digest, "reviewer_id": "reviewer", "reviewer_role": "content", "status": "failed", "findings": [{"code": "unsupported-claim"}], "round": 2, "ts": "2026-08-09T00:01:00Z"})
     decks = yaml.safe_load((_state_dir(project) / "decks.yaml").read_text(encoding="utf-8"))
-    decks["decks"][deck_id].update({"current_plan_id": "missing", "approved_plan_version": 1, "approved_plan_sha256": "0" * 64, "approval_id": "missing", "approved_by": "reviewer", "approved_at": "2026-08-09T00:01:00Z", "approval_mode": "interactive"})
+    decks["decks"][deck_id].update({"current_plan_id": "plan-r1", "approved_plan_version": 1, "approved_plan_sha256": digest, "approval_id": "missing", "approved_by": "reviewer", "approved_at": "2026-08-09T00:01:00Z", "approval_mode": "interactive"})
     (_state_dir(project) / "decks.yaml").write_text(yaml.safe_dump(decks, sort_keys=False), encoding="utf-8")
     report = migration.migrate_state(project)
     assert deck_id in report["blocked_ids"]

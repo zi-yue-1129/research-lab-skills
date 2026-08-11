@@ -344,10 +344,10 @@ def test_v2_noop_never_uses_relaxed_legacy_snapshot(
 
 
 @pytest.mark.parametrize("source_version", [0, 1])
-def test_missing_legacy_current_plan_blocks_without_relaxing_normal_snapshot(
+def test_missing_legacy_current_plan_is_rejected_without_mutation(
     tmp_path: Path, source_version: int
 ) -> None:
-    """Legacy missing plans are blocked, while ordinary snapshots still reject them."""
+    """Legacy migration cannot preserve a dangling current-plan relation in v2."""
     project = _legacy_project(tmp_path, source_version)
     deck_path = _state(project) / "decks.yaml"
     document = _read_yaml(deck_path)
@@ -365,21 +365,12 @@ def test_missing_legacy_current_plan_blocks_without_relaxing_normal_snapshot(
     with pytest.raises(SnapshotError, match="current plan .* unavailable"):
         build_snapshot(project)
 
-    report = migration.migrate_state(project)
-    stored_deck = _read_yaml(deck_path)["decks"]["deck-1"]
+    before = _regular_tree(project / ".research/presentations")
+    with pytest.raises(Exception, match="current_plan_id|relation|resolve"):
+        migration.migrate_state(project)
 
-    assert report["target_schema_version"] == 2
-    assert report["blocked_ids"] == ["deck-1"]
-    assert any(
-        "missing plan record" in blocker["reason"]
-        for blocker in report["blockers"]["deck-1"]
-    )
-    assert stored_deck["status"] == "blocked"
-    assert "draft_preview_evidence_id" not in stored_deck
-    assert _read_yaml(_state(project) / "evidence.yaml") == {
-        "version": 2,
-        "evidence": {},
-    }
+    assert _regular_tree(project / ".research/presentations") == before
+    assert not (_state(project) / "evidence.yaml").exists()
 
 
 @pytest.mark.parametrize("version", [3, -1, True, False, "2"])

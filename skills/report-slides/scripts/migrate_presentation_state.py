@@ -44,7 +44,8 @@ from presentation_migration_v2 import (
     cas_objects_for_plan,
     migration_workflow_lock,
 )
-from presentation_transactions import WorkflowTransaction, incomplete_transaction_journals
+from presentation_transaction_files import journal_entry_names
+from presentation_transactions import WorkflowTransaction
 from validate_deck_plan import validate_deck_approval, validate_deck_plan
 from migration_scope import (
     MigrationError,
@@ -684,13 +685,16 @@ def migrate_state(project_root: Path | str, dry_run: bool = False) -> dict[str, 
     if type(dry_run) is not bool:
         raise TypeError("dry_run must be a boolean")
     root = Path(project_root).resolve()
-    pending_journals = incomplete_transaction_journals(root)
-    if dry_run and pending_journals:
+    try:
+        pending_entries = journal_entry_names(root)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise MigrationError(f"unsafe transaction journal scope: {exc}") from exc
+    if dry_run and pending_entries:
         raise MigrationError(
             "transaction recovery required before dry-run: "
-            + ", ".join(path.name for path in pending_journals)
+            + ", ".join(pending_entries)
         )
-    if pending_journals:
+    if pending_entries:
         with migration_workflow_lock(root):
             with WorkflowTransaction([], root):
                 pass

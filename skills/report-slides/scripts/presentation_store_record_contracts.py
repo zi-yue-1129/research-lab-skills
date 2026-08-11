@@ -4,6 +4,13 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from presentation_artifact_provenance import (
+    REVIEW_SHEET_KIND,
+    SLIDE_PNG_KIND,
+    validate_artifact_provenance,
+    validate_artifact_subject,
+)
+
 
 _DIGEST_LENGTH = 64
 _DECK_STATUSES = frozenset(
@@ -27,7 +34,8 @@ _DECK_OPTIONAL = frozenset(
      "approval_mode", "draft_preview_id", "draft_approval_id",
      "draft_preview_evidence_id", "draft_approval_evidence_id",
      "completion_evidence_id", "required_plan_revision_id", "created_at",
-     "updated_at", "identity_verifiable"}
+     "updated_at", "identity_verifiable", "plan_revision_required",
+     "required_plan_id"}
 )
 _PLAN_REQUIRED = frozenset({"id", "deck_id", "version", "plan_sha256"})
 _PLAN_OPTIONAL = frozenset(
@@ -68,6 +76,20 @@ _ARTIFACT_PLURAL = frozenset({"id", "deck_id", "source_paths", "rendered_slide_p
 _REVISION_FIELDS = frozenset(
     {"id", "subject_type", "subject_id", "requested_by", "instructions",
      "supersedes", "created_at"}
+)
+_REVISION_TARGET_FIELDS = frozenset(
+    {"revision_kind", "target_type", "target_id", "requested_subject_type",
+     "requested_subject_id"}
+)
+_REVISION_PLAN_FIELDS = frozenset(
+    {"plan_scoped", "scope_subject_type", "scope_subject_id", "plan_id",
+     "plan_version", "plan_sha256", "current_plan_id", "current_plan_version",
+     "current_plan_sha256", "next_action"}
+)
+_REVISION_KINDS = frozenset(
+    {"revise_slide", "add_slide", "remove_slide", "reorder_slides",
+     "change_emphasis", "change_audience", "change_duration",
+     "review_finding", "module_retry", "slide_retry"}
 )
 
 
@@ -122,7 +144,7 @@ def _validate_deck(
         "current_plan_id", "approval_id", "approved_by", "approved_at",
         "draft_preview_id", "draft_approval_id", "draft_preview_evidence_id",
         "draft_approval_evidence_id", "completion_evidence_id",
-        "required_plan_revision_id", "created_at", "updated_at",
+        "required_plan_revision_id", "required_plan_id", "created_at", "updated_at",
     ):
         _optional_text(record, field, "decks")
     if "approval_mode" in record and record["approval_mode"] is not None:
@@ -133,12 +155,26 @@ def _validate_deck(
         )
     if "identity_verifiable" in record and type(record["identity_verifiable"]) is not bool:
         raise ValueError("decks.identity_verifiable must be a bool")
+    if "plan_revision_required" in record and type(record["plan_revision_required"]) is not bool:
+        raise ValueError("decks.plan_revision_required must be a bool")
     current_plan_id = record.get("current_plan_id")
-    plans = relations.get("plans", {})
-    if current_plan_id is not None and current_plan_id in plans:
+    if current_plan_id is not None:
         current_plan = _owner(relations, "plans", current_plan_id, "decks.current_plan_id")
         if current_plan.get("deck_id") != record["id"]:
             raise ValueError("decks current plan owner does not match deck id")
+    required_plan_id = record.get("required_plan_id")
+    if required_plan_id is not None:
+        required_plan = _owner(relations, "plans", required_plan_id, "decks.required_plan_id")
+        if required_plan.get("deck_id") != record["id"]:
+            raise ValueError("decks required plan owner does not match deck id")
+    revision_id = record.get("required_plan_revision_id")
+    if revision_id is not None:
+        revision = _owner(
+            relations, "revision_requests", revision_id,
+            "decks.required_plan_revision_id",
+        )
+        if _record_deck_id(relations, "revision_requests", revision) != record["id"]:
+            raise ValueError("decks required revision owner does not match deck id")
 
 
 def _validate_plan(
@@ -217,6 +253,14 @@ def _validate_slide(
         prior = _owner(relations, "slides", predecessor, "slides.supersedes_slide_id")
         if prior.get("deck_id") != record["deck_id"]:
             raise ValueError("slides predecessor owner does not match deck_id")
+    revision_id = record.get("revision_request_id")
+    if revision_id is not None:
+        revision = _owner(
+            relations, "revision_requests", revision_id,
+            "slides.revision_request_id",
+        )
+        if revision.get("target_type") != "slide" or revision.get("target_id") != predecessor:
+            raise ValueError("slides revision request target does not match predecessor")
 
 
 def _validate_module(
@@ -250,10 +294,32 @@ def _validate_module(
         _optional_digest(record, field, "visual_modules")
     if record.get("visual_spec_sha256") is not None and record.get("spec_sha256") is not None:
         if record["visual_spec_sha256"] != record["spec_sha256"]:
-            raise ValueError("visual_modules digest aliases must match")
+            raise ValueError("visual_modules.spec_sha256 digest aliases must match")
     for field in ("supersedes_module_id", "created_at", "updated_at", "created_by",
                   "revision_request_id", "revision_kind"):
         _optional_text(record, field, "visual_modules")
+    predecessor = record.get("supersedes_module_id")
+    if predecessor is not None:
+        source = _owner(
+            relations, "visual_modules", predecessor,
+            "visual_modules.supersedes_module_id",
+        )
+        source_slide = _owner(
+            relations, "slides", source.get("slide_id"),
+            "visual_modules predecessor slide_id",
+        )
+        if source_slide.get("deck_id") != slide.get("deck_id"):
+            raise ValueError("visual_modules predecessor owner does not match deck")
+    revision_id = record.get("revision_request_id")
+    if revision_id is not None:
+        revision = _owner(
+            relations, "revision_requests", revision_id,
+            "visual_modules.revision_request_id",
+        )
+        if revision.get("target_type") != "module" or revision.get("target_id") != predecessor:
+            raise ValueError(
+                "visual_modules.revision_request_id target does not match predecessor"
+            )
 
 
 def _validate_assignment(
@@ -281,6 +347,17 @@ def _validate_assignment(
     module = _owner(relations, "visual_modules", record["module_id"], "assignments.module_id")
     if slide.get("deck_id") != deck.get("id") or module.get("slide_id") != slide.get("id"):
         raise ValueError("assignments relation owners do not match")
+    for dependency_id in record["dependencies"]:
+        dependency = _owner(
+            relations, "visual_modules", dependency_id,
+            "assignments.dependencies",
+        )
+        dependency_slide = _owner(
+            relations, "slides", dependency.get("slide_id"),
+            "assignments dependency slide_id",
+        )
+        if dependency_slide.get("deck_id") != record["deck_id"]:
+            raise ValueError("assignments dependency owner does not match deck_id")
 
 
 def _validate_artifact(
@@ -313,9 +390,32 @@ def _validate_artifact(
         raise ValueError("artifacts kind aliases must match")
     if record["produced_by"] != record["producer_id"]:
         raise ValueError("artifacts producer aliases must match")
+    try:
+        validate_artifact_subject(
+            record["artifact_kind"], record.get("slide_id"), record.get("module_id")
+        )
+        normalized_provenance = validate_artifact_provenance(
+            record["artifact_kind"],
+            deck_id=record["deck_id"],
+            slide_id=record.get("slide_id"),
+            module_id=record.get("module_id"),
+            plan_version=record.get("plan_version"),
+            plan_sha256=record.get("plan_sha256"),
+            slide_record_id=record.get("slide_record_id"),
+            attempt=record.get("attempt"),
+            source_paths=record.get("source_paths"),
+            source_sha256=record.get("source_sha256"),
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"artifacts provenance is invalid: {exc}") from exc
+    declared_provenance = {
+        field: record[field] for field in _ARTIFACT_PROVENANCE if field in record
+    }
+    if declared_provenance != normalized_provenance:
+        raise ValueError("artifacts provenance fields do not match artifact kind")
     _equal_path_aliases(record, "path", "relative_path", "artifacts")
     _digest(record.get("sha256"), "artifacts.sha256")
-    _owner(relations, "decks", record["deck_id"], "artifacts.deck_id")
+    deck = _owner(relations, "decks", record["deck_id"], "artifacts.deck_id")
     slide = None
     if record.get("slide_id") is not None:
         slide = _owner(relations, "slides", record["slide_id"], "artifacts.slide_id")
@@ -339,6 +439,28 @@ def _validate_artifact(
     if "source_paths" in record:
         _path_list(record["source_paths"], "artifacts.source_paths")
     _optional_digest(record, "source_sha256", "artifacts")
+    if record["artifact_kind"] in {SLIDE_PNG_KIND, REVIEW_SHEET_KIND}:
+        plan_id = deck.get("current_plan_id")
+        plan = _owner(relations, "plans", plan_id, "artifacts current plan")
+        if (
+            plan.get("deck_id") != record["deck_id"]
+            or plan.get("version") != record.get("plan_version")
+            or plan.get("plan_sha256") != record.get("plan_sha256")
+            or deck.get("approved_plan_version") != record.get("plan_version")
+            or deck.get("approved_plan_sha256") != record.get("plan_sha256")
+        ):
+            raise ValueError("artifacts plan provenance does not match owning deck")
+    if record["artifact_kind"] == SLIDE_PNG_KIND:
+        slide_record = _owner(
+            relations, "slides", record.get("slide_record_id"),
+            "artifacts.slide_record_id",
+        )
+        if (
+            slide_record.get("id") != record.get("slide_id")
+            or slide_record.get("deck_id") != record["deck_id"]
+            or slide_record.get("attempt") != record.get("attempt")
+        ):
+            raise ValueError("artifacts slide provenance does not match slide relation")
 
 
 def _validate_historical_artifact(
@@ -357,7 +479,13 @@ def _validate_revision(
 ) -> None:
     """Validate a public revision request and its typed subject relation."""
     del legacy
-    _exact_fields(record, _REVISION_FIELDS, "revision_requests")
+    fields = set(record)
+    expected = _REVISION_FIELDS
+    if fields != expected:
+        expected = _REVISION_FIELDS | _REVISION_TARGET_FIELDS
+    if fields != expected:
+        expected = _REVISION_FIELDS | _REVISION_TARGET_FIELDS | _REVISION_PLAN_FIELDS
+    _exact_fields(record, expected, "revision_requests")
     for field in ("id", "subject_id", "instructions", "created_at"):
         _text(record.get(field), f"revision_requests.{field}")
     _enum(record.get("subject_type"), _SUBJECT_TYPES, "revision_requests.subject_type")
@@ -366,7 +494,114 @@ def _validate_revision(
     relation_store = {
         "deck": "decks", "plan": "plans", "slide": "slides", "module": "visual_modules"
     }[record["subject_type"]]
-    _owner(relations, relation_store, record["subject_id"], "revision_requests.subject_id")
+    subject = _owner(
+        relations, relation_store, record["subject_id"],
+        "revision_requests.subject_id",
+    )
+    if _REVISION_TARGET_FIELDS.issubset(record):
+        _validate_revision_target(record, relations)
+    supersedes = record.get("supersedes")
+    if supersedes is not None:
+        predecessor = _owner(
+            relations, relation_store, supersedes,
+            "revision_requests.supersedes",
+        )
+        if (
+            _record_deck_id(relations, relation_store, predecessor)
+            != _record_deck_id(relations, relation_store, subject)
+        ):
+            raise ValueError("revision_requests supersedes owner does not match subject deck")
+
+
+def _validate_revision_target(
+    record: Mapping[str, Any], relations: Mapping[str, Mapping[str, Any]]
+) -> None:
+    """Validate one workflow-targeted revision refinement."""
+    _enum(record.get("revision_kind"), _REVISION_KINDS, "revision_requests.revision_kind")
+    _enum(record.get("target_type"), _SUBJECT_TYPES, "revision_requests.target_type")
+    _enum(
+        record.get("requested_subject_type"), _SUBJECT_TYPES,
+        "revision_requests.requested_subject_type",
+    )
+    for field in ("target_id", "requested_subject_id"):
+        _text(record.get(field), f"revision_requests.{field}")
+    target_store = {
+        "deck": "decks", "plan": "plans", "slide": "slides",
+        "module": "visual_modules",
+    }[record["target_type"]]
+    target = _owner(
+        relations, target_store, record["target_id"],
+        "revision_requests.target_id",
+    )
+    if record["requested_subject_id"] != record["target_id"]:
+        raise ValueError("revision_requests requested subject must match target")
+    if record["requested_subject_type"] != record["target_type"]:
+        raise ValueError("revision_requests requested subject type must match target")
+    if _record_deck_id(relations, target_store, target) != _record_deck_id(
+        relations,
+        {
+            "deck": "decks", "plan": "plans", "slide": "slides",
+            "module": "visual_modules",
+        }[record["subject_type"]],
+        _owner(
+            relations,
+            {
+                "deck": "decks", "plan": "plans", "slide": "slides",
+                "module": "visual_modules",
+            }[record["subject_type"]],
+            record["subject_id"],
+            "revision_requests.subject_id",
+        ),
+    ):
+        raise ValueError("revision_requests target owner does not match subject deck")
+    if _REVISION_PLAN_FIELDS.issubset(record):
+        if type(record.get("plan_scoped")) is not bool or not record["plan_scoped"]:
+            raise ValueError("revision_requests.plan_scoped must be true")
+        if record.get("scope_subject_type") != "plan" or record.get("next_action") != "register_plan":
+            raise ValueError("revision_requests plan scope is invalid")
+        plan = _owner(relations, "plans", record.get("plan_id"), "revision_requests.plan_id")
+        for field in ("scope_subject_id", "current_plan_id"):
+            if record.get(field) != plan.get("id"):
+                raise ValueError(f"revision_requests.{field} must match plan_id")
+        for field in ("plan_version", "current_plan_version"):
+            _positive_int(record.get(field), f"revision_requests.{field}")
+            if record[field] != plan.get("version"):
+                raise ValueError(f"revision_requests.{field} must match plan version")
+        for field in ("plan_sha256", "current_plan_sha256"):
+            _digest(record.get(field), f"revision_requests.{field}")
+            if record[field] != plan.get("plan_sha256"):
+                raise ValueError(f"revision_requests.{field} must match plan digest")
+
+
+def _record_deck_id(
+    relations: Mapping[str, Mapping[str, Any]],
+    store: str,
+    record: Mapping[str, Any],
+) -> object:
+    """Return the owning deck identifier for one resolved relation record."""
+    if store == "decks":
+        return record.get("id")
+    if store in {"plans", "slides"}:
+        return record.get("deck_id")
+    if store == "visual_modules":
+        slide = _owner(
+            relations, "slides", record.get("slide_id"),
+            "visual_modules.slide_id",
+        )
+        return slide.get("deck_id")
+    if store == "revision_requests":
+        subject_store = {
+            "deck": "decks", "plan": "plans", "slide": "slides",
+            "module": "visual_modules",
+        }.get(record.get("subject_type"))
+        if subject_store is None:
+            raise ValueError("revision_requests subject type is invalid")
+        subject = _owner(
+            relations, subject_store, record.get("subject_id"),
+            "revision_requests.subject_id",
+        )
+        return _record_deck_id(relations, subject_store, subject)
+    raise ValueError(f"cannot derive deck owner for store {store!r}")
 
 
 def _fields(

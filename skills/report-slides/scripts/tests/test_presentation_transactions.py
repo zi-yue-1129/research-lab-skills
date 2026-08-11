@@ -208,6 +208,7 @@ def _write_journal(project: Path, entries: list[dict[str, object]]) -> Path:
         json.dumps({"transaction_id": transaction_id, "paths": entries}),
         encoding="utf-8",
     )
+    journal.chmod(0o600)
     return journal
 
 

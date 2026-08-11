@@ -100,7 +100,9 @@ def test_valid_rewrite_temp_is_discarded_when_canonical_journal_exists(
     journal_dir = project / ".research/presentations/transactions"
     journal_dir.mkdir(parents=True)
     content = _journal_document(project, target, transaction_id)
-    (journal_dir / f"{transaction_id}.json").write_bytes(content)
+    journal = journal_dir / f"{transaction_id}.json"
+    journal.write_bytes(content)
+    journal.chmod(0o600)
     temporary = journal_dir / f"{transaction_id}.json.tmp"
     temporary.write_bytes(content)
     temporary.chmod(0o600)

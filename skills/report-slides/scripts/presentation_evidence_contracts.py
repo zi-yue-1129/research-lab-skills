@@ -242,27 +242,19 @@ def validate_store_record(
     relation_maps = _relation_maps(relations)
     if type(legacy) is not bool:
         raise EvidenceContractError("legacy must be a bool")
-    if legacy:
-        try:
-            validate_additional_store_record(
-                store_name, candidate, relations=relation_maps, legacy=True
-            )
-        except ValueError as exc:
-            raise EvidenceContractError(str(exc)) from exc
-        return deepcopy(dict(candidate))
-    if store_name == "visual_modules":
-        _validate_visual_module(candidate, relation_maps)
-    elif store_name == "assignments":
-        _validate_assignment(candidate, relation_maps)
-    elif store_name == "slides":
-        _validate_slide(candidate, relation_maps)
-    else:
-        try:
-            validate_additional_store_record(
-                store_name, candidate, relations=relation_maps, legacy=False
-            )
-        except ValueError as exc:
-            raise EvidenceContractError(str(exc)) from exc
+    try:
+        validate_additional_store_record(
+            store_name, candidate, relations=relation_maps, legacy=legacy
+        )
+    except ValueError as exc:
+        raise EvidenceContractError(str(exc)) from exc
+    if not legacy:
+        if store_name == "visual_modules":
+            _validate_visual_module(candidate, relation_maps)
+        elif store_name == "assignments":
+            _validate_assignment(candidate, relation_maps)
+        elif store_name == "slides":
+            _validate_slide(candidate, relation_maps)
     return deepcopy(dict(candidate))
 
 

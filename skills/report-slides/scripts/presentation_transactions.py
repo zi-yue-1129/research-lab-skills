@@ -9,9 +9,8 @@ remain held, so unrelated low-level writers cannot be lost during rollback.
 """
 
 from __future__ import annotations
-
-import errno
 import base64
+import errno
 import fcntl
 import json
 import os
@@ -50,6 +49,7 @@ from presentation_transaction_files import (
     remove_regular_sibling,
     remove_staged_siblings,
     validate_journal_fields,
+    validate_preimage_fields,
 )
 
 
@@ -293,6 +293,8 @@ def incomplete_transaction_journals(project_root: Path) -> list[Path]:
         _validate_journal_filename(child)
         if child.is_symlink() or not child.is_file():
             raise TransactionError(f"transaction journal must be a regular file: {child}")
+        if child.stat().st_mode & 0o777 != 0o600:
+            raise TransactionError(f"transaction journal mode must be 0600: {child}")
         journals.append(child)
     return journals
 
@@ -341,11 +343,10 @@ def _decode_journal(
     decoded: list[tuple[Path, _FileSnapshot]] = []
     seen_paths: set[Path] = set()
     for entry in entries:
-        required_fields = {"path", "exists", "mode", "content"}
-        if not isinstance(entry, dict) or not required_fields.issubset(entry):
-            raise TransactionError(f"invalid transaction journal entry: {path}")
-        if not isinstance(entry["path"], str):
-            raise TransactionError(f"invalid transaction journal entry: {path}")
+        try:
+            entry = validate_preimage_fields(entry, str(path))
+        except ValueError as exc:
+            raise TransactionError(str(exc)) from exc
         target = _validate_journal_target(project_root, entry["path"])
         if target in seen_paths:
             raise TransactionError(f"duplicate transaction journal path: {path}")
