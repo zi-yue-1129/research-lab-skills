@@ -79,13 +79,6 @@ def _relations() -> dict[str, dict[str, Any]]:
     records["visual_modules"]["assignment_path"] = "work/assignment.yaml"
     records["visual_modules"]["visual_spec_path"] = "specs/module.yaml"
     records["visual_modules"]["visual_spec_sha256"] = _DIGEST
-    records["decks"].update(
-        {
-            "current_plan_id": "plan-1",
-            "approved_plan_version": 1,
-            "approved_plan_sha256": _DIGEST,
-        }
-    )
     relations = {name: {record["id"]: record} for name, record in records.items()}
     relations["visual_specs"] = {"specs/module.yaml": {"sha256": _DIGEST}}
     return relations

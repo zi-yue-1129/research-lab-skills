@@ -415,7 +415,7 @@ def _validate_artifact(
         raise ValueError("artifacts provenance fields do not match artifact kind")
     _equal_path_aliases(record, "path", "relative_path", "artifacts")
     _digest(record.get("sha256"), "artifacts.sha256")
-    deck = _owner(relations, "decks", record["deck_id"], "artifacts.deck_id")
+    _owner(relations, "decks", record["deck_id"], "artifacts.deck_id")
     slide = None
     if record.get("slide_id") is not None:
         slide = _owner(relations, "slides", record["slide_id"], "artifacts.slide_id")
@@ -440,16 +440,7 @@ def _validate_artifact(
         _path_list(record["source_paths"], "artifacts.source_paths")
     _optional_digest(record, "source_sha256", "artifacts")
     if record["artifact_kind"] in {SLIDE_PNG_KIND, REVIEW_SHEET_KIND}:
-        plan_id = deck.get("current_plan_id")
-        plan = _owner(relations, "plans", plan_id, "artifacts current plan")
-        if (
-            plan.get("deck_id") != record["deck_id"]
-            or plan.get("version") != record.get("plan_version")
-            or plan.get("plan_sha256") != record.get("plan_sha256")
-            or deck.get("approved_plan_version") != record.get("plan_version")
-            or deck.get("approved_plan_sha256") != record.get("plan_sha256")
-        ):
-            raise ValueError("artifacts plan provenance does not match owning deck")
+        _validate_artifact_plan_relation(record, relations)
     if record["artifact_kind"] == SLIDE_PNG_KIND:
         slide_record = _owner(
             relations, "slides", record.get("slide_record_id"),
@@ -461,6 +452,42 @@ def _validate_artifact(
             or slide_record.get("attempt") != record.get("attempt")
         ):
             raise ValueError("artifacts slide provenance does not match slide relation")
+
+
+def _validate_artifact_plan_relation(
+    record: Mapping[str, Any],
+    relations: Mapping[str, Mapping[str, Any]],
+) -> None:
+    """Resolve typed artifact provenance to one immutable same-deck plan.
+
+    Args:
+        record: Exact typed artifact record carrying historical plan provenance.
+        relations: Explicit ID-keyed state-store relations.
+
+    Raises:
+        ValueError: If no unique persisted plan matches the artifact's owning
+            deck, plan version, and canonical plan digest.
+    """
+    plans = relations.get("plans")
+    if not isinstance(plans, Mapping):
+        raise ValueError("artifacts plan provenance does not resolve in relation plans")
+    matches: list[Mapping[str, Any]] = []
+    for plan_id, candidate in plans.items():
+        if not isinstance(candidate, Mapping):
+            continue
+        if (
+            candidate.get("deck_id") == record["deck_id"]
+            and type(candidate.get("version")) is int
+            and candidate.get("version") == record.get("plan_version")
+            and candidate.get("plan_sha256") == record.get("plan_sha256")
+        ):
+            if not isinstance(plan_id, str) or candidate.get("id") != plan_id:
+                raise ValueError("artifacts plan provenance relation identity is invalid")
+            matches.append(candidate)
+    if len(matches) != 1:
+        raise ValueError(
+            "artifacts plan provenance must resolve to exactly one same-deck plan"
+        )
 
 
 def _validate_historical_artifact(
