@@ -142,7 +142,7 @@ def test_non_dry_migration_locks_before_parse_and_preserves_writer_order(
     assert acquired_before_commit
     final_document = yaml.safe_load(target.read_text(encoding="utf-8"))
     if acquired_before_commit[0]:
-        assert final_document["version"] == 1
+        assert final_document["version"] == 2
         assert final_document["decks"][deck_id]["title"] == "writer"
     else:
         assert target.read_bytes() == writer_bytes
@@ -173,7 +173,7 @@ def test_crash_recovery_with_event_shard_completes_target(tmp_path: Path, monkey
         migration.migrate_state(project)
     monkeypatch.delenv("PRESENTATION_TRANSACTION_CRASH_AT")
     report = migration.migrate_state(project)
-    assert report["target_schema_version"] == 1
+    assert report["target_schema_version"] == 2
     assert json.loads(event_path.read_text(encoding="utf-8"))[
         "id"
     ] == "event-r1"
@@ -224,7 +224,10 @@ def test_strict_contract_rejects_invalid_approval_document(tmp_path: Path) -> No
     (_state_dir(project) / "decks.yaml").write_text(yaml.safe_dump(decks, sort_keys=False), encoding="utf-8")
     report = migration.migrate_state(project)
     assert deck_id in report["blocked_ids"]
-    assert any("contract" in reason or "approval" in reason for reason in report["blockers"][deck_id])
+    assert any(
+        "contract" in blocker["reason"] or "approval" in blocker["reason"]
+        for blocker in report["blockers"][deck_id]
+    )
 
 
 def test_latest_failed_content_review_blocks_approved_deck(tmp_path: Path) -> None:
@@ -362,7 +365,10 @@ def test_latest_review_is_selected_before_current_plan_binding(tmp_path: Path) -
     report = migration.migrate_state(project)
 
     assert deck_id in report["blocked_ids"]
-    assert any("content review" in reason for reason in report["blockers"][deck_id])
+    assert any(
+        "content review" in blocker["reason"]
+        for blocker in report["blockers"][deck_id]
+    )
 
 
 @pytest.mark.parametrize("status", ["producing", "draft_review", "validating", "completed"])
@@ -372,7 +378,7 @@ def test_later_status_requires_status_specific_evidence(tmp_path: Path, status: 
     deck_id = _write_deck(project, status=status)
     report = migration.migrate_state(project)
     assert deck_id in report["blocked_ids"]
-    assert any("status" in reason for reason in report["blockers"][deck_id])
+    assert any("status" in blocker["reason"] for blocker in report["blockers"][deck_id])
 
 
 @pytest.mark.parametrize("path_value", [None, "/etc/passwd", "special-node"])

@@ -220,7 +220,10 @@ def test_migration_blocks_unverifiable_approved_deck(tmp_path: Path) -> None:
 
     assert deck_id in report["blocked_ids"]
     assert load_decks(project)[deck_id]["status"] == "blocked"
-    assert "approval evidence" in " ".join(report["blockers"][deck_id]).lower()
+    assert any(
+        "approval evidence" in blocker["reason"].lower()
+        for blocker in report["blockers"][deck_id]
+    )
 
 
 def test_verifiable_approved_deck_preserves_ids_digest_and_history(tmp_path: Path) -> None:
@@ -290,8 +293,8 @@ def test_target_schema_rerun_is_idempotent_without_backup_or_write(tmp_path: Pat
 
     assert first["changed_paths"]
     assert second == {
-        "source_schema_version": 1,
-        "target_schema_version": 1,
+        "source_schema_version": 2,
+        "target_schema_version": 2,
         "migrated_ids": [],
         "blocked_ids": [],
         "blockers": {},
@@ -411,7 +414,7 @@ def test_crash_journal_recovers_to_complete_target_on_rerun(
 
     report = _migrate(project)
 
-    assert report["target_schema_version"] == 1
+    assert report["target_schema_version"] == 2
     assert load_decks(project)
     assert not list((project / ".research" / "presentations" / "transactions").glob("*.json"))
 

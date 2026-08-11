@@ -22,6 +22,7 @@ STORE_TOP_KEYS = {
     "assignments.yaml": "assignments",
     "artifacts.yaml": "artifacts",
     "revision_requests.yaml": "revision_requests",
+    "evidence.yaml": "evidence",
 }
 
 
@@ -71,8 +72,9 @@ def _legacy_project(tmp_path: Path) -> tuple[Path, str]:
 def _target_project(tmp_path: Path) -> Path:
     """Create a target-schema project with no operational files."""
     project = _project(tmp_path)
-    _write_store(project, "decks.yaml", {}, 1)
-    _write_store(project, "slides.yaml", {}, 1)
+    _write_store(project, "decks.yaml", {}, 2)
+    _write_store(project, "slides.yaml", {}, 2)
+    _write_store(project, "evidence.yaml", {}, 2)
     return project
 
 
@@ -106,7 +108,7 @@ def _write_event(project: Path, event: dict[str, Any]) -> Path:
 def test_target_schema_non_dry_noop_has_zero_filesystem_diff(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """An all-v1 migration returns before transaction, locks, or journals."""
+    """An all-v2 migration returns before transaction, locks, or journals."""
     project = _target_project(tmp_path)
     before = _snapshot(_presentations(project))
 
@@ -121,15 +123,21 @@ def test_target_schema_non_dry_noop_has_zero_filesystem_diff(
     assert _snapshot(_presentations(project)) == before
 
 
-def test_legacy_changed_paths_include_new_operational_entries(tmp_path: Path) -> None:
-    """A successful legacy migration reports newly created sidecars and journal dir."""
+def test_legacy_changed_paths_exclude_operational_entries(tmp_path: Path) -> None:
+    """A successful migration reports only semantic writes and its backup."""
     project, _ = _legacy_project(tmp_path)
 
     report = migration.migrate_state(project)
 
-    assert ".research/presentations/state/decks.yaml.lock" in report["changed_paths"]
-    assert ".research/presentations/state/slides.yaml.lock" in report["changed_paths"]
-    assert ".research/presentations/transactions" in report["changed_paths"]
+    assert ".research/presentations/state/decks.yaml" in report["changed_paths"]
+    assert ".research/presentations/state/slides.yaml" in report["changed_paths"]
+    assert ".research/presentations/state/evidence.yaml" in report["changed_paths"]
+    assert any(
+        path.startswith(".research/presentations/state.backup-")
+        for path in report["changed_paths"]
+    )
+    assert all(not path.endswith(".lock") for path in report["changed_paths"])
+    assert ".research/presentations/transactions" not in report["changed_paths"]
     assert report["changed_paths"] == sorted(report["changed_paths"])
 
 
@@ -239,7 +247,7 @@ def test_backup_survives_unlock_failure_after_durable_commit(
         migration.migrate_state(project)
 
     deck = yaml.safe_load((_state_dir(project) / "decks.yaml").read_text(encoding="utf-8"))
-    assert deck["version"] == 1
+    assert deck["version"] == 2
     backups = sorted(_presentations(project).glob("state.backup-*"))
     assert len(backups) == 1
     assert not list((_presentations(project) / "transactions").glob("*.json"))

@@ -287,7 +287,7 @@ def test_valid_draft_preview_path_keyed_event_migrates_without_false_positive(
     report = migration.migrate_state(project, dry_run=dry_run)
 
     assert report["source_schema_version"] == 0
-    assert report["target_schema_version"] == 1
+    assert report["target_schema_version"] == 2
     assert report["migrated_ids"] == ["deck-round4", "sld-round4"]
     assert report["blocked_ids"] == []
     assert report["blockers"] == {}
@@ -297,11 +297,11 @@ def test_valid_draft_preview_path_keyed_event_migrates_without_false_positive(
     else:
         assert report["changed_paths"]
         migrated = yaml.safe_load((_state_dir(project) / "decks.yaml").read_text(encoding="utf-8"))
-        assert migrated["version"] == 1
+        assert migrated["version"] == 2
 
 
 def test_public_state_constructors_with_nullable_paths_are_target_noops(tmp_path: Path) -> None:
-    """Current public constructors retain nullable paths on exact v1 no-op migration."""
+    """Current public constructors retain nullable paths on exact v2 no-op migration."""
     project = _project(tmp_path)
     deck = create_deck(project, "Compatibility deck")
     slide = create_slide(project, deck["id"], "slide-01", "Evidence")
@@ -312,14 +312,19 @@ def test_public_state_constructors_with_nullable_paths_are_target_noops(tmp_path
     assert module["artifact_manifest_path"] is None
     for path in (project / ".research/presentations/state").glob("*.lock"):
         path.unlink()
+    evidence_path = project / ".research" / "presentations" / "state" / "evidence.yaml"
+    evidence_path.write_text(
+        yaml.safe_dump({"version": 2, "evidence": {}}, sort_keys=True),
+        encoding="utf-8",
+    )
     before = _snapshot(_presentations(project))
 
     dry_report = migration.migrate_state(project, dry_run=True)
     non_dry_report = migration.migrate_state(project, dry_run=False)
 
     expected = {
-        "source_schema_version": 1,
-        "target_schema_version": 1,
+        "source_schema_version": 2,
+        "target_schema_version": 2,
         "migrated_ids": [],
         "blocked_ids": [],
         "blockers": {},
@@ -354,4 +359,7 @@ def test_later_status_cannot_preserve_nullable_evidence_fields(tmp_path: Path) -
     report = migration.migrate_state(project, dry_run=True)
 
     assert deck_id in report["blocked_ids"]
-    assert any("status" in reason or "evidence" in reason for reason in report["blockers"][deck_id])
+    assert any(
+        "status" in blocker["reason"] or "evidence" in blocker["reason"]
+        for blocker in report["blockers"][deck_id]
+    )

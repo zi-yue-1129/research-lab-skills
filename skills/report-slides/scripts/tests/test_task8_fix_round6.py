@@ -522,35 +522,37 @@ def test_draft_preview_rejects_internally_consistent_stale_slide_identity(
         migration.migrate_state(project, dry_run=True)
 
 
-def test_exact_producer_shaped_draft_preview_is_target_noop(tmp_path: Path) -> None:
-    """An exact current producer event remains a byte-for-byte v1 no-op."""
+def test_exact_producer_shaped_draft_preview_migrates_without_event_rewrite(
+    tmp_path: Path,
+) -> None:
+    """An exact legacy producer event reaches v2 without an audit-byte rewrite."""
     project, _event, _slide = _draft_preview_project(tmp_path)
     before = _snapshot(_presentations(project))
-
-    report = migration.migrate_state(project, dry_run=False)
-
-    assert report == {
-        "source_schema_version": 1,
-        "target_schema_version": 1,
-        "migrated_ids": [],
-        "blocked_ids": [],
-        "blockers": {},
-        "changed_paths": [],
-    }
-    assert _snapshot(_presentations(project)) == before
-
-
-def test_valid_target_schema_deck_completion_is_noop(tmp_path: Path) -> None:
-    """Canonical completion digest evidence is accepted without writes."""
-    project = _project(tmp_path)
-    _write_event(project, _completion_event(project))
-    before = _snapshot(_presentations(project))
+    event_path = _presentations(project) / "events" / "2026-08-09.jsonl"
 
     report = migration.migrate_state(project, dry_run=False)
 
     assert report["source_schema_version"] == 1
-    assert report["changed_paths"] == []
-    assert _snapshot(_presentations(project)) == before
+    assert report["target_schema_version"] == 2
+    assert report["migrated_ids"] == ["deck-round6", "sld-current"]
+    assert report["blocked_ids"] == []
+    assert report["changed_paths"]
+    assert event_path.read_bytes() == before["events/2026-08-09.jsonl"][1]
+
+
+def test_legacy_deck_completion_is_preserved_without_event_rewrite(tmp_path: Path) -> None:
+    """An unprojectable legacy completion stays immutable while schema state advances."""
+    project = _project(tmp_path)
+    _write_event(project, _completion_event(project))
+    before = _snapshot(_presentations(project))
+    event_path = _presentations(project) / "events" / "2026-08-09.jsonl"
+
+    report = migration.migrate_state(project, dry_run=False)
+
+    assert report["source_schema_version"] == 0
+    assert report["target_schema_version"] == 2
+    assert report["changed_paths"]
+    assert event_path.read_bytes() == before["events/2026-08-09.jsonl"][1]
 
 
 @pytest.mark.parametrize("position", [0, 1, 2])

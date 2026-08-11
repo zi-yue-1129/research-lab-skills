@@ -20,6 +20,7 @@ from typing import Any, Iterator, Mapping, MutableMapping
 import yaml
 
 from presentation_contracts import contract_sha256, load_contract
+from presentation_evidence_contracts import EVIDENCE_SCHEMA_VERSION
 from presentation_artifact_provenance import (
     derive_validated_published_provenance,
     MODULE_ARTIFACT_KINDS,
@@ -713,7 +714,11 @@ def _stage_yaml_map(
 ) -> Path:
     """Write, fsync, and verify one complete state snapshot sibling."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = yaml.safe_dump({"version": 1, top_key: dict(records)}, sort_keys=True, allow_unicode=True).encode("utf-8")
+    payload = yaml.safe_dump(
+        {"version": EVIDENCE_SCHEMA_VERSION, top_key: dict(records)},
+        sort_keys=True,
+        allow_unicode=True,
+    ).encode("utf-8")
     descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.stage.", suffix=".tmp", dir=str(path.parent))
     temporary = Path(temporary_name)
     try:

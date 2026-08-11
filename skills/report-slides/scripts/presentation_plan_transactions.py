@@ -10,6 +10,7 @@ from typing import Any, Mapping
 import yaml
 
 from presentation_contracts import contract_sha256
+from presentation_evidence_contracts import EVIDENCE_SCHEMA_VERSION
 from presentation_events import _generate_id
 from presentation_transactions import transaction
 
@@ -122,7 +123,8 @@ def _load_state_map(path: Path, top_key: str) -> dict[str, Any]:
         document = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     except (OSError, UnicodeError, yaml.YAMLError) as exc:
         raise ValueError(f"invalid state YAML in {path}: {exc}") from exc
-    if not isinstance(document, dict) or document.get("version", 1) != 1:
+    version = document.get("version", 1) if isinstance(document, dict) else None
+    if type(version) is not int or version != EVIDENCE_SCHEMA_VERSION:
         raise ValueError(f"invalid state document in {path}")
     records = document.get(top_key, {}) or {}
     if not isinstance(records, dict) or any(not isinstance(record, dict) for record in records.values()):

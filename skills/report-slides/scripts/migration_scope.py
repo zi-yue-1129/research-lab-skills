@@ -97,6 +97,57 @@ _RENDERED_PREVIEW_ENTRY_FIELDS = frozenset(
     {"slide_id", "path", "slide_record_id", "attempt"}
 )
 _PREVIEW_SLIDE_FIELDS = frozenset({"slide_id", "title", "key_takeaway"})
+_STATE_STORE_NAMES = frozenset(
+    {
+        "decks.yaml",
+        "plans.yaml",
+        "slides.yaml",
+        "visual_modules.yaml",
+        "assignments.yaml",
+        "artifacts.yaml",
+        "revision_requests.yaml",
+        "evidence.yaml",
+    }
+)
+
+
+def is_canonical_operational_lock(name: object, scope: str) -> bool:
+    """Return whether a direct scope entry is a supported stable lock.
+
+    Args:
+        name: Basename from one direct state or event directory entry.
+        scope: Either ``state`` or ``event``.
+
+    Returns:
+        True only for a canonical regular workflow lock or data-file sidecar.
+        Existence of the corresponding data file is intentionally not required.
+    """
+    if not isinstance(name, str):
+        return False
+    if scope == "state":
+        return name == "workflow.lock" or (
+            name.endswith(".lock")
+            and name.removesuffix(".lock") in _STATE_STORE_NAMES
+        )
+    if scope == "event":
+        return bool(
+            name.endswith(".lock")
+            and _event_shard_name_is_canonical(name.removesuffix(".lock"))
+        )
+    return False
+
+
+def _event_shard_name_is_canonical(name: str) -> bool:
+    """Return whether one basename is a valid calendar-dated JSONL shard."""
+    if len(name) != 16 or not name.endswith(".jsonl"):
+        return False
+    try:
+        from datetime import datetime
+
+        datetime.strptime(name.removesuffix(".jsonl"), "%Y-%m-%d")
+    except ValueError:
+        return False
+    return True
 
 
 def iter_scope_entries(root: Path) -> Iterator[Path]:

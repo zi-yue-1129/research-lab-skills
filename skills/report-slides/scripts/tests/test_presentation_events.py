@@ -8,7 +8,12 @@ from pathlib import Path
 import pytest
 import yaml
 
-from presentation_events import StateParseError, effective_review_results, load_review_results
+from presentation_events import (
+    StateParseError,
+    effective_review_results,
+    load_plans as load_event_plans,
+    load_review_results,
+)
 from presentation_state import (
     create_artifact_record,
     create_assignment_record,
@@ -28,6 +33,23 @@ def make_project(tmp_path: Path) -> Path:
     project.mkdir()
     (project / ".git").mkdir()
     return project
+
+
+@pytest.mark.parametrize("version", [0, 1, 3, True, False, 2.0, "2"])
+def test_event_store_loaders_reject_non_exact_schema_two_markers(
+    tmp_path: Path, version: object
+) -> None:
+    """Event-owned stores reject legacy, future, boolean, and float versions."""
+    project = make_project(tmp_path)
+    path = project / ".research" / "presentations" / "state" / "plans.yaml"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        yaml.safe_dump({"version": version, "plans": {}}, sort_keys=True),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(StateParseError, match="Unsupported schema version"):
+        load_event_plans(project)
 
 
 def test_registering_plan_versions_preserves_prior_digest(tmp_path: Path) -> None:

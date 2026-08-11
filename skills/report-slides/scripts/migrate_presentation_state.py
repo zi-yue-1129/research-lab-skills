@@ -29,9 +29,20 @@ from presentation_events import StateParseError
 from presentation_contracts import contract_sha256
 from presentation_events import effective_review_results
 from presentation_evidence_snapshot import (
+    EvidenceSnapshot,
+    SnapshotError,
+    build_legacy_migration_snapshot,
+    build_snapshot,
     parse_event_shard as _parse_event_shard,
     parse_state_document as _parse_state_document,
     parse_yaml_document as _parse_yaml_document,
+)
+from presentation_evidence_cas import stage_cas_objects
+from presentation_migration_v2 import (
+    MigrationPlan,
+    build_migration_plan,
+    cas_objects_for_plan,
+    migration_workflow_lock,
 )
 from presentation_transactions import WorkflowTransaction, incomplete_transaction_journals
 from validate_deck_plan import validate_deck_approval, validate_deck_plan
@@ -42,11 +53,12 @@ from migration_scope import (
     assert_no_symlink_ancestors as _assert_no_symlink_ancestors,
     canonical_project_relative as _canonical_project_relative,
     iter_scope_entries as _iter_scope_entries,
+    is_canonical_operational_lock as _is_canonical_operational_lock,
     validate_record_paths as _validate_record_paths,
 )
 
 
-STATE_VERSION = 1
+STATE_VERSION = 2
 LEGACY_VERSION = 0
 PRESENTATIONS_RELATIVE = Path(".research/presentations")
 STATE_RELATIVE = PRESENTATIONS_RELATIVE / "state"
@@ -60,6 +72,7 @@ STATE_NAMES: dict[str, str] = {
     "assignments.yaml": "assignments",
     "artifacts.yaml": "artifacts",
     "revision_requests.yaml": "revision_requests",
+    "evidence.yaml": "evidence",
 }
 EVENT_SHARD_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}\.jsonl$")
 APPROVED_STATUSES = frozenset(
@@ -496,11 +509,9 @@ def _scope_paths(project_root: Path) -> tuple[tuple[Path, ...], tuple[Path, ...]
     state_paths: list[Path] = []
     event_paths: list[Path] = []
     for path in _iter_scope_entries(state_root):
+        if _is_canonical_operational_lock(path.name, "state"):
+            continue
         if path.name.endswith(".lock"):
-            data_name = path.name.removesuffix(".lock")
-            if data_name in STATE_NAMES:
-                _assert_sidecar_target(path, state_root / data_name, "state")
-                continue
             raise MigrationError(f"unknown presentation state sidecar: {path}")
         if path.name.endswith(".tmp"):
             raise MigrationError(f"temporary presentation state file is not allowed: {path}")
@@ -508,12 +519,9 @@ def _scope_paths(project_root: Path) -> tuple[tuple[Path, ...], tuple[Path, ...]
             raise MigrationError(f"unknown presentation state store: {path}")
         state_paths.append(path)
     for path in _iter_scope_entries(events_root):
+        if _is_canonical_operational_lock(path.name, "event"):
+            continue
         if path.name.endswith(".lock"):
-            data_name = path.name.removesuffix(".lock")
-            if EVENT_SHARD_PATTERN.fullmatch(data_name):
-                _parse_event_shard_date(data_name, path)
-                _assert_sidecar_target(path, events_root / data_name, "event")
-                continue
             raise MigrationError(f"unknown presentation event sidecar: {path}")
         if path.name.endswith(".tmp"):
             raise MigrationError(f"temporary presentation event file is not allowed: {path}")
@@ -660,7 +668,7 @@ def _analyze_migration(
 
 
 def migrate_state(project_root: Path | str, dry_run: bool = False) -> dict[str, Any]:
-    """Migrate legacy presentation state while locking before reads.
+    """Migrate legacy presentation state to schema-v2 evidence atomically.
 
     Args:
         project_root: Root containing ``.research/presentations``.
@@ -673,6 +681,8 @@ def migrate_state(project_root: Path | str, dry_run: bool = False) -> dict[str, 
         MigrationError: If state, events, paths, or evidence are unsafe.
         StateParseError: If a YAML/JSONL document is malformed.
     """
+    if type(dry_run) is not bool:
+        raise TypeError("dry_run must be a boolean")
     root = Path(project_root).resolve()
     pending_journals = incomplete_transaction_journals(root)
     if dry_run and pending_journals:
@@ -680,82 +690,171 @@ def migrate_state(project_root: Path | str, dry_run: bool = False) -> dict[str, 
             "transaction recovery required before dry-run: "
             + ", ".join(path.name for path in pending_journals)
         )
-    if not dry_run and pending_journals:
-        with WorkflowTransaction([], root):
-            pass
+    if pending_journals:
+        with migration_workflow_lock(root):
+            with WorkflowTransaction([], root):
+                pass
 
-    state_paths, event_paths = _scope_paths(root)
-    state_files, event_files = _scope_files(root, state_paths, event_paths)
-    initial_report, _, _, initial_source_version = _analyze_migration(root, state_files, event_files)
-    if dry_run or initial_source_version == STATE_VERSION:
-        return initial_report
+    initial_snapshot = _migration_snapshot(root)
+    initial_plan = build_migration_plan(initial_snapshot)
+    if dry_run or initial_plan.source_schema_version == STATE_VERSION:
+        return _report(initial_plan)
 
-    transaction_paths = tuple(sorted(state_paths + event_paths, key=lambda item: item.as_posix()))
-    if not transaction_paths:
-        return initial_report
-
-    preexisting_sidecars = {
-        path.with_suffix(path.suffix + ".lock")
-        for path in transaction_paths
-        if path.with_suffix(path.suffix + ".lock").exists()
-    }
-    transactions_directory = root / TRANSACTIONS_RELATIVE
-    transactions_directory_preexisting = transactions_directory.exists()
     backup_path: Path | None = None
     commit_completed = False
+    changed_paths: list[Path] = []
     try:
-        with WorkflowTransaction(transaction_paths, root) as transaction_handle:
-            locked_state_paths, locked_event_paths = _scope_paths(root)
-            if locked_state_paths != state_paths or locked_event_paths != event_paths:
-                raise MigrationError("state/event scope changed while sidecar locks were held")
-            state_files: dict[Path, tuple[bytes, int]] = {}
-            event_files: dict[Path, tuple[bytes, int]] = {}
-            preimages: dict[Path, tuple[bytes, int]] = {}
-            for path in locked_state_paths + locked_event_paths:
-                content, mode, _ = transaction_handle.snapshot(path)
-                preimages[path] = (content, mode)
-                if path in locked_state_paths:
-                    state_files[path] = (content, mode)
-                else:
-                    event_files[path] = (content, mode)
-            report, parsed, _, source_version = _analyze_migration(root, state_files, event_files)
-            if source_version == STATE_VERSION:
-                return report
-
-            backup_path = _build_backup(root, preimages)
-            for path, (_, top_key, records) in sorted(parsed.items(), key=lambda item: item[0].as_posix()):
-                transaction_handle.stage_bytes(path, _dump_state(top_key, records))
-            for path, (content, mode) in sorted(event_files.items(), key=lambda item: item[0].as_posix()):
-                transaction_handle.stage_bytes(path, content, mode=mode)
-            transaction_handle.commit()
-            commit_completed = True
+        with migration_workflow_lock(root):
+            _scope_paths(root)
+            preliminary_snapshot = _migration_snapshot(root)
+            preliminary_plan = build_migration_plan(preliminary_snapshot)
+            if preliminary_plan.source_schema_version == STATE_VERSION:
+                return _report(preliminary_plan)
+            transaction_paths = _transaction_paths(root, preliminary_snapshot, preliminary_plan)
+            with WorkflowTransaction(transaction_paths, root) as transaction_handle:
+                locked_snapshot = _migration_snapshot(root, locked=True)
+                locked_plan = build_migration_plan(locked_snapshot)
+                if locked_plan.source_schema_version == STATE_VERSION:
+                    return _report(locked_plan)
+                locked_paths = set(_transaction_paths(root, locked_snapshot, locked_plan))
+                if not locked_paths.issubset(set(transaction_paths)):
+                    raise MigrationError("migration scope changed while locks were held")
+                preimages = _backup_preimages(locked_snapshot, transaction_handle)
+                backup_path = _build_backup(root, preimages)
+                changed_paths = _stage_migration_plan(
+                    transaction_handle,
+                    root,
+                    locked_snapshot,
+                    locked_plan,
+                )
+                transaction_handle.commit()
+                commit_completed = True
     except Exception:
         if backup_path is not None and not commit_completed:
             try:
                 _remove_backup_tree(backup_path)
                 _fsync_directory(backup_path.parent)
             except Exception as cleanup_error:
-                raise MigrationError(f"migration failed and backup cleanup failed: {cleanup_error}") from cleanup_error
+                raise MigrationError(
+                    f"migration failed and backup cleanup failed: {cleanup_error}"
+                ) from cleanup_error
         raise
-    changed_paths = [path.relative_to(root).as_posix() for path in transaction_paths]
     if backup_path is not None:
-        changed_paths.append(backup_path.relative_to(root).as_posix())
-    changed_paths.extend(
-        sidecar.relative_to(root).as_posix()
-        for sidecar in sorted(
-            {
-                path.with_suffix(path.suffix + ".lock")
-                for path in transaction_paths
-                if path.with_suffix(path.suffix + ".lock").exists()
-                and path.with_suffix(path.suffix + ".lock") not in preexisting_sidecars
-            },
-            key=lambda item: item.as_posix(),
-        )
+        changed_paths.append(backup_path)
+    report = _report(locked_plan)
+    report["changed_paths"] = sorted(
+        path.relative_to(root).as_posix() for path in changed_paths
     )
-    if not transactions_directory_preexisting and transactions_directory.exists():
-        changed_paths.append(transactions_directory.relative_to(root).as_posix())
-    report["changed_paths"] = sorted(changed_paths)
     return report
+
+
+def _report(plan: MigrationPlan) -> dict[str, Any]:
+    """Build the exact six-key public report from one immutable plan."""
+    return {
+        "source_schema_version": plan.source_schema_version,
+        "target_schema_version": STATE_VERSION,
+        "migrated_ids": list(plan.migrated_ids),
+        "blocked_ids": list(plan.blocked_ids),
+        "blockers": {
+            deck_id: [dict(item) for item in plan.blockers[deck_id]]
+            for deck_id in sorted(plan.blockers)
+        },
+        "changed_paths": [],
+    }
+
+
+def _migration_snapshot(project_root: Path, *, locked: bool = False) -> EvidenceSnapshot:
+    """Capture a migration snapshot without weakening target-schema safety.
+
+    Args:
+        project_root: Existing project root containing presentation state.
+        locked: Whether all semantic sidecar locks are already held.
+
+    Returns:
+        A standard fail-closed snapshot, or an explicitly legacy-only snapshot
+        when an old approved deck lacks its current plan record.
+
+    Raises:
+        SnapshotError: If target-schema state or any non-missing-plan snapshot
+            condition is unsafe.
+    """
+    try:
+        return build_snapshot(project_root, locked=locked)
+    except SnapshotError as exc:
+        if not _is_missing_legacy_current_plan(exc):
+            raise
+        legacy_snapshot = build_legacy_migration_snapshot(project_root, locked=locked)
+        if legacy_snapshot.schema_version not in {LEGACY_VERSION, 1}:
+            raise exc
+        return legacy_snapshot
+
+
+def _is_missing_legacy_current_plan(error: SnapshotError) -> bool:
+    """Return whether a snapshot error is only a missing legacy plan record."""
+    message = str(error)
+    return message.startswith("approved deck ") and (
+        message.endswith("requires current_plan_id")
+        or (" current plan " in message and message.endswith(" is unavailable"))
+    )
+
+
+def _transaction_paths(
+    project_root: Path,
+    snapshot: Any,
+    plan: MigrationPlan,
+) -> tuple[Path, ...]:
+    """Return every semantic store/event, evidence, and CAS lock target."""
+    prefix = project_root / PRESENTATIONS_RELATIVE
+    paths = {
+        path
+        for path in snapshot.file_preimages
+        if path.is_relative_to(prefix / "state") or path.is_relative_to(prefix / "events")
+    }
+    paths.update(plan.replacements)
+    paths.update(plan.cas_objects)
+    return tuple(sorted(paths, key=lambda path: path.as_posix()))
+
+
+def _backup_preimages(
+    snapshot: Any,
+    transaction_handle: WorkflowTransaction,
+) -> dict[Path, tuple[bytes, int]]:
+    """Return exact semantic preimages, excluding all operational locks."""
+    presentations = snapshot.project_root / PRESENTATIONS_RELATIVE
+    paths = [
+        path
+        for path in snapshot.file_preimages
+        if path.is_relative_to(presentations / "state")
+        or path.is_relative_to(presentations / "events")
+    ]
+    return {
+        path: transaction_handle.snapshot(path)[:2]
+        for path in sorted(paths, key=lambda path: path.as_posix())
+    }
+
+
+def _stage_migration_plan(
+    transaction_handle: WorkflowTransaction,
+    project_root: Path,
+    snapshot: Any,
+    plan: MigrationPlan,
+) -> list[Path]:
+    """Stage only changed state/CAS bytes and return visible targets."""
+    changed: list[Path] = []
+    for path, content in plan.replacements.items():
+        prior_content, prior_mode, _ = transaction_handle.snapshot(path)
+        existed = path in snapshot.file_preimages
+        if existed and prior_content == content:
+            continue
+        transaction_handle.stage_bytes(path, content, mode=prior_mode if existed else 0o644)
+        changed.append(path)
+    cas_objects = cas_objects_for_plan(plan)
+    for path in plan.cas_objects:
+        exists, _ = transaction_handle.cas_snapshot(path)
+        if not exists:
+            changed.append(path)
+    stage_cas_objects(transaction_handle, project_root, cas_objects)
+    return changed
 
 
 class _ArgumentError(ValueError):
@@ -785,7 +884,8 @@ def _main(argv: list[str] | None = None) -> int:
     try:
         report = migrate_state(args.project_root, dry_run=args.dry_run)
     except (MigrationError, StateParseError, OSError, ValueError, TypeError, RuntimeError, RecursionError) as exc:
-        payload = {"error": type(exc).__name__, "message": str(exc)}
+        error_name = "MigrationError" if isinstance(exc, MigrationError) else type(exc).__name__
+        payload = {"error": error_name, "message": str(exc)}
         print(json.dumps(payload, sort_keys=True))
         return 1
     print(json.dumps(report, sort_keys=True) if args.as_json else json.dumps(report, indent=2, sort_keys=True))

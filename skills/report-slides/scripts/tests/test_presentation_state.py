@@ -6,7 +6,7 @@ import yaml
 import pytest
 from pathlib import Path
 
-from presentation_state import record_review
+from presentation_state import StateParseError, load_decks, record_review
 
 
 SCRIPT = Path(__file__).resolve().parent.parent / "presentation_state.py"
@@ -24,6 +24,23 @@ def _run(cwd: Path, *args: str) -> subprocess.CompletedProcess:
         [sys.executable, str(SCRIPT), *args],
         cwd=str(cwd), capture_output=True, text=True, check=False,
     )
+
+
+@pytest.mark.parametrize("version", [0, 1, 3, True, False, 2.0, "2"])
+def test_state_loaders_reject_non_exact_schema_two_markers(
+    tmp_path: Path, version: object
+) -> None:
+    """State readers reject legacy, future, boolean, and numeric-lookalike versions."""
+    project = _make_project(tmp_path)
+    path = project / ".research" / "presentations" / "state" / "decks.yaml"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        yaml.safe_dump({"version": version, "decks": {}}, sort_keys=True),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(StateParseError, match="Unsupported schema version"):
+        load_decks(project)
 
 
 def test_create_deck_returns_new_record(tmp_path: Path) -> None:
@@ -707,7 +724,7 @@ def test_integrity_scan_catches_supersession_dependency_and_ownership_drift(tmp_
     plans_path.write_text(
         yaml.safe_dump(
             {
-                "version": 1,
+                "version": 2,
                 "plans": {
                     "wrong-key": {
                         "id": "plan-real",
@@ -723,7 +740,7 @@ def test_integrity_scan_catches_supersession_dependency_and_ownership_drift(tmp_
     assignments_path.write_text(
         yaml.safe_dump(
             {
-                "version": 1,
+                "version": 2,
                 "assignments": {
                     "assignment-real": {
                         "id": "assignment-real",

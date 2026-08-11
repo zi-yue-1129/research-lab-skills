@@ -24,6 +24,7 @@ from typing import Any, Iterator, Sequence
 import yaml
 
 from presentation_contracts import contract_sha256, load_contract
+from presentation_evidence_contracts import EVIDENCE_SCHEMA_VERSION
 from presentation_artifact_provenance import (
     validate_artifact_provenance,
     validate_artifact_subject,
@@ -36,7 +37,7 @@ PLANS_RELATIVE_PATH = Path(".research/presentations/state/plans.yaml")
 ASSIGNMENTS_RELATIVE_PATH = Path(".research/presentations/state/assignments.yaml")
 ARTIFACTS_RELATIVE_PATH = Path(".research/presentations/state/artifacts.yaml")
 REVISION_REQUESTS_RELATIVE_PATH = Path(".research/presentations/state/revision_requests.yaml")
-STATE_SCHEMA_VERSION = 1
+STATE_SCHEMA_VERSION = EVIDENCE_SCHEMA_VERSION
 LOCK_TIMEOUT_SECONDS = int(os.environ.get("PRESENTATION_STATE_LOCK_TIMEOUT_SECONDS", "30"))
 LOCK_POLL_INTERVAL_SECONDS = 0.1
 
@@ -382,9 +383,10 @@ def _load_yaml_map(path: Path, top_key: str) -> dict[str, Any]:
         raise StateParseError(f"Invalid YAML in {path}: {exc}") from exc
     if not isinstance(document, dict):
         raise StateParseError(f"Invalid state document in {path}: expected mapping")
-    if document.get("version", 1) != STATE_SCHEMA_VERSION:
+    version = document.get("version", 1)
+    if type(version) is not int or version != STATE_SCHEMA_VERSION:
         raise StateParseError(
-            f"Unsupported schema version {document.get('version')!r} in {path} "
+            f"Unsupported schema version {version!r} in {path} "
             f"(expected {STATE_SCHEMA_VERSION})"
         )
     records = document.get(top_key, {}) or {}

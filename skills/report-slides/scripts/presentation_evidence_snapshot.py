@@ -131,8 +131,45 @@ def build_snapshot(project_root: Path, *, locked: bool = False) -> EvidenceSnaps
         SnapshotError: If scope, schemas, JSONL, or artifact capture is unsafe.
         StateParseError: If a state document or event shard is malformed.
     """
-    if not isinstance(locked, bool):
+    return _build_snapshot(project_root, locked=locked, capture_active_plans=True)
+
+
+def build_legacy_migration_snapshot(
+    project_root: Path, *, locked: bool = False
+) -> EvidenceSnapshot:
+    """Read a legacy-only snapshot that intentionally omits active plan bytes.
+
+    This entrypoint exists solely so schema-zero and schema-one migration can
+    persist a deterministic blocked lifecycle when a legacy deck references a
+    missing current plan.  It must not be used for target-schema validation or
+    active-evidence projection outside the migration path.
+
+    Args:
+        project_root: Existing project root containing presentation state.
+        locked: Whether the caller already holds the migration sidecar locks.
+
+    Returns:
+        A frozen legacy snapshot without active approved-plan preimages.
+
+    Raises:
+        SnapshotError: If scope, schemas, JSONL, or historical artifact capture
+            is unsafe.
+        StateParseError: If a state document or event shard is malformed.
+    """
+    return _build_snapshot(project_root, locked=locked, capture_active_plans=False)
+
+
+def _build_snapshot(
+    project_root: Path,
+    *,
+    locked: bool,
+    capture_active_plans: bool,
+) -> EvidenceSnapshot:
+    """Read one immutable snapshot with an internally selected capture policy."""
+    if type(locked) is not bool:
         raise SnapshotError("locked must be a boolean")
+    if type(capture_active_plans) is not bool:
+        raise SnapshotError("capture_active_plans must be a boolean")
     root = _project_root(project_root)
     state_bytes = _read_scope(root, _STATE_RELATIVE, _STATE_NAMES, "state")
     event_bytes = _read_event_scope(root)
@@ -147,8 +184,10 @@ def build_snapshot(project_root: Path, *, locked: bool = False) -> EvidenceSnaps
         file_preimages[root / relative_path] = content
     artifact_objects = _capture_artifact_objects(root, events, file_preimages)
     _capture_visual_review_preimages(root, events, file_preimages)
-    active_plan_preimages = _capture_active_plan_preimages(
-        root, stores, file_preimages
+    active_plan_preimages = (
+        _capture_active_plan_preimages(root, stores, file_preimages)
+        if capture_active_plans
+        else {}
     )
     return EvidenceSnapshot(
         project_root=root,

@@ -22,6 +22,7 @@ from presentation_transactions import (
     incomplete_transaction_journals,
     require_transaction_recovery,
 )
+from presentation_evidence_contracts import EVIDENCE_SCHEMA_VERSION
 from presentation_events import (
     LockTimeoutError,
     StateParseError,
@@ -53,7 +54,7 @@ DECKS_RELATIVE_PATH = Path(".research/presentations/state/decks.yaml")
 SLIDES_RELATIVE_PATH = Path(".research/presentations/state/slides.yaml")
 VISUAL_MODULES_RELATIVE_PATH = Path(".research/presentations/state/visual_modules.yaml")
 REVISION_REQUESTS_RELATIVE_PATH = Path(".research/presentations/state/revision_requests.yaml")
-STATE_SCHEMA_VERSION = 1
+STATE_SCHEMA_VERSION = EVIDENCE_SCHEMA_VERSION
 LOCK_TIMEOUT_SECONDS = int(os.environ.get("PRESENTATION_STATE_LOCK_TIMEOUT_SECONDS", "30"))
 LOCK_POLL_INTERVAL_SECONDS = 0.1
 _DECK_TRANSITIONS: Dict[str, frozenset] = {
@@ -202,7 +203,7 @@ def _load_yaml_map(path: Path, top_key: str) -> Dict[str, Any]:
     if not isinstance(doc, dict):
         raise StateParseError(f"Invalid state document in {path}: expected mapping")
     version = doc.get("version", 1)
-    if version != STATE_SCHEMA_VERSION:
+    if type(version) is not int or version != STATE_SCHEMA_VERSION:
         raise StateParseError(
             f"Unsupported schema version {version!r} in {path} (expected {STATE_SCHEMA_VERSION})"
         )

@@ -94,33 +94,45 @@ def _snapshot(root: Path) -> dict[str, tuple[str, bytes, int, int]]:
 
 
 @pytest.mark.parametrize("dry_run", [False, True])
-def test_orphan_state_canonical_lock_rejected_without_writes(tmp_path: Path, dry_run: bool) -> None:
-    """A known state lock is valid only when its canonical store exists."""
+def test_orphan_state_canonical_lock_is_stable_operational_entry(
+    tmp_path: Path, dry_run: bool
+) -> None:
+    """A regular canonical state lock is accepted even without its data store."""
     project, _ = _legacy_project(tmp_path)
     orphan = _state_dir(project) / "plans.yaml.lock"
     orphan.write_text("orphan", encoding="utf-8")
-    before = _snapshot(_presentations(project))
+    expected = (orphan.read_bytes(), orphan.stat().st_mode & 0o777, orphan.stat().st_mtime_ns)
 
-    with pytest.raises(migration.MigrationError, match="orphan|corresponding|store|state"):
-        migration.migrate_state(project, dry_run=dry_run)
+    report = migration.migrate_state(project, dry_run=dry_run)
 
-    assert _snapshot(_presentations(project)) == before
+    assert (orphan.read_bytes(), orphan.stat().st_mode & 0o777, orphan.stat().st_mtime_ns) == expected
+    assert all(not path.endswith(".lock") for path in report["changed_paths"])
+    if dry_run:
+        assert report["changed_paths"] == []
+    else:
+        assert report["target_schema_version"] == 2
 
 
 @pytest.mark.parametrize("dry_run", [False, True])
-def test_orphan_event_canonical_lock_rejected_without_writes(tmp_path: Path, dry_run: bool) -> None:
-    """An event lock is valid only when its exact daily shard exists."""
+def test_orphan_event_canonical_lock_is_stable_operational_entry(
+    tmp_path: Path, dry_run: bool
+) -> None:
+    """A regular canonical event lock is accepted without its daily shard."""
     project, _ = _legacy_project(tmp_path)
     events = _presentations(project) / "events"
     events.mkdir(parents=True)
     orphan = events / "2026-08-09.jsonl.lock"
     orphan.write_text("orphan", encoding="utf-8")
-    before = _snapshot(_presentations(project))
+    expected = (orphan.read_bytes(), orphan.stat().st_mode & 0o777, orphan.stat().st_mtime_ns)
 
-    with pytest.raises(migration.MigrationError, match="orphan|corresponding|shard|event"):
-        migration.migrate_state(project, dry_run=dry_run)
+    report = migration.migrate_state(project, dry_run=dry_run)
 
-    assert _snapshot(_presentations(project)) == before
+    assert (orphan.read_bytes(), orphan.stat().st_mode & 0o777, orphan.stat().st_mtime_ns) == expected
+    assert all(not path.endswith(".lock") for path in report["changed_paths"])
+    if dry_run:
+        assert report["changed_paths"] == []
+    else:
+        assert report["target_schema_version"] == 2
 
 
 @pytest.mark.parametrize("name", ["2026-99-99.jsonl", "2026-02-29.jsonl.lock"])

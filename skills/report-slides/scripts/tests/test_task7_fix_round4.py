@@ -144,7 +144,7 @@ def test_plan_transaction_rejects_malformed_existing_version_before_writes(tmp_p
     plans_path = state_dir / "plans.yaml"
     plans_path.parent.mkdir(parents=True, exist_ok=True)
     plans_path.write_text(
-        yaml.safe_dump({"version": 1, "plans": {"plan-old": {"id": "plan-old", "deck_id": deck["id"], "version": True}}}),
+        yaml.safe_dump({"version": 2, "plans": {"plan-old": {"id": "plan-old", "deck_id": deck["id"], "version": True}}}),
         encoding="utf-8",
     )
     destination = _canonical_destination(project, deck["id"], 2)

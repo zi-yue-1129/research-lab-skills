@@ -220,6 +220,14 @@ def test_publish_atomically_records_digest_after_replace(tmp_path: Path) -> None
     assert destination.read_bytes() == source.read_bytes()
     assert result["sha256"] == hashlib.sha256(source.read_bytes()).hexdigest()
     assert load_artifacts(project)[result["id"]]["sha256"] == result["sha256"]
+    artifacts_document = yaml.safe_load(
+        (project / ".research" / "presentations" / "state" / "artifacts.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert artifacts_document["version"] == 2
+
+
 
 
 def test_publish_persists_slide_assignment_and_spec_bindings(tmp_path: Path) -> None:

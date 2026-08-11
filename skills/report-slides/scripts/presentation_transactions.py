@@ -26,6 +26,7 @@ from typing import Any, Iterator, Mapping, Sequence
 
 import yaml
 
+from presentation_evidence_contracts import EVIDENCE_SCHEMA_VERSION
 from presentation_no_follow import (
     AnchoredPath,
     NoFollowPathError,
@@ -174,7 +175,7 @@ def _journal_dir(project_root: Path) -> Path:
 
 _ALLOWED_STATE_NAMES = frozenset({
     "decks.yaml", "plans.yaml", "slides.yaml", "visual_modules.yaml", "assignments.yaml",
-    "artifacts.yaml", "revision_requests.yaml",
+    "artifacts.yaml", "revision_requests.yaml", "evidence.yaml",
 })
 _EVENT_SHARD_PATTERN = re.compile(r"\.research/presentations/events/(\d{4}-\d{2}-\d{2})\.jsonl")
 _PLAN_DESTINATION_PATTERN = re.compile(r"decks/[^/]+/plans/plan-v\d{4}\.yaml")
@@ -663,7 +664,8 @@ class WorkflowTransaction:
         if not raw:
             return {}
         document = yaml.safe_load(raw.decode("utf-8")) or {}
-        if not isinstance(document, dict) or document.get("version", 1) != 1:
+        version = document.get("version", 1) if isinstance(document, dict) else None
+        if type(version) is not int or version != EVIDENCE_SCHEMA_VERSION:
             raise ValueError(f"Invalid transaction YAML in {path}")
         records = document.get(top_key, {}) or {}
         if not isinstance(records, dict) or any(not isinstance(value, dict) for value in records.values()):
@@ -709,7 +711,9 @@ class WorkflowTransaction:
     def stage_yaml(self, path: Path, top_key: str, records: Mapping[str, Any]) -> None:
         """Stage a complete versioned YAML map for one selected store."""
         content = yaml.safe_dump(
-            {"version": 1, top_key: dict(records)}, sort_keys=True, allow_unicode=True
+            {"version": EVIDENCE_SCHEMA_VERSION, top_key: dict(records)},
+            sort_keys=True,
+            allow_unicode=True,
         ).encode("utf-8")
         self.stage_bytes(path, content)
 
