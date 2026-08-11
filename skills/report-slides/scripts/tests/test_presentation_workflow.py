@@ -234,10 +234,21 @@ def test_draft_and_completion_actions_require_persisted_current_evidence(tmp_pat
     visual_review = _materialize_visual_review(project, deck_id)
     for relative in ("deck/final.pptx", "renders/source/slide-1.png", "renders/pptx/slide-1.png"):
         path = project / relative
+        artifact_kind = "deck-pptx" if relative.endswith(".pptx") else "slide-png"
+        provenance = (
+            {}
+            if artifact_kind == "deck-pptx"
+            else {
+                "plan_version": 1,
+                "plan_sha256": contract_sha256(_plan(deck_id)),
+                "slide_record_id": slide["id"],
+                "attempt": int(slide.get("attempt", 1)),
+            }
+        )
         create_artifact_record(
-            project, deck_id, "completion", relative,
+            project, deck_id, artifact_kind, relative,
             hashlib.sha256(path.read_bytes()).hexdigest(), "reviewer",
-            slide_id=slide["id"] if relative.endswith(".png") else None,
+            slide_id=slide["id"], **provenance,
         )
     completion = project / "completion.yaml"
     completion.write_text(yaml.safe_dump({"visual_review_path": str(visual_review.relative_to(project))}), encoding="utf-8")
@@ -361,10 +372,21 @@ def _complete_fixture(tmp_path: Path) -> tuple[Path, str, Path, Path, str, dict]
     visual_review = _materialize_visual_review(project, deck_id)
     for relative in ("deck/final.pptx", "renders/source/slide-1.png", "renders/pptx/slide-1.png"):
         path = project / relative
+        artifact_kind = "deck-pptx" if relative.endswith(".pptx") else "slide-png"
+        provenance = (
+            {}
+            if artifact_kind == "deck-pptx"
+            else {
+                "plan_version": 1,
+                "plan_sha256": contract_sha256(_plan(deck_id)),
+                "slide_record_id": slide["id"],
+                "attempt": int(slide.get("attempt", 1)),
+            }
+        )
         create_artifact_record(
-            project, deck_id, "completion", relative,
+            project, deck_id, artifact_kind, relative,
             hashlib.sha256(path.read_bytes()).hexdigest(), "reviewer",
-            slide_id=slide["id"] if relative.endswith(".png") else None,
+            slide_id=slide["id"], **provenance,
         )
     # The remaining workflow preparation is deliberately explicit: no status stub is accepted.
     completion = project / "completion.yaml"

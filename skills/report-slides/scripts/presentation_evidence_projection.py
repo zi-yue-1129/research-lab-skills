@@ -721,7 +721,6 @@ def _validate_preview_artifacts(
     expected_paths = set(rendered_paths) | {contact_path}
     if set(artifact_digests) != expected_paths or set(artifact_bindings) != expected_paths:
         raise ProjectionError("draft_preview artifact declaration paths are inconsistent")
-    producer_id: str | None = None
     for path in rendered_paths:
         _require_digest(artifact_digests[path], f"draft_preview digest {path!r}")
         binding = _mapping(artifact_bindings[path], f"draft_preview binding {path!r}")
@@ -750,10 +749,6 @@ def _validate_preview_artifacts(
         if binding.get("slide_record_id") != rendered_entries[path]["slide_record_id"] or binding.get("attempt") != rendered_entries[path]["attempt"]:
             raise ProjectionError(f"draft_preview rendered binding attempt mismatch for {path!r}")
         _require_text(binding.get("producer_id"), f"draft_preview producer {path!r}")
-        if producer_id is None:
-            producer_id = binding["producer_id"]
-        elif producer_id != binding["producer_id"]:
-            raise ProjectionError("draft_preview producer bindings are inconsistent")
     _require_digest(artifact_digests[contact_path], f"draft_preview digest {contact_path!r}")
     contact = _mapping(artifact_bindings[contact_path], "draft_preview contact binding")
     _require_exact_fields(
@@ -778,8 +773,6 @@ def _validate_preview_artifacts(
     if contact.get("source_paths") != rendered_paths:
         raise ProjectionError("draft_preview contact source path order mismatch")
     _require_text(contact.get("producer_id"), "draft_preview contact producer")
-    if producer_id != contact["producer_id"]:
-        raise ProjectionError("draft_preview contact producer binding mismatch")
     _require_digest(contact.get("source_sha256"), "draft_preview contact source_sha256")
     expected_source_sha256 = _canonical_digest(
         {"paths": rendered_paths, "digests": [artifact_digests[path] for path in rendered_paths]},
@@ -787,8 +780,7 @@ def _validate_preview_artifacts(
     )
     if contact["source_sha256"] != expected_source_sha256:
         raise ProjectionError("draft_preview contact source digest mismatch")
-    assert producer_id is not None
-    return rendered_paths, subject_ids, producer_id
+    return rendered_paths, subject_ids, str(contact["producer_id"])
 
 
 def _resolve_historical_plan_id(

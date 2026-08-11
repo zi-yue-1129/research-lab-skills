@@ -23,12 +23,11 @@ from typing import Any, Iterator, Mapping
 import yaml
 
 from presentation_contracts import contract_sha256, load_contract
-from presentation_artifact_provenance import mapping_key_blockers
+from presentation_evidence_workflow import MigrationRequiredError, require_schema_v2
 from presentation_events import (
     append_event,
-    events_shard_path,
     effective_review_results,
-    load_events,
+    events_shard_path,
     load_review_results,
     load_plans,
 )
@@ -42,14 +41,12 @@ from presentation_gates import (
     PlanGateError,
     ProductionGateError,
     ReviewGateError,
-    assert_deck_completable,
     assert_plan_approvable,
     assert_plan_reviewable,
     assert_production_allowed,
     review_result_blockers,
 )
 from validate_deck_plan import validate_deck_plan
-from render_plan_preview import validate_draft_decision_flags, validate_draft_preview
 
 
 WORKFLOW_LOCK_RELATIVE_PATH = Path(".research/presentations/state/workflow.lock")
@@ -64,15 +61,6 @@ _USER_PLAN_REVISION_KINDS = frozenset({
     "revise_slide", "add_slide", "remove_slide", "reorder_slides",
     "change_emphasis", "change_audience", "change_duration",
 })
-_DRAFT_DECISION_FIELDS = frozenset({
-    "schema_version", "deck_id", "preview_id", "preview_sha256", "decision",
-    "approval_mode", "approved_by", "identity_verifiable", "yes_draft",
-})
-_RESERVED_REVIEWER_IDENTITIES = frozenset({
-    "auto", "system", "agent", "unknown", "--yes-draft", "workflow",
-})
-
-
 def translate_cli_gate_error(args: Any, error: BaseException) -> BaseException:
     """Translate gated CLI not-found/parse errors into named gate errors.
 
@@ -84,7 +72,7 @@ def translate_cli_gate_error(args: Any, error: BaseException) -> BaseException:
         The original error when it is already structured, otherwise a named
         gate error for a gated action.
     """
-    if isinstance(error, GateError):
+    if isinstance(error, (GateError, MigrationRequiredError)):
         return error
     names = (
         "check_production_allowed", "register_plan", "record_content_review", "approve_deck",
@@ -140,6 +128,7 @@ def _workflow_lock(project_root: Path) -> Iterator[None]:
 
         with WorkflowTransaction([], project_root):
             pass
+        require_schema_v2(project_root)
         gitignore = project_root / ".research/presentations/.gitignore"
         if not gitignore.exists():
             gitignore.parent.mkdir(parents=True, exist_ok=True)
@@ -253,6 +242,7 @@ def register_plan(
     Raises:
         PlanGateError: If the source contract cannot be registered.
     """
+    require_schema_v2(project_root, check_recovery=False)
     with _workflow_lock(project_root):
         document = _action_document(plan_path, PlanGateError, "plan_registerable", deck_id)
         errors = validate_deck_plan(document)
@@ -295,6 +285,7 @@ def record_content_review(
         PlanGateError: If the current plan is absent or invalid.
         ReviewGateError: If the review document is malformed.
     """
+    require_schema_v2(project_root, check_recovery=False)
     with _workflow_lock(project_root):
         checked_plan = assert_plan_reviewable(project_root, deck_id)
         review = _action_document(review_path, ReviewGateError, "content_review_recordable", deck_id)
@@ -447,6 +438,7 @@ def approve_deck(project_root: Path, approval_path: Path) -> dict[str, Any]:
     Raises:
         ApprovalGateError: If approval evidence is absent or inconsistent.
     """
+    require_schema_v2(project_root, check_recovery=False)
     with _workflow_lock(project_root):
         approval = _action_document(approval_path, ApprovalGateError, "plan_approvable", "<unknown>")
         checked = assert_plan_approvable(project_root, approval)
@@ -497,6 +489,7 @@ def record_production_review(project_root: Path, review_path: Path) -> dict[str,
     Raises:
         ReviewGateError: If the review target or role is invalid.
     """
+    require_schema_v2(project_root, check_recovery=False)
     try:
         hint = _document(review_path)
     except Exception:
@@ -604,6 +597,7 @@ def request_targeted_revision(project_root: Path, revision_path: Path) -> dict[s
     Raises:
         ReviewGateError: If the request target or revision kind is invalid.
     """
+    require_schema_v2(project_root, check_recovery=False)
     try:
         hint = _document(revision_path)
     except Exception:
@@ -794,6 +788,9 @@ def request_targeted_revision(project_root: Path, revision_path: Path) -> dict[s
                 "status": "producing",
                 "draft_preview_id": None,
                 "draft_approval_id": None,
+                "draft_preview_evidence_id": None,
+                "draft_approval_evidence_id": None,
+                "completion_evidence_id": None,
                 "updated_at": _now(),
             })
             tx.stage_yaml(decks_path, "decks", decks)
@@ -803,6 +800,9 @@ def request_targeted_revision(project_root: Path, revision_path: Path) -> dict[s
                 "approved_plan_sha256": None, "approval_id": None,
                 "approved_by": None, "approved_at": None, "approval_mode": None,
                 "draft_preview_id": None, "draft_approval_id": None,
+                "draft_preview_evidence_id": None,
+                "draft_approval_evidence_id": None,
+                "completion_evidence_id": None,
                 "plan_revision_required": True,
                 "required_plan_id": plan_binding.get("plan_id"),
                 "required_plan_revision_id": record["id"], "updated_at": _now(),
@@ -831,38 +831,10 @@ def register_draft_preview(project_root: Path, preview_path: Path) -> dict[str, 
         DraftGateError: If any current rendered-slide or contact-sheet
             evidence is missing, stale, extra, or tampered.
     """
-    with _workflow_lock(project_root):
-        source = _action_document(preview_path, DraftGateError, "draft_reviewable", "<unknown>")
-        deck_id = source.get("deck_id")
-        if not isinstance(deck_id, str) or not deck_id:
-            raise DraftGateError("draft_reviewable", "<unknown>", [{"reason": "deck_id_required"}])
-        state = _state()
-        decks_path = project_root / state.DECKS_RELATIVE_PATH
-        event_path = events_shard_path(project_root)
-        with transaction([decks_path, event_path], project_root) as tx:
-            checked = validate_draft_preview(project_root, deck_id, source)
-            preview = checked["preview"]
-            event = dict(preview)
-            event.update({
-                "event": "draft_preview",
-                "id": _id("draft"),
-                "preview_sha256": contract_sha256(preview),
-                "ts": _now(),
-            })
-            tx.stage_append(event_path, json.dumps(event, sort_keys=True, ensure_ascii=False).encode("utf-8"))
-            decks = tx.read_yaml(decks_path, "decks")
-            deck = decks.get(deck_id)
-            if not isinstance(deck, dict):
-                raise DraftGateError("draft_reviewable", deck_id, [{"reason": "unknown_deck"}])
-            deck.update({
-                "draft_preview_id": event["id"],
-                "draft_approval_id": None,
-                "status": "draft_review",
-                "updated_at": _now(),
-            })
-            tx.stage_yaml(decks_path, "decks", decks)
-            tx.commit()
-            return {"deck": deck, "preview": event, "slides": checked["slides"]}
+    require_schema_v2(project_root, check_recovery=False)
+    from presentation_evidence_producers import register_draft_preview_v2
+
+    return register_draft_preview_v2(project_root, preview_path)
 
 
 def approve_draft(
@@ -884,94 +856,10 @@ def approve_draft(
     Raises:
         DraftGateError: If the current preview or decision is incomplete.
     """
-    if type(yes_draft) is not bool:
-        validate_draft_decision_flags({"yes_draft": yes_draft}, "<unknown>")
-    decision = _action_document(decision_path, DraftGateError, "draft_approvable", "<unknown>")
-    key_blockers = mapping_key_blockers(decision, "decision")
-    if key_blockers:
-        deck_hint = decision.get("deck_id") if isinstance(decision.get("deck_id"), str) else "<unknown>"
-        raise DraftGateError(
-            "draft_approvable",
-            deck_hint,
-            key_blockers,
-            f"draft_approvable blocked for deck {deck_hint}: mapping keys must be strings",
-        )
-    deck_id = decision.get("deck_id")
-    if not isinstance(deck_id, str) or not deck_id:
-        raise DraftGateError("draft_approvable", "<unknown>", [{"reason": "deck_id_required"}])
-    with _workflow_lock(project_root):
-        state = _state()
-        decks_path = project_root / state.DECKS_RELATIVE_PATH
-        event_path = events_shard_path(project_root)
-        with transaction([decks_path, event_path], project_root) as tx:
-            decks = tx.read_yaml(decks_path, "decks")
-            deck = decks.get(deck_id)
-            if not isinstance(deck, dict):
-                raise DraftGateError("draft_approvable", deck_id, [{"reason": "unknown_deck"}])
-            if type(decision.get("schema_version")) is not int or decision.get("schema_version") != 1:
-                raise DraftGateError(
-                    "draft_approvable", deck_id,
-                    [{"reason": "schema_version_required"}],
-                    f"draft_approvable blocked for deck {deck_id}: schema_version_required",
-                )
-            unexpected = sorted(set(decision) - _DRAFT_DECISION_FIELDS)
-            if unexpected:
-                raise DraftGateError(
-                    "draft_approvable", deck_id,
-                    [{"reason": "unexpected_decision_field", "field": field} for field in unexpected],
-                    f"draft_approvable blocked for deck {deck_id}: unexpected decision field",
-                )
-            validate_draft_decision_flags(decision, deck_id)
-            preview_id = decision.get("preview_id")
-            if not isinstance(preview_id, str) or not preview_id:
-                raise DraftGateError("draft_approvable", deck_id, [{"reason": "preview_id_required"}])
-            previews = [event for event in load_events(project_root, "draft_preview") if event.get("deck_id") == deck_id]
-            preview = next((event for event in previews if event.get("id") == preview_id), None)
-            if preview is None:
-                raise DraftGateError("draft_approvable", deck_id, [{"reason": "missing_draft_preview"}])
-            checked = validate_draft_preview(project_root, deck_id, preview)
-            blockers: list[dict[str, Any]] = []
-            if decision.get("preview_id") != deck.get("draft_preview_id"):
-                blockers.append({"reason": "preview_id_not_current"})
-            if decision.get("preview_sha256") != preview.get("preview_sha256"):
-                blockers.append({"reason": "preview_digest_mismatch"})
-            if decision.get("decision") != "approve":
-                blockers.append({"reason": "decision must be approve"})
-            declared_mode = decision.get("approval_mode", "interactive")
-            if declared_mode not in {"interactive", "explicit_noninteractive"}:
-                blockers.append({"reason": "invalid approval_mode"})
-            mode = "explicit_noninteractive" if yes_draft else declared_mode
-            approved_by = decision.get("approved_by")
-            if mode == "interactive":
-                if not isinstance(approved_by, str) or not approved_by.strip():
-                    blockers.append({"reason": "approved_by_required"})
-                else:
-                    approved_by = approved_by.strip()
-                    if approved_by.casefold() in _RESERVED_REVIEWER_IDENTITIES:
-                        blockers.append({"reason": "approved_by must identify a real reviewer"})
-            elif not yes_draft:
-                blockers.append({"reason": "explicit --yes-draft is required"})
-            if blockers:
-                summary = "; ".join(str(item.get("reason", item)) for item in blockers)
-                raise DraftGateError(
-                    "draft_approvable",
-                    deck_id,
-                    blockers,
-                    f"draft_approvable blocked for deck {deck_id}: {summary}",
-                )
-            event = dict(decision)
-            event.update({
-                "event": "draft_decision", "id": _id("draft-approval"),
-                "preview_id": preview_id, "preview_sha256": preview["preview_sha256"],
-                "approval_mode": mode,
-                "approved_by": approved_by if isinstance(approved_by, str) and approved_by.strip() else "auto (--yes-draft)",
-                "ts": _now(),
-            })
-            tx.stage_append(event_path, json.dumps(event, sort_keys=True, ensure_ascii=False).encode("utf-8"))
-            deck.update({"draft_approval_id": event["id"], "status": "validating", "updated_at": _now()})
-            tx.stage_yaml(decks_path, "decks", decks)
-            tx.commit()
-            return {"deck": deck, "decision": event, "preview": checked["preview"]}
+    require_schema_v2(project_root, check_recovery=False)
+    from presentation_evidence_producers import approve_draft_v2
+
+    return approve_draft_v2(project_root, decision_path, yes_draft=yes_draft)
 
 
 def complete_deck(project_root: Path, deck_id: str, completion_record_path: Path) -> dict[str, Any]:
@@ -988,11 +876,7 @@ def complete_deck(project_root: Path, deck_id: str, completion_record_path: Path
     Raises:
         CompletionGateError: If any current review or final validation is absent.
     """
-    with _workflow_lock(project_root):
-        completion = _action_document(completion_record_path, CompletionGateError, "deck_completable", deck_id)
-        checked = assert_deck_completable(project_root, deck_id, completion)
-        event = dict(completion)
-        event.update({"event": "deck_completion", "id": _id("completion"), "deck_id": deck_id, "ts": _now()})
-        append_event(project_root, event)
-        deck = _save_deck(project_root, deck_id, {"status": "completed"})
-        return {"deck": deck, "completion": event, "evidence": checked}
+    require_schema_v2(project_root, check_recovery=False)
+    from presentation_evidence_producers import complete_deck_v2
+
+    return complete_deck_v2(project_root, deck_id, completion_record_path)

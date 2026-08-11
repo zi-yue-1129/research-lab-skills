@@ -12,9 +12,7 @@ import json
 import os
 import sys
 import time
-import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterator, Optional
 from presentation_transactions import (
@@ -23,6 +21,10 @@ from presentation_transactions import (
     require_transaction_recovery,
 )
 from presentation_evidence_contracts import EVIDENCE_SCHEMA_VERSION
+from presentation_cli_errors import cli_error_payload
+from presentation_evidence_workflow import require_schema_v2
+from presentation_workflow_values import generate_workflow_id as generate_id
+from presentation_workflow_values import utc_now as _utc_now_iso
 from presentation_events import (
     LockTimeoutError,
     StateParseError,
@@ -120,18 +122,6 @@ def find_project_root(start: Path) -> Path:
         if (candidate / ".git").exists():
             return candidate
     raise ProjectRootNotFoundError(f"No .git found in {start} or any parent directory.")
-def generate_id(prefix: str) -> str:
-    """Generate a sortable, human-scannable record id.
-    Args:
-        prefix: Short entity tag, e.g. "deck", "sld", "mod".
-    Returns:
-        An id of the form "<prefix>_<UTC-date>_<6-hex-chars>".
-    """
-    now = datetime.now(timezone.utc)
-    return f"{prefix}_{now:%Y%m%d}_{uuid.uuid4().hex[:6]}"
-def _utc_now_iso() -> str:
-    """Return the current UTC time as an ISO-8601 "Z"-suffixed string."""
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 def _ensure_research_gitignore(project_root: Path) -> None:
     """Bootstrap .research/presentations/.gitignore on first write.
     Scoped to this module's own subtree -- never touches the top-level
@@ -246,6 +236,7 @@ def create_deck(project_root: Path, title: str, created_by: str = "user") -> Dic
     Raises:
         ValueError: If title is empty/missing.
     """
+    require_schema_v2(project_root)
     if not title:
         raise ValueError("title is required")
     path = project_root / DECKS_RELATIVE_PATH
@@ -278,6 +269,7 @@ def set_deck_status(project_root: Path, deck_id: str, status: str) -> Dict[str, 
         ValueError: If status is unrecognized or not a legal transition
             from the Deck's current status.
     """
+    require_schema_v2(project_root)
     if status not in _DECK_STATUSES:
         raise ValueError(f"Unrecognized deck status: {status!r}")
     path = project_root / DECKS_RELATIVE_PATH
@@ -322,6 +314,7 @@ def create_slide(
         ValueError: If title or plan_slide_id is empty/missing.
         DeckNotFoundError: If deck_id doesn't exist.
     """
+    require_schema_v2(project_root)
     if not plan_slide_id:
         raise ValueError("plan_slide_id is required")
     if not title:
@@ -356,6 +349,7 @@ def set_slide_status(project_root: Path, slide_id: str, status: str) -> Dict[str
         ValueError: If status is unrecognized or not a legal transition
             from the Slide's current status.
     """
+    require_schema_v2(project_root)
     if status not in _PRODUCTION_UNIT_STATUSES:
         raise ValueError(f"Unrecognized slide status: {status!r}")
     path = project_root / SLIDES_RELATIVE_PATH
@@ -410,6 +404,7 @@ def create_visual_module(
         SlideNotFoundError: If slide_id doesn't exist.
         VisualModuleNotFoundError: If any id in dependencies doesn't exist.
     """
+    require_schema_v2(project_root)
     if not module_key:
         raise ValueError("module_key is required")
     if module_type not in _MODULE_TYPES:
@@ -456,6 +451,7 @@ def set_module_status(project_root: Path, module_id: str, status: str) -> Dict[s
             from the current status, or is "producing" while an
             unresolved dependency remains.
     """
+    require_schema_v2(project_root)
     if status not in _PRODUCTION_UNIT_STATUSES:
         raise ValueError(f"Unrecognized module status: {status!r}")
     path = project_root / VISUAL_MODULES_RELATIVE_PATH
@@ -520,6 +516,7 @@ def record_review(
         VisualModuleNotFoundError: If subject_type is "module" and
             subject_id doesn't exist.
     """
+    require_schema_v2(project_root)
     # The original API accepted ``(reviewer_role, status, findings, round)``.
     # Preserve that call shape while explicitly retaining its unverifiable ID.
     if status is None:
@@ -985,11 +982,11 @@ def main() -> None:
     except (ProjectRootNotFoundError, StateParseError, DeckNotFoundError, SlideNotFoundError, VisualModuleNotFoundError, ProductionNotAllowedError, LockTimeoutError, ValueError) as exc:
         from presentation_workflow import translate_cli_gate_error
         exc = translate_cli_gate_error(args, exc)
-        error = ({"error": type(exc).__name__, "predicate": getattr(exc, "predicate"), "deck_id": getattr(exc, "deck_id"), "blockers": getattr(exc, "blockers")} if all(hasattr(exc, field) for field in ("predicate", "deck_id", "blockers")) else {"error": type(exc).__name__, "message": str(exc)})
+        error = cli_error_payload(exc)
         print(json.dumps(error) if args.json else f"Error: {exc}")
         sys.exit(1)
     except Exception as exc:  # noqa: BLE001 -- stdout must always stay parseable
-        error = ({"error": type(exc).__name__, "predicate": getattr(exc, "predicate"), "deck_id": getattr(exc, "deck_id"), "blockers": getattr(exc, "blockers")} if all(hasattr(exc, field) for field in ("predicate", "deck_id", "blockers")) else {"error": type(exc).__name__, "message": str(exc)})
+        error = cli_error_payload(exc)
         print(json.dumps(error) if args.json else f"Error: {exc}")
         sys.exit(1)
     print(json.dumps(result) if args.json else json.dumps(result, indent=2))

@@ -21,6 +21,7 @@ import yaml
 
 from presentation_contracts import contract_sha256, load_contract
 from presentation_evidence_contracts import EVIDENCE_SCHEMA_VERSION
+from presentation_evidence_workflow import MigrationRequiredError, require_schema_v2
 from presentation_artifact_provenance import (
     derive_validated_published_provenance,
     MODULE_ARTIFACT_KINDS,
@@ -93,20 +94,24 @@ def publish_artifact(
         )
     except ValueError as exc:
         _fail(deck_id, [{"reason": str(exc)}])
-    _validate_inputs(root, deck_id, source, destination, artifact_kind, producer_id)
-    with _workflow_lock(root):
-        _assert_production(root, deck_id)
-        return _publish_locked(
-            root,
-            deck_id,
-            Path(source),
-            Path(destination),
-            artifact_kind,
-            slide_id,
-            module_id,
-            producer_id,
-            Path(contract_path),
-        )
+    try:
+        require_schema_v2(root, check_recovery=False)
+        _validate_inputs(root, deck_id, source, destination, artifact_kind, producer_id)
+        with _workflow_lock(root):
+            _assert_production(root, deck_id)
+            return _publish_locked(
+                root,
+                deck_id,
+                Path(source),
+                Path(destination),
+                artifact_kind,
+                slide_id,
+                module_id,
+                producer_id,
+                Path(contract_path),
+            )
+    except MigrationRequiredError as exc:
+        _fail(deck_id, [{"reason": "schema version requires migration", "message": str(exc)}])
 
 def _publish_locked(
     project_root: Path,

@@ -124,6 +124,9 @@ def append_event(project_root: Path, event: dict[str, Any]) -> None:
         TypeError: If the event is not JSON serializable.
         ValueError: If ``event`` is not a mapping.
     """
+    from presentation_evidence_workflow import require_schema_v2
+
+    require_schema_v2(project_root)
     if not isinstance(event, dict):
         raise ValueError("event must be a mapping")
     encoded = json.dumps(event, sort_keys=True, ensure_ascii=False)
@@ -459,6 +462,9 @@ def register_plan_record(
     authored_by: str,
 ) -> dict[str, Any]:
     """Register the next versioned plan and preserve its predecessor."""
+    from presentation_evidence_workflow import require_schema_v2
+
+    require_schema_v2(project_root)
     state = _state_module()
     _deck(project_root, deck_id)
     if not isinstance(authored_by, str) or not authored_by.strip():
@@ -540,6 +546,9 @@ def create_assignment_record(
     slide_id: str | None = None,
 ) -> dict[str, Any]:
     """Persist a worker assignment with path and foreign-key validation."""
+    from presentation_evidence_workflow import require_schema_v2
+
+    require_schema_v2(project_root)
     state = _state_module()
     _deck(project_root, deck_id)
     if assignment_path is None:
@@ -673,6 +682,9 @@ def create_artifact_record(
     Raises:
         ValueError: If kind-specific provenance is incomplete or malformed.
     """
+    from presentation_evidence_workflow import require_schema_v2
+
+    require_schema_v2(project_root)
     # Subject cardinality is pure and must fail before any deck/state reads or
     # unrelated producer/path/provenance validation.
     validate_artifact_subject(artifact_kind, slide_id, module_id)
@@ -745,6 +757,9 @@ def create_revision_request(
     supersedes: str | None = None,
 ) -> dict[str, Any]:
     """Persist a revision request and optionally supersede a passed unit."""
+    from presentation_evidence_workflow import require_schema_v2
+
+    require_schema_v2(project_root)
     state = _state_module()
     if subject_type not in state._REVIEW_SUBJECT_TYPES:
         raise ValueError(f"subject_type must be one of {sorted(state._REVIEW_SUBJECT_TYPES)}, got {subject_type!r}")
