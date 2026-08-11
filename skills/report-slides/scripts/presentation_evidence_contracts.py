@@ -244,7 +244,9 @@ def validate_store_record(
         raise EvidenceContractError("legacy must be a bool")
     if legacy:
         try:
-            validate_additional_store_record(store_name, candidate)
+            validate_additional_store_record(
+                store_name, candidate, relations=relation_maps, legacy=True
+            )
         except ValueError as exc:
             raise EvidenceContractError(str(exc)) from exc
         return deepcopy(dict(candidate))
@@ -256,7 +258,9 @@ def validate_store_record(
         _validate_slide(candidate, relation_maps)
     else:
         try:
-            validate_additional_store_record(store_name, candidate)
+            validate_additional_store_record(
+                store_name, candidate, relations=relation_maps, legacy=False
+            )
         except ValueError as exc:
             raise EvidenceContractError(str(exc)) from exc
     return deepcopy(dict(candidate))

@@ -355,6 +355,15 @@ def _historical_project(tmp_path: Path, *, completion: bool = False) -> tuple[Pa
     plan_digest = "1" * 64
     _write_store(
         project,
+        "decks.yaml",
+        "decks",
+        {"deck-temporal": {
+            "id": "deck-temporal", "title": "Temporal", "status": "planning",
+            "created_by": "test",
+        }},
+    )
+    _write_store(
+        project,
         "plans.yaml",
         "plans",
         {

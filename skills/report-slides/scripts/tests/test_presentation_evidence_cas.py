@@ -533,9 +533,16 @@ def test_stage_cas_objects_retains_existing_valid_object_metadata(tmp_path: Path
 def test_cas_short_write_leaves_object_absent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A zero-byte write failure cannot publish a partial immutable object."""
     target, planned = _planned_target(tmp_path, b"short-write")
+    real_write = presentation_transactions.os.write
+
+    def fail_object_write(descriptor: int, data: bytes) -> int:
+        """Fail only the CAS payload write after durable journal publication."""
+        if data == b"short-write":
+            return 0
+        return real_write(descriptor, data)
 
     with WorkflowTransaction([target], tmp_path) as transaction:
-        monkeypatch.setattr(presentation_transactions.os, "write", lambda _fd, _data: 0)
+        monkeypatch.setattr(presentation_transactions.os, "write", fail_object_write)
         with pytest.raises(OSError, match="short write"):
             stage_cas_objects(transaction, tmp_path, planned)
 

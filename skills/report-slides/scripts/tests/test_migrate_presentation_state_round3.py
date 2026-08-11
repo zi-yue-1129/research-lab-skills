@@ -60,7 +60,8 @@ def _legacy_project(tmp_path: Path) -> tuple[Path, str]:
     _write_store(
         project,
         "decks.yaml",
-        {deck_id: {"id": deck_id, "title": "Round three", "status": "planning"}},
+        {deck_id: {"id": deck_id, "title": "Round three", "status": "planning",
+                   "created_by": "test"}},
     )
     _write_store(project, "slides.yaml", {})
     return project, deck_id

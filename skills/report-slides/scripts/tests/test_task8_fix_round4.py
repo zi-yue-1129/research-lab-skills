@@ -185,7 +185,8 @@ def _legacy_event_project(tmp_path: Path) -> tuple[Path, dict[str, Any]]:
     project = _project(tmp_path)
     deck_id = "deck-round4"
     _write_store(project, "decks.yaml", {
-        deck_id: {"id": deck_id, "title": "Round four", "status": "planning"},
+        deck_id: {"id": deck_id, "title": "Round four", "status": "planning",
+                  "created_by": "test"},
     })
     slide_spec = project / "contracts" / "slide-spec.yaml"
     slide_spec.parent.mkdir(parents=True)
@@ -345,6 +346,7 @@ def test_later_status_cannot_preserve_nullable_evidence_fields(tmp_path: Path) -
             "id": deck_id,
             "title": "Later status",
             "status": "producing",
+            "created_by": "test",
             "current_plan_id": None,
             "approved_plan_version": None,
             "approved_plan_sha256": None,

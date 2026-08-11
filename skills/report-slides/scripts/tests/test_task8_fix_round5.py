@@ -182,6 +182,7 @@ def _legacy_project(tmp_path: Path) -> tuple[Path, dict[str, Any]]:
             "id": event["deck_id"],
             "title": "Round five",
             "status": "planning",
+            "created_by": "test",
         },
     })
     slide_spec = project / "contracts" / "slide-spec.yaml"

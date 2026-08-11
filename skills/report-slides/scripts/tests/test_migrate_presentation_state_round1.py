@@ -50,7 +50,8 @@ def _write_deck(project: Path, *, status: str = "planning") -> str:
     _write_store(
         project,
         "decks.yaml",
-        {deck_id: {"id": deck_id, "title": "Round one", "status": status}},
+        {deck_id: {"id": deck_id, "title": "Round one", "status": status,
+                   "created_by": "test"}},
     )
     _write_store(project, "slides.yaml", {})
     return deck_id
@@ -89,7 +90,8 @@ def test_non_dry_migration_locks_before_parse_and_preserves_writer_order(
     target = _state_dir(project) / "decks.yaml"
     writer_document = {
         "version": 0,
-        "decks": {deck_id: {"id": deck_id, "title": "writer", "status": "planning"}},
+        "decks": {deck_id: {"id": deck_id, "title": "writer", "status": "planning",
+                            "created_by": "test"}},
     }
     writer_bytes = yaml.safe_dump(writer_document, sort_keys=False).encode("utf-8")
     writer_started = threading.Event()

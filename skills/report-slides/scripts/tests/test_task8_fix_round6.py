@@ -297,6 +297,7 @@ def _draft_preview_project(tmp_path: Path) -> tuple[Path, dict[str, Any], dict[s
                 "id": "deck-round6",
                 "title": "Round six",
                 "status": "planning",
+                "created_by": "test",
             }
         },
     )

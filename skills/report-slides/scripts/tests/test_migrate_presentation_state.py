@@ -311,8 +311,10 @@ def test_report_ordering_is_deterministic(tmp_path: Path) -> None:
         project,
         "decks.yaml",
         {
-            "deck-z": {"id": "deck-z", "title": "Z", "status": "approved"},
-            "deck-a": {"id": "deck-a", "title": "A", "status": "planning"},
+            "deck-z": {"id": "deck-z", "title": "Z", "status": "approved",
+                       "created_by": "test"},
+            "deck-a": {"id": "deck-a", "title": "A", "status": "planning",
+                       "created_by": "test"},
         },
     )
     _write_store(project, "slides.yaml", {})

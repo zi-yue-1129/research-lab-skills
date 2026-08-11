@@ -42,7 +42,15 @@ from presentation_no_follow import (
     temporary_path as _temporary_path,
     write_bytes_at,
 )
-from presentation_transaction_files import remove_staged_siblings
+from presentation_transaction_files import (
+    encode_journal_document,
+    matches_regular_snapshot,
+    publish_journal,
+    reconcile_journal_temporaries,
+    remove_regular_sibling,
+    remove_staged_siblings,
+    validate_journal_fields,
+)
 
 
 class TransactionError(RuntimeError):
@@ -326,14 +334,10 @@ def _decode_journal(
         document = json.loads(text)
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise TransactionError(f"invalid transaction journal {path}: {exc}") from exc
-    if not isinstance(document, dict):
-        raise TransactionError(f"invalid transaction journal shape: {path}")
-    transaction_id = document.get("transaction_id")
-    entries = document.get("paths")
-    if not isinstance(transaction_id, str) or not transaction_id or not isinstance(entries, list):
-        raise TransactionError(f"invalid transaction journal shape: {path}")
-    if not entries:
-        raise TransactionError(f"invalid transaction journal entries: {path}")
+    try:
+        transaction_id, entries, staged_paths = validate_journal_fields(document, str(path))
+    except ValueError as exc:
+        raise TransactionError(str(exc)) from exc
     decoded: list[tuple[Path, _FileSnapshot]] = []
     seen_paths: set[Path] = set()
     for entry in entries:
@@ -377,6 +381,9 @@ def _decode_journal(
                 f"non-existent transaction snapshot carries metadata: {path}"
             )
         decoded.append((target, _FileSnapshot(exists, content, validated_mode, mtime_ns)))
+    known_paths = {_project_relative_path(project_root, target) for target, _ in decoded}
+    if any(item not in known_paths for item in staged_paths):
+        raise TransactionError(f"invalid transaction staged paths: {path}")
     return transaction_id, decoded
 
 
@@ -574,6 +581,10 @@ class WorkflowTransaction:
         if self._journal_anchor is None:
             raise TransactionError("journal directory must be anchored before loading")
         documents = read_regular_siblings(self._journal_anchor)
+        try:
+            documents = reconcile_journal_temporaries(self._journal_anchor, documents)
+        except ValueError as exc:
+            raise TransactionError(str(exc)) from exc
         return _load_validated_journals(self.project_root, documents)
 
     def _anchor_recovery_path(self, path: Path) -> AnchoredPath:
@@ -708,6 +719,7 @@ class WorkflowTransaction:
                 self._remove_temporary_for_path(path, temporary)
                 raise
         self._stages[path] = _FileStage(path, temporary, target_mode)
+        self._write_journal(rewrite=True)
 
     def stage_yaml(self, path: Path, top_key: str, records: Mapping[str, Any]) -> None:
         """Stage a complete versioned YAML map for one selected store."""
@@ -852,6 +864,10 @@ class WorkflowTransaction:
     ) -> None:
         """Restore one preimage through the retained parent descriptor."""
         try:
+            if snapshot.exists and matches_regular_snapshot(
+                anchored, snapshot.content, snapshot.mode, snapshot.mtime_ns
+            ):
+                return
             restore_regular(
                 anchored,
                 _temporary_path(path).name,
@@ -870,41 +886,43 @@ class WorkflowTransaction:
                 f"{target_kind} must be a regular no-follow file: {path}"
             ) from exc
 
-    def _write_journal(self) -> None:
+    def _write_journal(self, *, rewrite: bool = False) -> None:
         """Persist all selected preimages before the first temporary write."""
-        if self._journal is not None:
+        if self._journal is not None and not rewrite:
             return
-        transaction_id = uuid.uuid4().hex
+        transaction_id = self._journal.stem if self._journal is not None else uuid.uuid4().hex
         journal = _journal_path(self.project_root, transaction_id)
-        document = {
-            "transaction_id": transaction_id,
-            "paths": [
+        content = encode_journal_document(
+            transaction_id,
+            [
                 _encode_snapshot(self.project_root, path, self._snapshots[path])
                 for path in self.paths
             ],
-        }
-        temporary = _temporary_path(journal)
-        content = json.dumps(document, sort_keys=True).encode("utf-8")
+            [
+                _project_relative_path(self.project_root, path) for path in self._stages
+            ],
+        )
         if self._journal_anchor is not None:
-            write_bytes_at(
+            publish_journal(
                 self._journal_anchor,
-                temporary.name,
+                transaction_id,
                 content,
-                0o666,
-                exact_mode=False,
+                self._inject_journal_process_death,
+                rewrite=rewrite,
             )
-            os.replace(
-                temporary.name,
-                journal.name,
-                src_dir_fd=self._journal_anchor.parent_fd,
-                dst_dir_fd=self._journal_anchor.parent_fd,
-            )
-            self._journal_anchor.fsync_parent()
         else:
+            temporary = _temporary_path(journal)
             _write_fsync(temporary, content, 0o666)
             os.replace(temporary, journal)
             _directory_fsync(journal.parent)
         self._journal = journal
+
+    def _inject_journal_process_death(self, boundary: str) -> None:
+        """Raise a test-only process death at one journal publication boundary."""
+        if os.environ.get("PRESENTATION_TRANSACTION_JOURNAL_CRASH_AT") == boundary:
+            raise SimulatedProcessDeath(
+                f"simulated process death during journal publication: {boundary}"
+            )
 
     def _remove_journal(self) -> None:
         """Delete this transaction journal after durable commit or rollback."""
@@ -943,22 +961,9 @@ class WorkflowTransaction:
         """Remove one staged sibling through its target's retained directory."""
         if _is_cas_transaction_path(self.project_root, target):
             anchored = self._cas_anchors[target]
-            try:
-                os.stat(
-                    temporary.name,
-                    dir_fd=anchored.parent_fd,
-                    follow_symlinks=False,
-                )
-            except FileNotFoundError:
-                return
-            os.unlink(temporary.name, dir_fd=anchored.parent_fd)
         else:
             anchored = self._ordinary_anchors.get(target) or self._recovery_anchors[target]
-            try:
-                os.stat(temporary.name, dir_fd=anchored.parent_fd, follow_symlinks=False)
-            except FileNotFoundError:
-                return
-            os.unlink(temporary.name, dir_fd=anchored.parent_fd)
+        remove_regular_sibling(anchored, temporary.name)
 
     def _release_locks(self) -> None:
         """Release held descriptors in reverse deterministic order."""
