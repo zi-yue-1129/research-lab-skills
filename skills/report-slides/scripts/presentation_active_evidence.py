@@ -257,6 +257,9 @@ def _validate_selected_evidence(
     objects: Mapping[str, CasObject],
 ) -> list[Mapping[str, Any]]:
     """Validate only pointers explicitly stored on one current deck."""
+    plan_id = deck.get("current_plan_id")
+    if not isinstance(plan_id, str) or not plan_id or plan_id != plan_id.strip():
+        return [{"reason": "active_current_plan_missing"}]
     preview_id = deck.get("draft_preview_evidence_id")
     approval_id = deck.get("draft_approval_evidence_id")
     completion_id = deck.get("completion_evidence_id")
@@ -265,17 +268,17 @@ def _validate_selected_evidence(
     preview = _selected_envelope(envelopes, preview_id, "draft_preview", deck_id)
     if preview is None:
         return [{"reason": "active_preview_evidence_invalid"}]
-    if not _envelope_matches_plan(preview, plan, deck_id):
+    if not _exact_plan_binding(preview, plan, deck_id, plan_id):
         return [{"reason": "active_preview_plan_mismatch"}]
-    preview_blockers = _validate_preview(
-        snapshot, preview, plan, slides, objects
-    )
+    preview_blockers = _validate_preview(snapshot, preview, plan, slides, objects)
     if preview_blockers:
         return preview_blockers
     if approval_id is None and completion_id is None:
         return []
     approval = _selected_envelope(envelopes, approval_id, "draft_approval", deck_id)
-    if approval is None or not _envelope_matches_plan(approval, plan, deck_id):
+    if approval is None or not _exact_plan_binding(
+        approval, plan, deck_id, plan_id
+    ):
         return [{"reason": "active_approval_evidence_invalid"}]
     if (
         approval.get("decision") != "approved"
@@ -283,12 +286,14 @@ def _validate_selected_evidence(
         or approval.get("preview_evidence_sha256") != preview["evidence_sha256"]
     ):
         return [{"reason": "active_approval_preview_mismatch"}]
-    if not _approval_source_valid(snapshot, approval, plan):
+    if not _approval_source_valid(snapshot, approval, plan, plan_id):
         return [{"reason": "active_approval_source_invalid"}]
     if completion_id is None:
         return []
     completion = _selected_envelope(envelopes, completion_id, "deck_completion", deck_id)
-    if completion is None or not _envelope_matches_plan(completion, plan, deck_id):
+    if completion is None or not _exact_plan_binding(
+        completion, plan, deck_id, plan_id
+    ):
         return [{"reason": "active_completion_evidence_invalid"}]
     if (
         completion.get("approval_evidence_id") != approval["id"]
@@ -301,11 +306,13 @@ def _validate_selected_evidence(
         "visual_review",
         deck_id,
     )
-    if review is None or not _envelope_matches_plan(review, plan, deck_id):
+    if review is None or not _exact_plan_binding(review, plan, deck_id, plan_id):
         return [{"reason": "active_completion_visual_review_invalid"}]
     if completion.get("visual_review_evidence_sha256") != review["evidence_sha256"]:
         return [{"reason": "active_completion_visual_review_mismatch"}]
-    review_paths = _completion_review_paths(snapshot, review, plan)
+    if not _completion_source_valid(snapshot, completion, plan, plan_id):
+        return [{"reason": "active_completion_evidence_invalid"}]
+    review_paths = _completion_review_paths(snapshot, review, plan, plan_id)
     if review_paths is None:
         return [{"reason": "active_completion_visual_review_invalid"}]
     if not _completion_artifacts_valid(snapshot, completion, objects, review_paths):
@@ -324,9 +331,18 @@ def _validate_preview(
     source = _source_event(snapshot, preview.get("source_event_id"), "draft_preview")
     if source is None:
         return [{"reason": "active_preview_source_unavailable"}]
+    if (
+        source.get("deck_id") != preview.get("deck_id")
+        or type(source.get("plan_version")) is not int
+        or source.get("plan_version") != plan.get("plan_version")
+        or source.get("plan_sha256") != contract_sha256(plan)
+    ):
+        return [{"reason": "active_preview_source_invalid"}]
     entries = source.get("rendered_slide_paths")
     metadata = source.get("slides")
-    if not isinstance(entries, list) or not isinstance(metadata, list):
+    if not isinstance(entries, (list, tuple)) or not isinstance(
+        metadata, (list, tuple)
+    ):
         return [{"reason": "active_preview_source_invalid"}]
     expected_ids = [record["plan_slide_id"] for record in slides]
     if [entry.get("slide_id") if isinstance(entry, Mapping) else None for entry in entries] != expected_ids:
@@ -347,6 +363,8 @@ def _validate_preview(
     references = preview.get("artifact_refs")
     if not isinstance(references, list) or len(references) != len(slides) + 1:
         return [{"reason": "active_preview_artifacts_invalid"}]
+    if not _preview_source_artifacts_valid(source, preview, entries, references):
+        return [{"reason": "active_preview_source_artifacts_invalid"}]
     for index, record in enumerate(slides):
         ref = references[index]
         if not _artifact_valid(
@@ -358,6 +376,62 @@ def _validate_preview(
     ):
         return [{"reason": "active_preview_artifacts_invalid"}]
     return []
+
+
+def _preview_source_artifacts_valid(
+    source: Mapping[str, Any],
+    preview: Mapping[str, Any],
+    entries: list[Any] | tuple[Any, ...],
+    references: list[Any],
+) -> bool:
+    """Require exact source paths, digests, and preview artifact bindings."""
+    try:
+        rendered_paths = [canonical_relative_path(entry.get("path")) for entry in entries]
+        contact_path = canonical_relative_path(source.get("contact_sheet_path"))
+    except (AttributeError, MigrationError):
+        return False
+    expected_paths = [*rendered_paths, contact_path]
+    if [reference.get("original_path") for reference in references] != expected_paths:
+        return False
+    digests = source.get("artifact_digests")
+    bindings = source.get("artifact_bindings")
+    if not isinstance(digests, Mapping) or not isinstance(bindings, Mapping):
+        return False
+    if set(digests) != set(expected_paths) or set(bindings) != set(expected_paths):
+        return False
+    if any(digests[path] != reference.get("sha256") for path, reference in zip(expected_paths, references)):
+        return False
+    for path, entry in zip(rendered_paths, entries):
+        expected = {
+            "kind": "rendered_slide",
+            "deck_id": preview["deck_id"],
+            "slide_id": entry["slide_id"],
+            "plan_version": preview["plan_version"],
+            "plan_sha256": preview["plan_sha256"],
+            "producer_id": preview["producer_id"],
+            "slide_record_id": entry["slide_record_id"],
+            "attempt": entry["attempt"],
+        }
+        if bindings[path] != expected:
+            return False
+    contact_binding = bindings[contact_path]
+    if not isinstance(contact_binding, Mapping):
+        return False
+    contact_expected = {
+        "kind": "contact_sheet",
+        "deck_id": preview["deck_id"],
+        "plan_version": preview["plan_version"],
+        "plan_sha256": preview["plan_sha256"],
+        "producer_id": preview["producer_id"],
+        "source_sha256": contract_sha256(
+            {"paths": rendered_paths, "digests": [digests[path] for path in rendered_paths]}
+        ),
+    }
+    if set(contact_binding) != {*contact_expected, "source_paths"}:
+        return False
+    if contact_binding.get("source_paths") not in (rendered_paths, tuple(rendered_paths)):
+        return False
+    return all(contact_binding.get(key) == value for key, value in contact_expected.items())
 
 
 def _artifact_valid(
@@ -462,6 +536,7 @@ def _approval_source_valid(
     snapshot: EvidenceSnapshot,
     approval: Mapping[str, Any],
     plan: Mapping[str, Any],
+    plan_id: str,
 ) -> bool:
     """Validate the immutable source decision for an active approval.
 
@@ -485,6 +560,8 @@ def _approval_source_valid(
         approved_by != approval.get("approved_by")
         or approval_mode != approval.get("approval_mode")
         or source.get("deck_id") != approval.get("deck_id")
+        or source.get("plan_id") != approval.get("plan_id")
+        or source.get("plan_id") != plan_id
         or source.get("plan_version") != plan.get("plan_version")
         or source.get("plan_sha256") != contract_sha256(plan)
     ):
@@ -503,6 +580,7 @@ def _completion_review_paths(
     snapshot: EvidenceSnapshot,
     review: Mapping[str, Any],
     plan: Mapping[str, Any],
+    plan_id: str,
 ) -> tuple[str, tuple[str, ...]] | None:
     """Return exact final/render paths from a completion-authorizing review.
 
@@ -521,6 +599,7 @@ def _completion_review_paths(
     if (
         source.get("deck_id") != review.get("deck_id")
         or source.get("plan_id") != review.get("plan_id")
+        or source.get("plan_id") != plan_id
         or source.get("plan_version") != plan.get("plan_version")
         or source.get("plan_sha256") != contract_sha256(plan)
     ):
@@ -568,6 +647,26 @@ def _completion_review_paths(
     ):
         return None
     return final_path, rendered_paths
+
+
+def _completion_source_valid(
+    snapshot: EvidenceSnapshot,
+    completion: Mapping[str, Any],
+    plan: Mapping[str, Any],
+    plan_id: str,
+) -> bool:
+    """Require one completion source event bound to the exact current plan."""
+    source = _event_by_id(snapshot, completion.get("source_event_id"))
+    return bool(
+        source is not None
+        and source.get("event") == "deck_completion"
+        and source.get("deck_id") == completion.get("deck_id")
+        and source.get("plan_id") == completion.get("plan_id")
+        and source.get("plan_id") == plan_id
+        and type(source.get("plan_version")) is int
+        and source.get("plan_version") == plan.get("plan_version")
+        and source.get("plan_sha256") == contract_sha256(plan)
+    )
 
 
 def _parse_review_document(content: bytes) -> Mapping[str, Any]:
@@ -621,14 +720,17 @@ def _legacy_completion_update(
     """Infer exactly one legacy completion candidate without latest-wins."""
     if deck.get("status") != "completed" or deck.get("completion_evidence_id") is not None:
         return {}, []
+    plan_id = deck.get("current_plan_id")
+    if not isinstance(plan_id, str) or not plan_id or plan_id != plan_id.strip():
+        return {}, [{"reason": "missing_completion_evidence"}]
     candidates = [
         envelope
         for envelope in envelopes.values()
         if envelope.get("evidence_kind") == "deck_completion"
         and envelope.get("deck_id") == deck_id
-        and _envelope_matches_plan(envelope, plan, deck_id)
+        and _exact_plan_binding(envelope, plan, deck_id, plan_id)
         and _legacy_completion_valid(
-            snapshot, envelope, envelopes, plan, slides, deck_id, objects
+            snapshot, envelope, envelopes, plan, plan_id, slides, deck_id, objects
         )
     ]
     if len(candidates) == 1:
@@ -643,6 +745,7 @@ def _legacy_completion_valid(
     completion: Mapping[str, Any],
     envelopes: Mapping[str, Mapping[str, Any]],
     plan: Mapping[str, Any],
+    plan_id: str,
     slides: list[Mapping[str, Any]],
     deck_id: str,
     objects: Mapping[str, CasObject],
@@ -664,19 +767,22 @@ def _legacy_completion_valid(
     )
     if preview is None:
         return False
+    if not _exact_plan_binding(preview, plan, deck_id, plan_id):
+        return False
     if _validate_preview(snapshot, preview, plan, slides, objects):
         return False
     if not (
-        _envelope_matches_plan(approval, plan, deck_id)
-        and _envelope_matches_plan(review, plan, deck_id)
+        _exact_plan_binding(approval, plan, deck_id, plan_id)
+        and _exact_plan_binding(review, plan, deck_id, plan_id)
         and approval.get("decision") == "approved"
         and approval.get("preview_evidence_sha256") == preview.get("evidence_sha256")
         and completion.get("approval_evidence_sha256") == approval.get("evidence_sha256")
         and completion.get("visual_review_evidence_sha256") == review.get("evidence_sha256")
-        and _approval_source_valid(snapshot, approval, plan)
+        and _approval_source_valid(snapshot, approval, plan, plan_id)
+        and _completion_source_valid(snapshot, completion, plan, plan_id)
     ):
         return False
-    review_paths = _completion_review_paths(snapshot, review, plan)
+    review_paths = _completion_review_paths(snapshot, review, plan, plan_id)
     return review_paths is not None and _completion_artifacts_valid(
         snapshot, completion, objects, review_paths
     )
@@ -703,12 +809,19 @@ def _selected_envelope(
     return envelope
 
 
-def _envelope_matches_plan(
-    envelope: Mapping[str, Any], plan: Mapping[str, Any], deck_id: str
+def _exact_plan_binding(
+    envelope: Mapping[str, Any],
+    plan: Mapping[str, Any],
+    deck_id: str,
+    plan_id: str,
 ) -> bool:
     """Return whether one envelope binds the exact selected approved plan."""
     return (
         envelope.get("deck_id") == deck_id
+        and isinstance(envelope.get("plan_id"), str)
+        and envelope.get("plan_id") == plan_id
+        and envelope.get("plan_id") == str(envelope.get("plan_id")).strip()
+        and type(envelope.get("plan_version")) is int
         and envelope.get("plan_version") == plan.get("plan_version")
         and envelope.get("plan_sha256") == contract_sha256(plan)
     )

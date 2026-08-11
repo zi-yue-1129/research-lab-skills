@@ -10,6 +10,7 @@ from types import MappingProxyType
 from typing import Any
 
 import yaml
+import pytest
 
 from presentation_contracts import contract_sha256
 from presentation_evidence_cas import CasObject, cas_relative_path
@@ -17,6 +18,12 @@ from presentation_evidence_contracts import envelope_sha256
 from presentation_evidence_projection import HistoricalProjection
 import presentation_evidence_projection
 from presentation_evidence_snapshot import EvidenceSnapshot, PlanPreimage, build_snapshot
+from presentation_active_evidence_fixtures import (
+    make_two_slide_preview,
+    project_real_historical_preview,
+    substitute_cas_backed_preview_artifact,
+    with_preview_source,
+)
 
 
 def _digest(content: bytes) -> str:
@@ -442,6 +449,7 @@ def _legacy_completed_projection(
             "event": "deck_approval",
             "schema_version": 1,
             "deck_id": "deck-1",
+            "plan_id": "plan-1",
             "plan_version": 1,
             "plan_sha256": snapshot.stores["decks"]["deck-1"]["approved_plan_sha256"],
             "decision": "approve",
@@ -473,6 +481,7 @@ def _legacy_completed_projection(
             review["id"]: MappingProxyType(review),
         }
     )
+    completion_events: list[MappingProxyType] = []
     for index in range(candidate_count):
         completion = _envelope(
             f"completion-{index + 1}",
@@ -487,16 +496,30 @@ def _legacy_completed_projection(
             visual_review_evidence_sha256=review["evidence_sha256"],
         )
         envelopes[completion["id"]] = MappingProxyType(completion)
+        completion_events.append(
+            MappingProxyType(
+                {
+                    "id": f"event-completion-{index + 1}",
+                    "event": "deck_completion",
+                    "deck_id": "deck-1",
+                    "plan_id": "plan-1",
+                    "plan_version": 1,
+                    "plan_sha256": snapshot.stores["decks"]["deck-1"][
+                        "approved_plan_sha256"
+                    ],
+                }
+            )
+        )
     preimages = dict(snapshot.file_preimages)
     preimages[snapshot.project_root / review_path] = json.dumps(
         review_document, sort_keys=True, separators=(",", ":")
     ).encode("utf-8")
     snapshot = replace(
         snapshot,
-        events=(approval_event, review_event),
+        events=(approval_event, review_event, *completion_events),
         file_preimages=MappingProxyType(preimages),
     )
-    snapshot = _with_preview_source(snapshot)
+    snapshot = with_preview_source(snapshot)
     return snapshot, HistoricalProjection(
         envelopes=MappingProxyType(envelopes),
         by_source_event_id=MappingProxyType({}),
@@ -570,37 +593,6 @@ def test_revision_clears_all_current_pointers_atomically() -> None:
     }
 
 
-def _with_preview_source(snapshot: EvidenceSnapshot) -> EvidenceSnapshot:
-    """Add a frozen source event matching the default current preview."""
-    return replace(
-        snapshot,
-        events=(
-            *snapshot.events,
-            MappingProxyType(
-                {
-                    "id": "event-preview-1",
-                    "event": "draft_preview",
-                    "rendered_slide_paths": [
-                        {
-                            "slide_id": "slide-01",
-                            "path": "renders/slide-01.png",
-                            "slide_record_id": "slide-record-1",
-                            "attempt": 1,
-                        }
-                    ],
-                    "slides": [
-                        {
-                            "slide_id": "slide-01",
-                            "title": "Exact current title",
-                            "key_takeaway": "Exact current takeaway.",
-                        }
-                    ],
-                }
-            ),
-        ),
-    )
-
-
 def test_pointerless_early_draft_does_not_require_an_approved_plan() -> None:
     """Current validation ignores a deck without any evidence pointer."""
     snapshot = EvidenceSnapshot(
@@ -642,7 +634,7 @@ def test_pointerless_early_draft_does_not_require_an_approved_plan() -> None:
 def test_active_preview_rejects_legacy_plan_digest_alias() -> None:
     """A pointer-selected preview requires canonical plan_sha256, never sha256."""
     snapshot, history = _approved_snapshot()
-    snapshot = _with_preview_source(snapshot)
+    snapshot = with_preview_source(snapshot)
     stores = dict(snapshot.stores)
     plan = dict(stores["plans"]["plan-1"])
     plan["sha256"] = plan.pop("plan_sha256")
@@ -657,7 +649,7 @@ def test_active_preview_rejects_legacy_plan_digest_alias() -> None:
 def test_active_approval_requires_a_valid_frozen_source_decision() -> None:
     """An approval pointer cannot rely on envelope-only identity metadata."""
     snapshot, history = _approved_snapshot()
-    snapshot = _with_preview_source(snapshot)
+    snapshot = with_preview_source(snapshot)
     preview = history.envelopes["preview-1"]
     approval = _envelope(
         "approval-1",
@@ -783,4 +775,180 @@ def test_active_completion_rejects_a_non_authorizing_frozen_visual_review() -> N
 
     assert active.blockers["deck-1"] == (
         {"reason": "active_completion_visual_review_invalid"},
+    )
+
+
+@pytest.mark.parametrize(
+    ("evidence_id", "expected_reason"),
+    [
+        ("preview-1", "active_preview_plan_mismatch"),
+        ("approval-1", "active_approval_evidence_invalid"),
+        ("review-1", "active_completion_visual_review_invalid"),
+        ("completion-1", "active_completion_evidence_invalid"),
+    ],
+)
+def test_selected_evidence_requires_exact_current_plan_id(
+    evidence_id: str, expected_reason: str
+) -> None:
+    """Same-version/digest evidence for another plan ID cannot authorize."""
+    snapshot, history = _selected_completion_projection()
+    envelopes = dict(history.envelopes)
+    changed = dict(envelopes[evidence_id])
+    changed["plan_id"] = "plan-attacker"
+    changed["evidence_sha256"] = envelope_sha256(changed)
+    envelopes[evidence_id] = MappingProxyType(changed)
+    history = replace(history, envelopes=MappingProxyType(envelopes))
+
+    active = presentation_evidence_projection.project_active_evidence(snapshot, history)
+
+    assert active.blockers["deck-1"] == ({"reason": expected_reason},)
+
+
+def test_selected_evidence_accepts_exact_current_plan_id_chain() -> None:
+    """An exact source-bound preview/approval/review/completion chain passes."""
+    snapshot, history = _selected_completion_projection()
+
+    active = presentation_evidence_projection.project_active_evidence(snapshot, history)
+
+    assert active.blockers == {}
+
+
+def test_real_historical_preview_authorizes_current_preview() -> None:
+    """A projected legacy source binds through version, digest, and envelope."""
+    snapshot, seed_history = _approved_snapshot()
+    snapshot = with_preview_source(snapshot)
+    snapshot, history = project_real_historical_preview(snapshot, seed_history)
+
+    active = presentation_evidence_projection.project_active_evidence(snapshot, history)
+
+    assert active.blockers == {}
+
+
+@pytest.mark.parametrize(
+    ("tampering", "reason"),
+    [
+        ("envelope_plan_id", "active_preview_plan_mismatch"),
+        ("source_version", "active_preview_source_invalid"),
+        ("source_digest", "active_preview_source_invalid"),
+        ("source_event_id", "active_preview_source_unavailable"),
+    ],
+)
+def test_real_historical_preview_requires_exact_source_link(
+    tampering: str, reason: str
+) -> None:
+    """The selected envelope and its legacy source must bind exactly."""
+    snapshot, seed_history = _approved_snapshot()
+    snapshot, history = project_real_historical_preview(
+        with_preview_source(snapshot), seed_history
+    )
+    if tampering.startswith("source_") and tampering != "source_event_id":
+        source = dict(snapshot.events[0])
+        source["plan_version" if tampering == "source_version" else "plan_sha256"] = (
+            2 if tampering == "source_version" else "0" * 64
+        )
+        snapshot = replace(snapshot, events=(MappingProxyType(source),))
+    else:
+        envelope = dict(history.envelopes["event-preview-1"])
+        envelope["plan_id" if tampering == "envelope_plan_id" else "source_event_id"] = (
+            "plan-attacker" if tampering == "envelope_plan_id" else "event-missing"
+        )
+        envelope["evidence_sha256"] = envelope_sha256(envelope)
+        history = replace(
+            history,
+            envelopes=MappingProxyType({envelope["id"]: MappingProxyType(envelope)}),
+        )
+
+    active = presentation_evidence_projection.project_active_evidence(snapshot, history)
+
+    assert active.blockers["deck-1"] == ({"reason": reason},)
+
+
+def test_active_preview_accepts_immutable_snapshot_collections() -> None:
+    """Frozen tuple and mapping collections retain exact source bindings."""
+    snapshot, history = _approved_snapshot()
+    snapshot = with_preview_source(snapshot)
+    source = dict(snapshot.events[-1])
+    source["rendered_slide_paths"] = tuple(
+        MappingProxyType(entry) for entry in source["rendered_slide_paths"]
+    )
+    source["slides"] = tuple(MappingProxyType(entry) for entry in source["slides"])
+    source["artifact_digests"] = MappingProxyType(source["artifact_digests"])
+    source["artifact_bindings"] = MappingProxyType(
+        {
+            path: MappingProxyType(
+                {
+                    **binding,
+                    **(
+                        {"source_paths": tuple(binding["source_paths"])}
+                        if "source_paths" in binding
+                        else {}
+                    ),
+                }
+            )
+            for path, binding in source["artifact_bindings"].items()
+        }
+    )
+    snapshot = replace(snapshot, events=(*snapshot.events[:-1], MappingProxyType(source)))
+
+    active = presentation_evidence_projection.project_active_evidence(snapshot, history)
+
+    assert active.blockers == {}
+
+
+@pytest.mark.parametrize("tampering", ["path", "digest", "binding", "extra", "missing"])
+def test_active_preview_binds_exact_source_artifact_declarations(
+    tampering: str,
+) -> None:
+    """Source paths, digests, and bindings must match selected artifact refs."""
+    snapshot, history = _approved_snapshot()
+    snapshot = with_preview_source(snapshot)
+    events = list(snapshot.events)
+    source = dict(events[-1])
+    if tampering == "path":
+        source["rendered_slide_paths"][0]["path"] = "renders/substituted.png"
+    elif tampering == "digest":
+        source["artifact_digests"]["renders/slide-01.png"] = "0" * 64
+    elif tampering == "binding":
+        source["artifact_bindings"]["renders/slide-01.png"]["attempt"] = 2
+    elif tampering == "missing":
+        source["artifact_digests"].pop("renders/slide-01.png")
+    else:
+        source["artifact_digests"]["renders/extra.png"] = "0" * 64
+    events[-1] = MappingProxyType(source)
+    snapshot = replace(snapshot, events=tuple(events))
+
+    active = presentation_evidence_projection.project_active_evidence(snapshot, history)
+
+    assert active.blockers["deck-1"] == (
+        {"reason": "active_preview_source_artifacts_invalid"},
+    )
+
+
+def test_active_preview_rejects_reordered_two_slide_source_paths() -> None:
+    """Two-slide source paths must preserve selected artifact order."""
+    snapshot, history = _approved_snapshot()
+    snapshot, history = make_two_slide_preview(with_preview_source(snapshot), history)
+    source = dict(snapshot.events[-1])
+    source["rendered_slide_paths"][0]["path"], source["rendered_slide_paths"][1]["path"] = (
+        source["rendered_slide_paths"][1]["path"], source["rendered_slide_paths"][0]["path"]
+    )
+    snapshot = replace(snapshot, events=(*snapshot.events[:-1], MappingProxyType(source)))
+
+    active = presentation_evidence_projection.project_active_evidence(snapshot, history)
+
+    assert active.blockers["deck-1"] == (
+        {"reason": "active_preview_source_artifacts_invalid"},
+    )
+
+
+def test_active_preview_rejects_genuine_cas_backed_artifact_substitution() -> None:
+    """Real attacker bytes cannot replace the source-declared preview bytes."""
+    snapshot, history = _approved_snapshot()
+    snapshot = with_preview_source(snapshot)
+    snapshot, history = substitute_cas_backed_preview_artifact(snapshot, history)
+
+    active = presentation_evidence_projection.project_active_evidence(snapshot, history)
+
+    assert active.blockers["deck-1"] == (
+        {"reason": "active_preview_source_artifacts_invalid"},
     )
