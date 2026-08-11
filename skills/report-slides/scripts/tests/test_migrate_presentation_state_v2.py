@@ -306,14 +306,14 @@ def test_transaction_locks_new_evidence_store_as_a_state_target(
     project = _project(tmp_path)
     evidence = _state(project) / "evidence.yaml"
     acquired: list[Path] = []
-    original_sidecar = transactions._acquire_sidecar
+    original_sidecar = transactions.acquire_anchored_sidecar
 
-    def record_sidecar(path: Path) -> int:
+    def record_sidecar(anchored: Any, timeout_seconds: int) -> int:
         """Record the evidence target before acquiring its real lock."""
-        acquired.append(path)
-        return original_sidecar(path)
+        acquired.append(anchored.display_path)
+        return original_sidecar(anchored, timeout_seconds)
 
-    monkeypatch.setattr(transactions, "_acquire_sidecar", record_sidecar)
+    monkeypatch.setattr(transactions, "acquire_anchored_sidecar", record_sidecar)
 
     with WorkflowTransaction([evidence], project):
         pass

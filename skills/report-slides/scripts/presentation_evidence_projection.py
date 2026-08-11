@@ -87,6 +87,10 @@ class ProjectionError(MigrationError):
     """Raised when immutable historical evidence is structurally invalid."""
 
 
+class HistoricalEvidenceUnavailableError(ProjectionError):
+    """Raised when valid legacy history lacks immutable supporting context."""
+
+
 @dataclass(frozen=True)
 class HistoricalProjection:
     """Intrinsic envelopes and verified CAS plans derived from history.
@@ -164,6 +168,67 @@ def project_historical_evidence(snapshot: EvidenceSnapshot) -> HistoricalProject
     )
 
 
+def project_preview_evidence(
+    snapshot: EvidenceSnapshot, event: Mapping[str, Any]
+) -> Mapping[str, Any]:
+    """Validate and project one exact draft-preview source event.
+
+    Args:
+        snapshot: Immutable source snapshot containing historical context.
+        event: Exact source event to validate and project.
+
+    Returns:
+        The validated schema-v2 preview envelope.
+
+    Raises:
+        ProjectionError: If the producer event is malformed or forged.
+    """
+    envelope, _ = _project_preview(snapshot, _thaw(event))
+    return MappingProxyType(dict(envelope))
+
+
+def project_visual_review_evidence(
+    snapshot: EvidenceSnapshot, event: Mapping[str, Any]
+) -> Mapping[str, Any]:
+    """Validate and project one authoritative visual-review source event.
+
+    Args:
+        snapshot: Immutable source snapshot containing the review preimage.
+        event: Exact source event to validate and project.
+
+    Returns:
+        The validated schema-v2 visual-review envelope.
+
+    Raises:
+        HistoricalEvidenceUnavailableError: If review bytes are unavailable.
+        ProjectionError: If the source or frozen review is malformed or forged.
+    """
+    source = _thaw(event)
+    _require_exact_fields(source, _VISUAL_REVIEW_SOURCE_FIELDS, "visual_review")
+    if source.get("event") != "visual_review":
+        raise ProjectionError("visual_review source event is invalid")
+    _require_exact_int(source.get("schema_version"), 1, "visual_review.schema_version")
+    for field in ("id", "deck_id", "plan_id", "producer_id", "ts"):
+        _require_text(source.get(field), f"visual_review.{field}")
+    _require_positive_int(source.get("plan_version"), "visual_review.plan_version")
+    _require_digest(source.get("plan_sha256"), "visual_review.plan_sha256")
+    _require_digest(source.get("visual_review_sha256"), "visual_review.visual_review_sha256")
+    _frozen_visual_review_document(snapshot, source)
+    envelope = _base_envelope(
+        source,
+        evidence_kind="visual_review",
+        deck_id=source["deck_id"],
+        plan_id=source["plan_id"],
+        plan_version=source["plan_version"],
+        plan_sha256=source["plan_sha256"],
+        subject_ids=[source["deck_id"]],
+        producer_id=source["producer_id"],
+        artifact_refs=[],
+        availability="available",
+    )
+    return MappingProxyType(_validated_envelope(envelope))
+
+
 def _project_preview(
     snapshot: EvidenceSnapshot, event: dict[str, Any]
 ) -> tuple[dict[str, Any], dict[str, CasObject]]:
@@ -187,14 +252,14 @@ def _project_preview(
     rendered_paths, subject_ids, producer_id = _validate_preview_artifacts(
         event, deck_id, plan_version, plan_sha256
     )
-    plan_id = _resolve_historical_plan_id(
-        snapshot, deck_id, plan_version, plan_sha256, event.get("plan_id")
-    )
     artifact_refs, objects, availability = _artifact_references(
         snapshot,
         event["artifact_digests"],
         [(path, "rendered_slide", slide_id) for path, slide_id in zip(rendered_paths, subject_ids)]
         + [(event["contact_sheet_path"], "contact_sheet", deck_id)],
+    )
+    plan_id = _resolve_historical_plan_id(
+        snapshot, deck_id, plan_version, plan_sha256, event.get("plan_id")
     )
     envelope = _base_envelope(
         event,
@@ -291,7 +356,9 @@ def _resolve_completion_sources(
     """Require exact immutable approval and review sources for completion."""
     evidence = snapshot.stores.get("evidence")
     if evidence is None:
-        raise ProjectionError("deck_completion immutable evidence sources are unavailable")
+        raise HistoricalEvidenceUnavailableError(
+            "deck_completion immutable evidence sources are unavailable"
+        )
     approval = _completion_source_envelope(
         evidence,
         completion,
@@ -324,7 +391,9 @@ def _completion_source_envelope(
     assert isinstance(evidence_id, str)
     frozen_source = evidence.get(evidence_id)
     if frozen_source is None:
-        raise ProjectionError(f"deck_completion {id_field} does not resolve")
+        raise HistoricalEvidenceUnavailableError(
+            f"deck_completion {id_field} does not resolve"
+        )
     source = _thaw(frozen_source)
     if not isinstance(source, dict):
         raise ProjectionError(f"deck_completion {id_field} source must be a mapping")
@@ -405,7 +474,9 @@ def _review_artifact_paths(
     """Derive final artifact paths from the frozen referenced review record."""
     evidence = snapshot.stores.get("evidence")
     if evidence is None:
-        raise ProjectionError("deck_completion immutable evidence sources are unavailable")
+        raise HistoricalEvidenceUnavailableError(
+            "deck_completion immutable evidence sources are unavailable"
+        )
     review_id = completion["visual_review_evidence_id"]
     assert isinstance(review_id, str)
     review = _thaw(evidence[review_id])
@@ -452,7 +523,9 @@ def _frozen_visual_review_document(
     )
     content = snapshot.file_preimages.get(snapshot.project_root / review_path)
     if content is None:
-        raise ProjectionError("visual_review source bytes are unavailable")
+        raise HistoricalEvidenceUnavailableError(
+            "visual_review source bytes are unavailable"
+        )
     document = _parse_frozen_json(content, review_path)
     if source["visual_review_sha256"] != _canonical_digest(document, "visual_review"):
         raise ProjectionError("visual_review source document digest mismatch")
@@ -526,7 +599,9 @@ def _validate_completion_artifact_records(
     """Require exactly one immutable persisted record per completion artifact."""
     records = snapshot.stores.get("artifacts")
     if records is None:
-        raise ProjectionError("deck_completion artifact records are unavailable")
+        raise HistoricalEvidenceUnavailableError(
+            "deck_completion artifact records are unavailable"
+        )
     record_kinds = {"final_pptx": "deck-pptx", "rendered_png": "slide-png"}
     for path, evidence_kind, _subject_id in bindings:
         matches: list[dict[str, Any]] = []
@@ -538,7 +613,7 @@ def _validate_completion_artifact_records(
                 continue
             matches.append(record)
         if len(matches) != 1:
-            raise ProjectionError(
+            raise HistoricalEvidenceUnavailableError(
                 f"deck_completion requires exactly one artifact record for {path!r}"
             )
         record = matches[0]
@@ -742,10 +817,14 @@ def _resolve_historical_plan_id(
             matches.append(plan_id)
     if declared_plan_id is not None:
         if declared_plan_id not in matches:
-            raise ProjectionError("declared historical plan_id has no matching immutable record")
+            raise HistoricalEvidenceUnavailableError(
+                "declared historical plan_id has no matching immutable record"
+            )
         return declared_plan_id
     if len(matches) != 1:
-        raise ProjectionError("historical event requires exactly one matching plan record")
+        raise HistoricalEvidenceUnavailableError(
+            "historical event requires exactly one matching plan record"
+        )
     return matches[0]
 
 

@@ -32,7 +32,6 @@ from presentation_no_follow import (
     NoFollowPathError,
     acquire_sidecar as acquire_anchored_sidecar,
     fsync_directory as _directory_fsync,
-    fsync_regular_file as _file_fsync,
     open_parent_beneath,
     open_parent_no_follow,
     read_regular_siblings,
@@ -43,6 +42,7 @@ from presentation_no_follow import (
     temporary_path as _temporary_path,
     write_bytes_at,
 )
+from presentation_transaction_files import remove_staged_siblings
 
 
 class TransactionError(RuntimeError):
@@ -485,6 +485,7 @@ class WorkflowTransaction:
         self._stages: dict[Path, _FileStage] = {}
         self._unsafe_cas_paths: set[Path] = set()
         self._cas_anchors: dict[Path, AnchoredPath] = {}
+        self._ordinary_anchors: dict[Path, AnchoredPath] = {}
         self._recovery_anchors: dict[Path, AnchoredPath] = {}
         self._root_anchor: AnchoredPath | None = None
         self._presentations_anchor: AnchoredPath | None = None
@@ -519,34 +520,28 @@ class WorkflowTransaction:
                     self._cas_anchors[path] = anchored
                 else:
                     self._recovery_anchors[path] = anchored
+            timeout = int(
+                os.environ.get("PRESENTATION_STATE_LOCK_TIMEOUT_SECONDS", "30")
+            )
             for path in self._lock_paths:
                 if _is_cas_transaction_path(self.project_root, path):
                     anchored = self._cas_anchors.get(path)
                     if anchored is None:
                         anchored = self._anchor_recovery_path(path)
                         self._cas_anchors[path] = anchored
-                    timeout = int(
-                        os.environ.get("PRESENTATION_STATE_LOCK_TIMEOUT_SECONDS", "30")
-                    )
                     self._descriptors.append(acquire_anchored_sidecar(anchored, timeout))
                 elif path in self._recovery_anchors:
-                    timeout = int(
-                        os.environ.get("PRESENTATION_STATE_LOCK_TIMEOUT_SECONDS", "30")
-                    )
                     self._descriptors.append(acquire_anchored_sidecar(self._recovery_anchors[path], timeout))
                 else:
-                    self._descriptors.append(_acquire_sidecar(path))
+                    anchored = self._anchor_recovery_path(path)
+                    self._ordinary_anchors[path] = anchored
+                    self._descriptors.append(acquire_anchored_sidecar(anchored, timeout))
             self._recover_journals(journals)
             for path in self.paths:
                 if _is_cas_transaction_path(self.project_root, path):
                     self._snapshots[path] = self._capture_cas_snapshot(path)
-                elif path.is_file():
-                    stat_result = path.stat()
-                    self._snapshots[path] = _FileSnapshot(
-                        True, path.read_bytes(), stat_result.st_mode & 0o777, stat_result.st_mtime_ns
-                    )
                 else:
-                    self._snapshots[path] = _FileSnapshot(False, b"", 0)
+                    self._snapshots[path] = self._capture_regular_snapshot(path)
             if self.paths or journals:
                 self._notify_locked()
             return self
@@ -560,8 +555,13 @@ class WorkflowTransaction:
     def __exit__(self, error_type: Any, error: BaseException | None, traceback: Any) -> None:
         """Clean staged files and release sidecar locks in reverse order."""
         cleanup_failures: list[str] = []
-        if not self._committed:
+        process_death = isinstance(error, SimulatedProcessDeath)
+        if not self._committed and not process_death:
             cleanup_failures = self._cleanup_stages()
+            try:
+                self._remove_journal()
+            except Exception as exc:  # noqa: BLE001 - preserve cleanup diagnostics
+                cleanup_failures.append(str(exc))
         self._release_locks()
         if cleanup_failures:
             detail = "; ".join(cleanup_failures)
@@ -604,6 +604,7 @@ class WorkflowTransaction:
                 for path, snapshot in sorted(entries, key=lambda item: _path_key(item[0])):
                     anchored = self._cas_anchors.get(path) or self._recovery_anchors[path]
                     self._restore_anchored_snapshot(path, snapshot, anchored)
+                    remove_staged_siblings(anchored)
                 if self._journal_anchor is not None:
                     os.unlink(journal.name, dir_fd=self._journal_anchor.parent_fd)
                     self._journal_anchor.fsync_parent()
@@ -618,9 +619,7 @@ class WorkflowTransaction:
     def read_bytes(self, path: Path) -> bytes:
         """Read one locked transaction file, returning empty bytes when absent."""
         self._assert_path(path)
-        if _is_cas_transaction_path(self.project_root, path):
-            return self._snapshots[path].content
-        return path.read_bytes() if path.is_file() else b""
+        return self._snapshots[path].content
 
     def snapshot(self, path: Path) -> tuple[bytes, int, int | None]:
         """Return the exact preimage captured while this transaction held locks.
@@ -681,6 +680,7 @@ class WorkflowTransaction:
         target_mode = _validate_mode(mode, path) if mode is not None else (snapshot.mode if snapshot.exists else 0o666)
         temporary = _temporary_path(path)
         try:
+            self._write_journal()
             if _is_cas_transaction_path(self.project_root, path):
                 write_bytes_at(
                     self._cas_anchors[path],
@@ -690,8 +690,9 @@ class WorkflowTransaction:
                     exact_mode=True,
                 )
             else:
-                _write_fsync(
-                    temporary,
+                write_bytes_at(
+                    self._ordinary_anchors.get(path) or self._recovery_anchors[path],
+                    temporary.name,
                     content,
                     target_mode,
                     exact_mode=mode is not None or snapshot.exists,
@@ -732,7 +733,6 @@ class WorkflowTransaction:
             return
         try:
             self._before_commit()
-            self._write_journal(ordered_stages)
             for position, stage in enumerate(ordered_stages, start=1):
                 path = stage.path
                 self._inject_failure(position, path)
@@ -741,8 +741,9 @@ class WorkflowTransaction:
                     anchored.replace_leaf(stage.temporary.name)
                     anchored.fsync_parent()
                 else:
-                    os.replace(stage.temporary, path)
-                    _directory_fsync(path.parent)
+                    anchored = self._ordinary_anchors.get(path) or self._recovery_anchors[path]
+                    anchored.replace_leaf(stage.temporary.name)
+                    anchored.fsync_parent()
                 self._inject_process_death(position, path)
             self._remove_journal()
             cleanup_failures = self._cleanup_stages()
@@ -776,6 +777,17 @@ class WorkflowTransaction:
             raise TransactionError(
                 f"CAS object changed while capturing preimage: {path}"
             ) from exc
+        return _FileSnapshot(True, content, opened.st_mode & 0o777, opened.st_mtime_ns)
+
+    def _capture_regular_snapshot(self, path: Path) -> _FileSnapshot:
+        """Capture one ordinary target through its retained parent descriptor."""
+        anchored = self._ordinary_anchors.get(path) or self._recovery_anchors[path]
+        metadata = anchored.stat_leaf()
+        if metadata is None:
+            return _FileSnapshot(False, b"", 0)
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+            raise TransactionError(f"transaction target must be a regular file: {path}")
+        content, opened = read_stable_regular(anchored)
         return _FileSnapshot(True, content, opened.st_mode & 0o777, opened.st_mtime_ns)
 
     def _notify_locked(self) -> None:
@@ -829,32 +841,8 @@ class WorkflowTransaction:
         if _is_cas_transaction_path(self.project_root, path):
             self._restore_anchored_snapshot(path, snapshot, self._cas_anchors[path])
             return
-        if not snapshot.exists:
-            if path.exists():
-                path.unlink()
-                _directory_fsync(path.parent)
-            return
-        temporary = _temporary_path(path)
-        try:
-            _write_fsync(
-                temporary,
-                snapshot.content,
-                snapshot.mode,
-                exact_mode=True,
-            )
-            os.replace(temporary, path)
-        except BaseException:
-            try:
-                if temporary.exists():
-                    temporary.unlink()
-            except OSError:
-                pass
-            raise
-        _directory_fsync(path.parent)
-        if snapshot.mtime_ns is not None:
-            os.utime(path, ns=(snapshot.mtime_ns, snapshot.mtime_ns), follow_symlinks=False)
-            _file_fsync(path)
-            _directory_fsync(path.parent)
+        anchored = self._ordinary_anchors.get(path) or self._recovery_anchors[path]
+        self._restore_anchored_snapshot(path, snapshot, anchored)
 
     def _restore_anchored_snapshot(
         self,
@@ -882,8 +870,8 @@ class WorkflowTransaction:
                 f"{target_kind} must be a regular no-follow file: {path}"
             ) from exc
 
-    def _write_journal(self, stages: Sequence[_FileStage]) -> None:
-        """Persist exact preimages before the first visible replacement."""
+    def _write_journal(self) -> None:
+        """Persist all selected preimages before the first temporary write."""
         if self._journal is not None:
             return
         transaction_id = uuid.uuid4().hex
@@ -891,8 +879,8 @@ class WorkflowTransaction:
         document = {
             "transaction_id": transaction_id,
             "paths": [
-                _encode_snapshot(self.project_root, stage.path, self._snapshots[stage.path])
-                for stage in stages
+                _encode_snapshot(self.project_root, path, self._snapshots[path])
+                for path in self.paths
             ],
         }
         temporary = _temporary_path(journal)
@@ -964,8 +952,13 @@ class WorkflowTransaction:
             except FileNotFoundError:
                 return
             os.unlink(temporary.name, dir_fd=anchored.parent_fd)
-        elif temporary.exists():
-            temporary.unlink()
+        else:
+            anchored = self._ordinary_anchors.get(target) or self._recovery_anchors[target]
+            try:
+                os.stat(temporary.name, dir_fd=anchored.parent_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                return
+            os.unlink(temporary.name, dir_fd=anchored.parent_fd)
 
     def _release_locks(self) -> None:
         """Release held descriptors in reverse deterministic order."""
@@ -975,6 +968,9 @@ class WorkflowTransaction:
         for anchored in self._cas_anchors.values():
             anchored.close()
         self._cas_anchors.clear()
+        for anchored in self._ordinary_anchors.values():
+            anchored.close()
+        self._ordinary_anchors.clear()
         for anchored in self._recovery_anchors.values():
             anchored.close()
         self._recovery_anchors.clear()

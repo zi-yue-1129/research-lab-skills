@@ -499,10 +499,10 @@ def test_draft_preview_requires_exact_recomputed_producer_digest(
         migration.migrate_state(project, dry_run=True)
 
 
-def test_draft_preview_rejects_internally_consistent_stale_slide_identity(
+def test_draft_preview_preserves_intrinsic_stale_slide_identity(
     tmp_path: Path,
 ) -> None:
-    """Preview identity is bound to the current slide store, not itself."""
+    """Historical preview identity remains intrinsic after current revision."""
     project, event, _slide = _draft_preview_project(tmp_path)
     event["rendered_slide_paths"][0].update(
         {"slide_record_id": "sld-stale", "attempt": 2}
@@ -518,8 +518,9 @@ def test_draft_preview_rejects_internally_consistent_stale_slide_identity(
     event["preview_sha256"] = _canonical_digest(payload)
     _write_event(project, event)
 
-    with pytest.raises(MigrationError, match="current|stale|slide_record_id|attempt"):
-        migration.migrate_state(project, dry_run=True)
+    report = migration.migrate_state(project, dry_run=True)
+
+    assert report["target_schema_version"] == 2
 
 
 def test_exact_producer_shaped_draft_preview_migrates_without_event_rewrite(

@@ -304,6 +304,34 @@ def _approved_snapshot(*, include_extra_active_slide: bool = False) -> tuple[
     return snapshot, history
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("schema_version", 2), ("preview_sha256", "0" * 64), ("ts", None)],
+)
+def test_active_preview_rejects_nonexact_source_event_contract(
+    field: str, value: Any
+) -> None:
+    """Active preview selection reuses the exact historical source contract."""
+    snapshot, seed_history = _approved_snapshot()
+    snapshot, history = project_real_historical_preview(
+        with_preview_source(snapshot), seed_history
+    )
+    source = dict(snapshot.events[0])
+    if value is None:
+        source.pop(field)
+    else:
+        source[field] = value
+    tampered = replace(snapshot, events=(MappingProxyType(source),))
+
+    projection = presentation_evidence_projection.project_active_evidence(
+        tampered, history
+    )
+
+    assert projection.blockers["deck-1"] == (
+        {"reason": "active_preview_source_invalid"},
+    )
+
+
 def test_active_preview_requires_exact_ordered_passed_slide_set() -> None:
     """An unexpected active slide cannot authorize a current preview."""
     snapshot, history = _approved_snapshot(include_extra_active_slide=True)

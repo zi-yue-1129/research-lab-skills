@@ -28,6 +28,7 @@ def with_preview_source(snapshot: EvidenceSnapshot) -> EvidenceSnapshot:
     source_paths = ["renders/slide-01.png"]
     source = {
         "id": "event-preview-1",
+        "schema_version": 1,
         "event": "draft_preview",
         "deck_id": "deck-1",
         "plan_version": 1,
@@ -75,8 +76,36 @@ def with_preview_source(snapshot: EvidenceSnapshot) -> EvidenceSnapshot:
                 ),
             },
         },
+        "ts": "2026-08-09T00:00:00Z",
     }
-    return replace(snapshot, events=(*snapshot.events, MappingProxyType(source)))
+    payload = {
+        key: value
+        for key, value in source.items()
+        if key not in {"event", "id", "preview_sha256", "ts"}
+    }
+    source["preview_sha256"] = contract_sha256(payload)
+    artifact_objects = dict(snapshot.artifact_objects)
+    artifact_objects.update(
+        {
+            source_paths[0]: CasObject(
+                rendered_digest,
+                cas_relative_path(rendered_digest),
+                b"rendered-slide",
+                0o444,
+            ),
+            "renders/contact-sheet.png": CasObject(
+                contact_digest,
+                cas_relative_path(contact_digest),
+                b"contact-sheet",
+                0o444,
+            ),
+        }
+    )
+    return replace(
+        snapshot,
+        events=(*snapshot.events, MappingProxyType(source)),
+        artifact_objects=MappingProxyType(artifact_objects),
+    )
 
 
 def project_real_historical_preview(

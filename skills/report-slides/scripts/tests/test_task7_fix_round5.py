@@ -148,18 +148,22 @@ def test_plan_transaction_rechecks_destination_absence_after_lock_race(
 
     import presentation_transactions
 
-    original_open_sidecar = presentation_transactions._open_sidecar
+    original_open_sidecar = presentation_transactions.acquire_anchored_sidecar
 
-    def create_raced_destination(path: Path) -> int:
+    def create_raced_destination(anchored: Any, timeout_seconds: int) -> int:
         """Create the immutable destination in the lock-acquisition gap."""
-        descriptor = original_open_sidecar(path)
-        if path.resolve() == destination.resolve() and not destination.exists():
+        descriptor = original_open_sidecar(anchored, timeout_seconds)
+        if anchored.display_path == destination and not destination.exists():
             destination.write_bytes(raced_bytes)
             destination.chmod(raced_mode)
             raced_preimage["destination"] = _preimage(destination)
         return descriptor
 
-    monkeypatch.setattr(presentation_transactions, "_open_sidecar", create_raced_destination)
+    monkeypatch.setattr(
+        presentation_transactions,
+        "acquire_anchored_sidecar",
+        create_raced_destination,
+    )
 
     with pytest.raises(ValueError, match="exists|immutable|destination"):
         register_plan_transaction(

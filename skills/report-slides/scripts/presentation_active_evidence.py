@@ -331,6 +331,8 @@ def _validate_preview(
     source = _source_event(snapshot, preview.get("source_event_id"), "draft_preview")
     if source is None:
         return [{"reason": "active_preview_source_unavailable"}]
+    from presentation_evidence_projection import ProjectionError, project_preview_evidence
+
     if (
         source.get("deck_id") != preview.get("deck_id")
         or type(source.get("plan_version")) is not int
@@ -365,6 +367,17 @@ def _validate_preview(
         return [{"reason": "active_preview_artifacts_invalid"}]
     if not _preview_source_artifacts_valid(source, preview, entries, references):
         return [{"reason": "active_preview_source_artifacts_invalid"}]
+    try:
+        projected_source = project_preview_evidence(snapshot, source)
+    except ProjectionError:
+        return [{"reason": "active_preview_source_invalid"}]
+    comparable_fields = (
+        "evidence_kind", "deck_id", "plan_id", "plan_version", "plan_sha256",
+        "subject_ids", "producer_id", "artifact_refs", "source_event_id",
+        "created_at", "availability",
+    )
+    if any(projected_source[field] != preview[field] for field in comparable_fields):
+        return [{"reason": "active_preview_source_invalid"}]
     for index, record in enumerate(slides):
         ref = references[index]
         if not _artifact_valid(

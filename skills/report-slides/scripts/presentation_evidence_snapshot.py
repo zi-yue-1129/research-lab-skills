@@ -24,6 +24,7 @@ from migration_scope import MigrationError, canonical_relative_path
 from presentation_evidence_cas import (
     CasError,
     CasObject,
+    cas_relative_path,
     plan_cas_objects,
     read_verified_source,
 )
@@ -183,6 +184,9 @@ def _build_snapshot(
     for relative_path, content in event_bytes.items():
         file_preimages[root / relative_path] = content
     artifact_objects = _capture_artifact_objects(root, events, file_preimages)
+    artifact_objects.update(
+        _capture_persisted_cas_objects(root, stores.get("evidence", {}))
+    )
     _capture_visual_review_preimages(root, events, file_preimages)
     active_plan_preimages = (
         _capture_active_plan_preimages(root, stores, file_preimages)
@@ -663,10 +667,42 @@ def _capture_visual_review_preimages(
         try:
             object_ = read_verified_source(project_root, relative_path)
         except CasError as exc:
+            if str(exc).startswith("missing source artifact:"):
+                continue
             raise SnapshotError(
                 f"cannot snapshot historical visual review {relative_path}: {exc}"
             ) from exc
         file_preimages[project_root / relative_path] = object_.content
+
+
+def _capture_persisted_cas_objects(
+    project_root: Path, evidence: Mapping[str, Mapping[str, Any]]
+) -> dict[str, CasObject]:
+    """Capture canonical CAS objects referenced by persisted evidence."""
+    objects: dict[str, CasObject] = {}
+    for envelope in evidence.values():
+        references = envelope.get("artifact_refs")
+        if not isinstance(references, list):
+            continue
+        for reference in references:
+            if not isinstance(reference, Mapping):
+                continue
+            digest = reference.get("sha256")
+            cas_path = reference.get("cas_path")
+            if not isinstance(digest, str) or not isinstance(cas_path, str):
+                continue
+            if cas_path != cas_relative_path(digest).as_posix():
+                raise SnapshotError("persisted evidence CAS path is not canonical")
+            try:
+                object_ = read_verified_source(project_root, cas_path)
+            except CasError as exc:
+                if str(exc).startswith("missing source artifact:"):
+                    continue
+                raise SnapshotError(f"cannot snapshot evidence CAS object: {exc}") from exc
+            if object_.digest != digest:
+                raise SnapshotError("persisted evidence CAS object digest mismatch")
+            objects[cas_path] = object_
+    return objects
 
 
 def _declared_artifact_paths(event: Mapping[str, Any]) -> tuple[str, ...]:

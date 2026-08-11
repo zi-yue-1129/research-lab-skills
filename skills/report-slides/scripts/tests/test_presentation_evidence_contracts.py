@@ -509,11 +509,11 @@ def test_assignment_cannot_spoof_module_nullable_paths() -> None:
         validate_store_record("assignments", record, relations=_relations())
 
 
-def test_unregistered_store_record_schema_fails_closed() -> None:
-    """A store without an exact v2 record schema cannot use generic validation."""
-    record = {"id": "deck-1", "status": "planning"}
+def test_deck_store_record_schema_rejects_unknown_fields() -> None:
+    """The shared deck contract remains closed after migration registration."""
+    record = {"id": "deck-1", "status": "planning", "forged": True}
 
-    with pytest.raises(EvidenceContractError, match="decks"):
+    with pytest.raises(EvidenceContractError, match="decks|unknown"):
         validate_store_record("decks", record, relations=_relations())
 
 

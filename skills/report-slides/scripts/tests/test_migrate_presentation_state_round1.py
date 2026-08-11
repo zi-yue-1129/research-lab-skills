@@ -562,10 +562,9 @@ def test_restore_snapshot_fsyncs_file_after_mtime_restore(
 
     monkeypatch.setattr(transactions.os, "fsync", tracked_fsync)
     monkeypatch.setattr(transactions.os, "utime", tracked_utime)
-    transaction = WorkflowTransaction([target], project)
     snapshot = transactions._FileSnapshot(True, b"before", 0o644, old_mtime)
-
-    transaction._restore_snapshot(target, snapshot)
+    with WorkflowTransaction([target], project) as transaction:
+        transaction._restore_snapshot(target, snapshot)
 
     utime_index = next(index for index, event in enumerate(events) if event[0] == "utime")
     assert any(

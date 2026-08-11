@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import Any, Mapping
 
 from presentation_contracts import contract_sha256
+from presentation_store_record_contracts import validate_additional_store_record
 
 
 EVIDENCE_SCHEMA_VERSION = 2
@@ -218,6 +219,7 @@ def validate_store_record(
     record: Mapping[str, Any],
     *,
     relations: Mapping[str, Mapping[str, Any]],
+    legacy: bool = False,
 ) -> dict[str, Any]:
     """Validate one record using authoritative store and relation context.
 
@@ -225,6 +227,7 @@ def validate_store_record(
         store_name: Name of the authoritative record store.
         record: Parsed record to validate without mutation.
         relations: Explicit id-keyed maps for stores and auxiliary contracts.
+        legacy: Whether the record is an exact schema-zero/one migration input.
 
     Returns:
         A deep copy of the validated record.
@@ -237,6 +240,14 @@ def validate_store_record(
         raise EvidenceContractError(f"unknown authoritative store {store_name!r}")
     candidate = _mapping(record, f"{store_name} record")
     relation_maps = _relation_maps(relations)
+    if type(legacy) is not bool:
+        raise EvidenceContractError("legacy must be a bool")
+    if legacy:
+        try:
+            validate_additional_store_record(store_name, candidate)
+        except ValueError as exc:
+            raise EvidenceContractError(str(exc)) from exc
+        return deepcopy(dict(candidate))
     if store_name == "visual_modules":
         _validate_visual_module(candidate, relation_maps)
     elif store_name == "assignments":
@@ -244,9 +255,10 @@ def validate_store_record(
     elif store_name == "slides":
         _validate_slide(candidate, relation_maps)
     else:
-        raise EvidenceContractError(
-            f"{store_name} has no exact schema-v2 record contract"
-        )
+        try:
+            validate_additional_store_record(store_name, candidate)
+        except ValueError as exc:
+            raise EvidenceContractError(str(exc)) from exc
     return deepcopy(dict(candidate))
 
 

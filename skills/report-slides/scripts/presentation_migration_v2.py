@@ -21,11 +21,13 @@ from presentation_evidence_contracts import (
     EvidenceContractError,
     envelope_sha256,
     validate_envelope,
+    validate_store_record,
 )
 from presentation_evidence_projection import (
+    HistoricalEvidenceUnavailableError,
     HistoricalProjection,
-    ProjectionError,
     project_historical_evidence,
+    project_visual_review_evidence,
 )
 from presentation_evidence_snapshot import EvidenceSnapshot
 from presentation_evidence_store import evidence_store_path, serialize_evidence_store
@@ -89,17 +91,24 @@ def build_migration_plan(snapshot: EvidenceSnapshot) -> MigrationPlan:
         raise MigrationError(f"unsupported source schema version: {source_version!r}")
     if source_version == 2:
         _validate_target_store(snapshot)
+        history = project_historical_evidence(snapshot)
+        active = _active_projection(snapshot, history)
+        blockers = {
+            deck_id: tuple(dict(item) for item in items)
+            for deck_id, items in active.blockers.items()
+        }
         return MigrationPlan(
             source_schema_version=2,
             replacements=MappingProxyType({}),
             cas_objects=MappingProxyType({}),
             migrated_ids=(),
-            blocked_ids=(),
-            blockers=MappingProxyType({}),
+            blocked_ids=tuple(sorted(blockers)),
+            blockers=MappingProxyType(dict(sorted(blockers.items()))),
         )
 
     stores = _mutable_stores(snapshot)
     _validate_snapshot_scope(snapshot, stores)
+    _validate_migrated_records(stores)
     preliminary = _snapshot_with_stores(snapshot, stores)
     history_without_completion = _available_historical_projection(
         replace(
@@ -246,8 +255,14 @@ def _validate_target_store(snapshot: EvidenceSnapshot) -> None:
         raise MigrationError("schema-two state requires evidence.yaml")
     try:
         serialize_evidence_store(evidence)
+        mutable_stores = _mutable_stores(snapshot)
+        for store_name, records in mutable_stores.items():
+            for record in records.values():
+                validate_store_record(
+                    store_name, record, relations=mutable_stores
+                )
     except EvidenceContractError as exc:
-        raise MigrationError(f"schema-two evidence store is invalid: {exc}") from exc
+        raise MigrationError(f"schema-two state is invalid: {exc}") from exc
 
 
 def _mutable_stores(snapshot: EvidenceSnapshot) -> dict[str, dict[str, dict[str, Any]]]:
@@ -284,12 +299,30 @@ def _validate_snapshot_scope(
                 current_slides=current_slides,
             )
     for event in snapshot.events:
+        if event.get("event") in {"draft_preview", "deck_completion", "visual_review"}:
+            continue
         validate_record_paths(
             snapshot.project_root,
             _thaw(event),
             store_name="events",
             current_slides=current_slides,
         )
+
+
+def _validate_migrated_records(
+    stores: Mapping[str, Mapping[str, Mapping[str, Any]]]
+) -> None:
+    """Validate every mutable migration record through the shared contracts."""
+    for store_name, records in stores.items():
+        for record in records.values():
+            try:
+                validate_store_record(
+                    store_name, record, relations=stores, legacy=True
+                )
+            except EvidenceContractError as exc:
+                raise MigrationError(
+                    f"invalid {store_name} migration record: {exc}"
+                ) from exc
 
 
 def _available_historical_projection(snapshot: EvidenceSnapshot) -> HistoricalProjection:
@@ -312,10 +345,16 @@ def _available_historical_projection(snapshot: EvidenceSnapshot) -> HistoricalPr
         if event_kind not in {"draft_preview", "deck_completion"}:
             selected_events.append(event)
             continue
+        if (
+            event_kind == "deck_completion"
+            and "schema_version" not in event
+            and "completion_sha256" not in event
+        ):
+            continue
         candidate = replace(snapshot, events=tuple([*selected_events, event]))
         try:
             project_historical_evidence(candidate)
-        except ProjectionError:
+        except HistoricalEvidenceUnavailableError:
             continue
         selected_events.append(event)
     return project_historical_evidence(replace(snapshot, events=tuple(selected_events)))
@@ -349,7 +388,10 @@ def _supporting_envelopes(
         if event.get("event") == "deck_approval":
             envelope = _approval_envelope(event, previews_by_source)
         elif event.get("event") == "visual_review":
-            envelope = _visual_review_envelope(snapshot, event)
+            try:
+                envelope = dict(project_visual_review_evidence(snapshot, event))
+            except HistoricalEvidenceUnavailableError:
+                envelope = None
         else:
             envelope = None
         if envelope is not None:
