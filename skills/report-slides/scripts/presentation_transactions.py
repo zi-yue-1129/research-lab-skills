@@ -60,6 +60,13 @@ class SimulatedProcessDeath(BaseException):
     """Test-only process-death signal that bypasses in-process rollback."""
 
 
+_STATE_LOCK_PRIORITIES = {
+    "decks.yaml": 10, "plans.yaml": 20, "slides.yaml": 30,
+    "visual_modules.yaml": 40, "assignments.yaml": 50, "artifacts.yaml": 60,
+    "revision_requests.yaml": 70, "evidence.yaml": 75,
+}
+
+
 class _FileSnapshot:
     """Immutable bytes, mode, and optional mtime captured under a sidecar lock."""
 
@@ -144,17 +151,13 @@ def _acquire_sidecar(path: Path) -> int:
 
 def _path_key(path: Path) -> tuple[int, str]:
     """Return the repository-wide lock/write order for one data path."""
-    priorities = {
-        "workflow.lock": 0, "decks.yaml": 10, "plans.yaml": 20,
-        "slides.yaml": 30, "visual_modules.yaml": 40, "assignments.yaml": 50,
-        "artifacts.yaml": 60, "revision_requests.yaml": 70,
-        ".gitignore": 90,
-    }
     cas_parts = path.parts
     is_cas_object = len(cas_parts) >= 6 and cas_parts[-6:-2] == (
         ".research", "presentations", "evidence", "sha256"
     )
-    priority = priorities.get(path.name, 85 if is_cas_object else 80 if path.suffix == ".jsonl" else 100)
+    priority = _STATE_LOCK_PRIORITIES.get(
+        path.name, 85 if is_cas_object else 80 if path.suffix == ".jsonl" else 100
+    )
     return priority, str(path)
 
 
@@ -173,10 +176,7 @@ def _journal_dir(project_root: Path) -> Path:
     return project_root / ".research/presentations/transactions"
 
 
-_ALLOWED_STATE_NAMES = frozenset({
-    "decks.yaml", "plans.yaml", "slides.yaml", "visual_modules.yaml", "assignments.yaml",
-    "artifacts.yaml", "revision_requests.yaml", "evidence.yaml",
-})
+_ALLOWED_STATE_NAMES = frozenset(_STATE_LOCK_PRIORITIES)
 _EVENT_SHARD_PATTERN = re.compile(r"\.research/presentations/events/(\d{4}-\d{2}-\d{2})\.jsonl")
 _PLAN_DESTINATION_PATTERN = re.compile(r"decks/[^/]+/plans/plan-v\d{4}\.yaml")
 _CAS_DESTINATION_PATTERN = re.compile(

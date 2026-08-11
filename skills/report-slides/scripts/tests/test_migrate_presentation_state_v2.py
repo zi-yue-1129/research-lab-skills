@@ -6,6 +6,7 @@ import json
 import os
 import stat
 import hashlib
+from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,7 @@ import pytest
 import yaml
 
 import migrate_presentation_state as migration
+import presentation_transactions as transactions
 from presentation_migration_v2 import MigrationPlan, build_migration_plan
 from presentation_evidence_cas import cas_relative_path
 from presentation_evidence_snapshot import SnapshotError, build_snapshot
@@ -28,6 +30,7 @@ _STORE_NAMES = {
     "assignments.yaml": "assignments",
     "artifacts.yaml": "artifacts",
     "revision_requests.yaml": "revision_requests",
+    "evidence.yaml": "evidence",
 }
 
 
@@ -105,6 +108,15 @@ def _regular_tree(root: Path) -> dict[str, tuple[bytes, int, int]]:
     return captured
 
 
+def _exact_regular_tree(root: Path) -> dict[str, tuple[bytes, int, int, int]]:
+    """Capture exact bytes, modes, mtimes, and inodes for regular files."""
+    captured: dict[str, tuple[bytes, int, int, int]] = {}
+    for relative, (content, mode, mtime_ns) in _regular_tree(root).items():
+        metadata = (root / relative).stat()
+        captured[relative] = (content, mode, mtime_ns, metadata.st_ino)
+    return captured
+
+
 def _semantic_tree(root: Path) -> dict[str, tuple[bytes, int, int]]:
     """Capture regular content while excluding stable operational lock files."""
     return {
@@ -153,27 +165,48 @@ def test_dry_run_is_zero_write_even_when_target_outputs_are_absent(tmp_path: Pat
     """Dry-run analysis cannot create locks, stores, journals, or backups."""
     project = _legacy_project(tmp_path)
     presentations = project / ".research" / "presentations"
-    before = _regular_tree(presentations)
+    before = _exact_regular_tree(presentations)
 
     report = migration.migrate_state(project, dry_run=True)
 
     assert report["target_schema_version"] == 2
     assert report["changed_paths"] == []
-    assert _regular_tree(presentations) == before
+    assert _exact_regular_tree(presentations) == before
     assert not (_state(project) / "evidence.yaml").exists()
     assert not (presentations / "transactions").exists()
     assert not list(presentations.glob("state.backup-*"))
 
 
-def test_v2_noop_preserves_every_existing_byte_mode_and_mtime(tmp_path: Path) -> None:
-    """A valid schema-two rerun has no filesystem or lock side effects."""
+def test_v2_noop_preserves_every_existing_byte_mode_mtime_and_lock_inode(tmp_path: Path) -> None:
+    """A v2 rerun preserves every canonical operational lock exactly."""
     project = _legacy_project(tmp_path)
     migration.migrate_state(project)
-    workflow_lock = _state(project) / "workflow.lock"
-    workflow_lock.write_bytes(b"stable workflow lock")
-    orphan_lock = _state(project) / "decks.yaml.lock"
-    orphan_lock.write_bytes(b"stable sidecar")
-    before = _semantic_tree(project / ".research" / "presentations")
+    presentations = project / ".research" / "presentations"
+    event = presentations / "events" / "2026-08-09.jsonl"
+    event.parent.mkdir(parents=True)
+    event.write_bytes(b'{"event":"review_result","id":"v2-lock-order"}\n')
+    cas_content = b"already-present-cas"
+    cas_digest = hashlib.sha256(cas_content).hexdigest()
+    cas_object = project / cas_relative_path(cas_digest)
+    cas_object.parent.mkdir(parents=True)
+    cas_object.write_bytes(cas_content)
+    lock_paths = (
+        _state(project) / "workflow.lock",
+        _state(project) / "decks.yaml.lock",
+        _state(project) / "evidence.yaml.lock",
+        event.with_suffix(event.suffix + ".lock"),
+        cas_object.with_suffix(cas_object.suffix + ".lock"),
+    )
+    for index, lock_path in enumerate(lock_paths):
+        lock_path.write_bytes(f"stable lock {index}".encode("utf-8"))
+        os.chmod(lock_path, 0o600 + index)
+        timestamp = 1_700_000_000_000_000_000 + index
+        os.utime(lock_path, ns=(timestamp, timestamp))
+    before = _exact_regular_tree(presentations)
+    before_entries = sorted(
+        path.relative_to(presentations).as_posix() for path in presentations.rglob("*")
+    )
+    before_backups = sorted(presentations.glob("state.backup-*"))
 
     report = migration.migrate_state(project)
 
@@ -185,7 +218,108 @@ def test_v2_noop_preserves_every_existing_byte_mode_and_mtime(tmp_path: Path) ->
         "blockers": {},
         "changed_paths": [],
     }
-    assert _semantic_tree(project / ".research" / "presentations") == before
+    assert _exact_regular_tree(presentations) == before
+    assert sorted(
+        path.relative_to(presentations).as_posix() for path in presentations.rglob("*")
+    ) == before_entries
+    assert not list(presentations.rglob("*.transaction.*.tmp"))
+    assert not list((presentations / "transactions").glob("*.json"))
+    assert sorted(presentations.glob("state.backup-*")) == before_backups
+
+
+def test_migration_acquires_workflow_then_state_event_and_cas_locks_in_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Migration takes the global lock order, including a new evidence store."""
+    project = _legacy_project(tmp_path)
+    for name in (
+        "plans.yaml",
+        "visual_modules.yaml",
+        "assignments.yaml",
+        "artifacts.yaml",
+        "revision_requests.yaml",
+    ):
+        _write_store(project, name, {}, 0)
+    event = project / ".research" / "presentations" / "events" / "2026-08-09.jsonl"
+    event.parent.mkdir(parents=True)
+    event.write_bytes(b'{"event":"review_result","id":"lock-order"}\n')
+    cas_content = b"lock-order-cas"
+    cas_digest = hashlib.sha256(cas_content).hexdigest()
+    cas_object = project / cas_relative_path(cas_digest)
+    original_plan = migration.build_migration_plan
+    original_workflow_lock = migration.migration_workflow_lock
+    original_sidecar = transactions._acquire_sidecar
+    original_cas_sidecar = transactions.acquire_anchored_sidecar
+    acquired: list[str] = []
+
+    def plan_with_cas(snapshot: Any) -> MigrationPlan:
+        """Add one valid CAS object to each immutable migration plan."""
+        return replace(
+            original_plan(snapshot),
+            cas_objects={cas_object: cas_content},
+        )
+
+    @contextmanager
+    def record_workflow_lock(root: Path) -> Any:
+        """Record the already-acquired outer workflow lock."""
+        with original_workflow_lock(root):
+            acquired.append(".research/presentations/state/workflow.lock")
+            yield
+
+    def record_sidecar(path: Path) -> int:
+        """Record one ordinary state or event sidecar acquisition."""
+        acquired.append(path.relative_to(project).as_posix() + ".lock")
+        return original_sidecar(path)
+
+    def record_cas_sidecar(anchored: Any, timeout_seconds: int) -> int:
+        """Record one anchored CAS sidecar acquisition."""
+        acquired.append(anchored.display_path.relative_to(project).as_posix() + ".lock")
+        return original_cas_sidecar(anchored, timeout_seconds)
+
+    monkeypatch.setattr(migration, "build_migration_plan", plan_with_cas)
+    monkeypatch.setattr(migration, "migration_workflow_lock", record_workflow_lock)
+    monkeypatch.setattr(transactions, "_acquire_sidecar", record_sidecar)
+    monkeypatch.setattr(transactions, "acquire_anchored_sidecar", record_cas_sidecar)
+
+    report = migration.migrate_state(project)
+
+    assert report["target_schema_version"] == 2
+    assert acquired == [
+        ".research/presentations/state/workflow.lock",
+        ".research/presentations/state/decks.yaml.lock",
+        ".research/presentations/state/plans.yaml.lock",
+        ".research/presentations/state/slides.yaml.lock",
+        ".research/presentations/state/visual_modules.yaml.lock",
+        ".research/presentations/state/assignments.yaml.lock",
+        ".research/presentations/state/artifacts.yaml.lock",
+        ".research/presentations/state/revision_requests.yaml.lock",
+        ".research/presentations/state/evidence.yaml.lock",
+        ".research/presentations/events/2026-08-09.jsonl.lock",
+        cas_object.relative_to(project).as_posix() + ".lock",
+    ]
+
+
+def test_transaction_locks_new_evidence_store_as_a_state_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A new evidence-only target uses an ordinary stable state sidecar."""
+    project = _project(tmp_path)
+    evidence = _state(project) / "evidence.yaml"
+    acquired: list[Path] = []
+    original_sidecar = transactions._acquire_sidecar
+
+    def record_sidecar(path: Path) -> int:
+        """Record the evidence target before acquiring its real lock."""
+        acquired.append(path)
+        return original_sidecar(path)
+
+    monkeypatch.setattr(transactions, "_acquire_sidecar", record_sidecar)
+
+    with WorkflowTransaction([evidence], project):
+        pass
+
+    assert acquired == [evidence]
+    assert evidence.with_suffix(evidence.suffix + ".lock").is_file()
 
 
 def test_v2_noop_never_uses_relaxed_legacy_snapshot(
