@@ -7,6 +7,7 @@ legacy source documents, then delegates immutable transaction serialization to
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any, Mapping
@@ -307,6 +308,7 @@ def complete_deck_v2(
     require_schema_v2(project_root, check_recovery=False)
     workflow = _workflow_module()
     with workflow._workflow_lock(project_root):
+        precheck_snapshot = build_snapshot(project_root)
         completion = workflow._action_document(
             completion_record_path, workflow.CompletionGateError, "deck_completable", deck_id
         )
@@ -318,6 +320,9 @@ def complete_deck_v2(
         with transaction(paths, project_root) as transaction_handle:
             require_schema_v2(project_root)
             snapshot = build_snapshot(project_root, locked=True)
+            _require_frozen_completion_authorization(
+                workflow, deck_id, precheck_snapshot, snapshot
+            )
             deck = snapshot.stores.get("decks", {}).get(deck_id)
             if deck is None:
                 raise workflow.CompletionGateError(
@@ -410,6 +415,70 @@ def complete_deck_v2(
             "evidence": checked,
             "evidence_id": completion_envelope["id"],
         }
+
+
+def _require_frozen_completion_authorization(
+    workflow: Any,
+    deck_id: str,
+    precheck_snapshot: Any,
+    locked_snapshot: Any,
+) -> None:
+    """Prove completion predicates still refer to the retained locked snapshot.
+
+    The complete legacy predicate is evaluated before source capture.  Every
+    store, event shard, and snapshot-captured source preimage used by that
+    predicate must then be byte-identical after workflow and target locks are
+    held.  This is a revalidation without reopening a mutable path after the
+    locked snapshot boundary.
+
+    Args:
+        workflow: Lazily imported workflow module defining gate exceptions.
+        deck_id: Deck whose completion authorization is being revalidated.
+        precheck_snapshot: Frozen state captured immediately before precheck.
+        locked_snapshot: Frozen state captured after all transaction locks.
+
+    Raises:
+        CompletionGateError: If any completion authorization input changed.
+    """
+    if _completion_snapshot_digest(precheck_snapshot) != _completion_snapshot_digest(
+        locked_snapshot
+    ):
+        raise workflow.CompletionGateError(
+            "deck_completable",
+            deck_id,
+            [{"reason": "completion_authorization_changed_during_locking"}],
+        )
+
+
+def _completion_snapshot_digest(snapshot: Any) -> str:
+    """Return an immutable digest of every current completion predicate input.
+
+    Args:
+        snapshot: Evidence snapshot captured without a subsequent live read.
+
+    Returns:
+        SHA-256 digest of frozen stores, events, and captured source bytes.
+    """
+    file_preimages = {
+        path.relative_to(snapshot.project_root).as_posix(): hashlib.sha256(content).hexdigest()
+        for path, content in snapshot.file_preimages.items()
+    }
+    artifact_objects = {
+        path: {
+            "sha256": object_.digest,
+            "content_sha256": hashlib.sha256(object_.content).hexdigest(),
+        }
+        for path, object_ in snapshot.artifact_objects.items()
+    }
+    return contract_sha256(
+        {
+            "schema_version": snapshot.schema_version,
+            "stores": _mutable(snapshot.stores),
+            "events": _mutable(snapshot.events),
+            "file_preimages": file_preimages,
+            "artifact_objects": artifact_objects,
+        }
+    )
 
 
 def _completion_sources(

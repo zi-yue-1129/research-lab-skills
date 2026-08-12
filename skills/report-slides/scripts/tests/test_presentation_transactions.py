@@ -753,6 +753,12 @@ def test_crash_split_state_blocks_writes_then_workflow_recovers_exact_preimages(
 
     from presentation_workflow import _workflow_lock
 
+    workflow_sidecar = project / ".research/presentations/state/workflow.lock"
+    with pytest.raises(TransactionError, match="workflow|sidecar|journal"):
+        with _workflow_lock(project):
+            pass
+    assert list((project / ".research/presentations/transactions").glob("*.json"))
+    workflow_sidecar.touch()
     with _workflow_lock(project):
         pass
     assert first.read_bytes() == first_before
@@ -960,7 +966,15 @@ def test_real_three_target_crash_blocks_writes_and_recovers_exact_preimages(
     assert (revision_requests.stat().st_mode & 0o777) == revisions_mode
     assert not list((project / ".research/presentations/transactions").iterdir())
 
-    set_deck_status(project, deck["id"], "content_review")
-    append_event(project, {"event": "recovered", "id": "recovered"})
-    assert load_decks(project)[deck["id"]]["status"] == "content_review"
-    assert load_events(project, "recovered") == [{"event": "recovered", "id": "recovered"}]
+    from presentation_evidence_workflow import MigrationRequiredError
+
+    with pytest.raises(MigrationRequiredError) as state_error:
+        set_deck_status(project, deck["id"], "content_review")
+    assert state_error.value.source_schema_version == "invalid"
+    assert state_error.value.target_schema_version == 2
+    with pytest.raises(MigrationRequiredError) as event_error:
+        append_event(project, {"event": "recovered", "id": "recovered"})
+    assert event_error.value.source_schema_version == "invalid"
+    assert event_error.value.target_schema_version == 2
+    assert load_decks(project)[deck["id"]]["status"] != "content_review"
+    assert load_events(project, "recovered") == []

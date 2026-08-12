@@ -9,21 +9,17 @@ the persisted workflow only through this module.
 
 from __future__ import annotations
 
-import errno
-import fcntl
 import json
-import os
-import time
 import uuid
-from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator, Mapping
+from typing import Any, Mapping
 
 import yaml
 
 from presentation_contracts import contract_sha256, load_contract
 from presentation_evidence_workflow import MigrationRequiredError, require_schema_v2
+from presentation_workflow_lock import workflow_lock as _workflow_lock
 from presentation_events import (
     append_event,
     effective_review_results,
@@ -49,7 +45,6 @@ from presentation_gates import (
 from validate_deck_plan import validate_deck_plan
 
 
-WORKFLOW_LOCK_RELATIVE_PATH = Path(".research/presentations/state/workflow.lock")
 _REVISION_KINDS = frozenset(
     {
         "revise_slide", "add_slide", "remove_slide", "reorder_slides",
@@ -102,41 +97,6 @@ def _state() -> Any:
     import presentation_state
 
     return presentation_state
-
-
-@contextmanager
-def _workflow_lock(project_root: Path) -> Iterator[None]:
-    """Hold the stable workflow lock for one complete state transition."""
-    path = project_root / WORKFLOW_LOCK_RELATIVE_PATH
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.touch(exist_ok=True)
-    descriptor = os.open(str(path), os.O_RDWR)
-    timeout = int(os.environ.get("PRESENTATION_STATE_LOCK_TIMEOUT_SECONDS", "30"))
-    deadline = time.monotonic() + timeout
-    try:
-        while True:
-            try:
-                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except OSError as exc:
-                if exc.errno not in (errno.EACCES, errno.EAGAIN):
-                    raise
-                if time.monotonic() >= deadline:
-                    raise RuntimeError(f"Could not acquire workflow lock {path} within {timeout}s")
-                time.sleep(0.05)
-        from presentation_transactions import WorkflowTransaction
-
-        with WorkflowTransaction([], project_root):
-            pass
-        require_schema_v2(project_root)
-        gitignore = project_root / ".research/presentations/.gitignore"
-        if not gitignore.exists():
-            gitignore.parent.mkdir(parents=True, exist_ok=True)
-            gitignore.write_text("state/*.lock\nstate/*.tmp\nevents/\ncache/\n", encoding="utf-8")
-        yield
-    finally:
-        fcntl.flock(descriptor, fcntl.LOCK_UN)
-        os.close(descriptor)
 
 
 def _now() -> str:

@@ -74,7 +74,7 @@ def _locked_file(project_root: Path, path: Path) -> Iterator[None]:
     Raises:
         LockTimeoutError: If another process holds the lock too long.
     """
-    require_transaction_recovery(project_root)
+    require_transaction_recovery(project_root, allow_publication_temporary=True)
     lock_path = path.with_suffix(path.suffix + ".lock")
     descriptor = _open_sidecar(path)
     try:

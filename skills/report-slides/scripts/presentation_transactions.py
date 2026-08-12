@@ -51,14 +51,25 @@ from presentation_transaction_files import (
     validate_journal_fields,
     validate_preimage_fields,
 )
+from presentation_transaction_errors import (
+    TransactionError,
+    TransactionRecoveryRequiredError,
+)
+from presentation_transaction_journal_admission import (
+    incomplete_transaction_journals,
+    require_transaction_recovery,
+)
 
 
-class TransactionError(RuntimeError):
-    """Raised when a multi-file commit or rollback cannot complete safely."""
-
-
-class TransactionRecoveryRequiredError(TransactionError):
-    """Raised when a low-level writer runs before a durable journal is recovered."""
+__all__ = (
+    "SimulatedProcessDeath",
+    "TransactionError",
+    "TransactionRecoveryRequiredError",
+    "WorkflowTransaction",
+    "incomplete_transaction_journals",
+    "require_transaction_recovery",
+    "transaction",
+)
 
 
 MAX_MTIME_NS = 9_223_372_036_854_775_807
@@ -73,8 +84,6 @@ _STATE_LOCK_PRIORITIES = {
     "visual_modules.yaml": 40, "assignments.yaml": 50, "artifacts.yaml": 60,
     "revision_requests.yaml": 70, "evidence.yaml": 75,
 }
-
-
 class _FileSnapshot:
     """Immutable bytes, mode, and optional mtime captured under a sidecar lock."""
 
@@ -279,34 +288,6 @@ def _validate_journal_filename(path: Path) -> None:
         )
 
 
-def incomplete_transaction_journals(project_root: Path) -> list[Path]:
-    """List incomplete transaction journals without changing state."""
-    directory = _journal_dir(project_root)
-    if directory.is_symlink():
-        raise TransactionError(f"transaction journal directory must not be a symlink: {directory}")
-    if not directory.exists():
-        return []
-    if not directory.is_dir():
-        raise TransactionError(f"transaction journal path must be a directory: {directory}")
-    journals: list[Path] = []
-    for child in sorted(directory.iterdir(), key=lambda path: path.name):
-        _validate_journal_filename(child)
-        if child.is_symlink() or not child.is_file():
-            raise TransactionError(f"transaction journal must be a regular file: {child}")
-        if child.stat().st_mode & 0o777 != 0o600:
-            raise TransactionError(f"transaction journal mode must be 0600: {child}")
-        journals.append(child)
-    return journals
-
-
-def require_transaction_recovery(project_root: Path) -> None:
-    """Validate journals and raise before a low-level mutation if any remain."""
-    journals = _load_validated_journals(project_root)
-    if journals:
-        names = ", ".join(str(path) for path in journals)
-        raise TransactionRecoveryRequiredError(f"transaction recovery required before write: {names}")
-
-
 def _journal_path(project_root: Path, transaction_id: str) -> Path:
     """Return the durable journal path for one transaction identifier."""
     return _journal_dir(project_root) / f"{transaction_id}.json"
@@ -391,6 +372,8 @@ def _decode_journal(
 def _load_validated_journals(
     project_root: Path,
     anchored_documents: Mapping[str, bytes] | None = None,
+    *,
+    allow_publication_temporary: bool = False,
 ) -> list[tuple[Path, list[tuple[Path, _FileSnapshot]]]]:
     """Read and validate every pending journal before data locking.
 
@@ -406,7 +389,13 @@ def _load_validated_journals(
     journals: list[tuple[Path, list[tuple[Path, _FileSnapshot]]]] = []
     journal_directory = _journal_dir(project_root)
     journal_names = (
-        [journal.name for journal in incomplete_transaction_journals(project_root)]
+        [
+            journal.name
+            for journal in incomplete_transaction_journals(
+                project_root,
+                allow_publication_temporary=allow_publication_temporary,
+            )
+        ]
         if anchored_documents is None
         else sorted(anchored_documents)
     )

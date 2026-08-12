@@ -150,7 +150,7 @@ def _locked_file(project_root: Path, path: Path) -> Iterator[None]:
         LockTimeoutError: If the lock isn't acquired within
             LOCK_TIMEOUT_SECONDS.
     """
-    require_transaction_recovery(project_root)
+    require_transaction_recovery(project_root, allow_publication_temporary=True)
     lock_path = path.with_suffix(path.suffix + ".lock")
     fd = _open_sidecar(path)
     try:

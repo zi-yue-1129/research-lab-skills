@@ -21,7 +21,7 @@ import yaml
 
 from presentation_contracts import contract_sha256, load_contract
 from presentation_evidence_contracts import EVIDENCE_SCHEMA_VERSION
-from presentation_evidence_workflow import MigrationRequiredError, require_schema_v2
+from presentation_evidence_workflow import require_schema_v2
 from presentation_artifact_provenance import (
     derive_validated_published_provenance,
     MODULE_ARTIFACT_KINDS,
@@ -84,6 +84,7 @@ def publish_artifact(
         The durable artifact record, including its SHA-256 digest.
 
     Raises:
+        MigrationRequiredError: If presentation state must migrate to schema 2.
         PublicationGateError: If approval, contract, assignment, path, or
             publication evidence is missing or inconsistent.
     """
@@ -94,24 +95,21 @@ def publish_artifact(
         )
     except ValueError as exc:
         _fail(deck_id, [{"reason": str(exc)}])
-    try:
-        require_schema_v2(root, check_recovery=False)
-        _validate_inputs(root, deck_id, source, destination, artifact_kind, producer_id)
-        with _workflow_lock(root):
-            _assert_production(root, deck_id)
-            return _publish_locked(
-                root,
-                deck_id,
-                Path(source),
-                Path(destination),
-                artifact_kind,
-                slide_id,
-                module_id,
-                producer_id,
-                Path(contract_path),
-            )
-    except MigrationRequiredError as exc:
-        _fail(deck_id, [{"reason": "schema version requires migration", "message": str(exc)}])
+    require_schema_v2(root, check_recovery=False)
+    _validate_inputs(root, deck_id, source, destination, artifact_kind, producer_id)
+    with _workflow_lock(root):
+        _assert_production(root, deck_id)
+        return _publish_locked(
+            root,
+            deck_id,
+            Path(source),
+            Path(destination),
+            artifact_kind,
+            slide_id,
+            module_id,
+            producer_id,
+            Path(contract_path),
+        )
 
 def _publish_locked(
     project_root: Path,

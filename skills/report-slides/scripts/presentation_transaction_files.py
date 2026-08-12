@@ -89,6 +89,52 @@ def journal_entry_names(project_root: Path) -> tuple[str, ...]:
         anchor.close()
 
 
+def durable_journal_names(
+    project_root: Path, *, allow_publication_temporary: bool = False
+) -> tuple[str, ...]:
+    """List durable journal names while optionally deferring one publication.
+
+    Args:
+        project_root: Existing project root containing presentation state.
+        allow_publication_temporary: Whether a lock-free preflight may defer a
+            canonical in-progress ``.json.tmp`` publication until its target
+            sidecar lock is acquired.
+
+    Returns:
+        Sorted canonical durable journal names requiring recovery.
+
+    Raises:
+        ValueError: If journal entries are malformed, unsafe, or a temporary
+            is observed where deferral is not explicitly authorized.
+        NoFollowPathError: If the journal directory cannot be read safely.
+    """
+    if type(allow_publication_temporary) is not bool:
+        raise TypeError("allow_publication_temporary must be a bool")
+    try:
+        anchor = open_parent_no_follow(
+            project_root,
+            ".research/presentations/transactions/.journal-anchor",
+            create_parents=False,
+        )
+    except MissingPathError:
+        return ()
+    try:
+        documents = read_regular_siblings(anchor)
+        _validate_sibling_modes(anchor, documents)
+        durable: list[str] = []
+        for name in sorted(documents):
+            if _JOURNAL.fullmatch(name) is not None:
+                durable.append(name)
+            elif not allow_publication_temporary:
+                raise ValueError(
+                    "transaction journal temporary requires locked recovery: "
+                    f"{name}"
+                )
+        return tuple(durable)
+    finally:
+        anchor.close()
+
+
 def encode_journal_document(
     transaction_id: str,
     paths: Sequence[Mapping[str, Any]],

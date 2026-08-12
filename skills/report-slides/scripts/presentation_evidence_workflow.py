@@ -85,15 +85,15 @@ def require_schema_v2(project_root: Path, *, check_recovery: bool = True) -> Non
             transaction before probing the schema.
 
     Raises:
-        MigrationRequiredError: If the observed state marker is zero or one.
-        ValueError: If state markers are malformed, mixed, or unsupported.
+        MigrationRequiredError: If any existing state header is not one exact
+            supported schema-two marker.
     """
     if not isinstance(project_root, Path):
         raise TypeError("project_root must be a pathlib.Path")
     if type(check_recovery) is not bool:
         raise TypeError("check_recovery must be a bool")
     if check_recovery:
-        require_transaction_recovery(project_root)
+        require_transaction_recovery(project_root, allow_publication_temporary=True)
     elif incomplete_transaction_journals(project_root):
         return
     versions: set[int] = set()
@@ -126,7 +126,7 @@ def require_schema_v2(project_root: Path, *, check_recovery: bool = True) -> Non
         raise MigrationRequiredError(version)
 
 
-def _state_version(content: bytes, relative_path: str) -> int | None:
+def _state_version(content: bytes, relative_path: str) -> int:
     """Parse one exact integer state marker from immutable YAML bytes.
 
     Args:
@@ -134,20 +134,25 @@ def _state_version(content: bytes, relative_path: str) -> int | None:
         relative_path: Canonical path used only for stable diagnostics.
 
     Returns:
-        Supported schema marker, or ``None`` for a non-state scalar left by a
-        recovered transaction exercise.
+        One exact integer schema marker from the state mapping.
+
+    Raises:
+        MigrationRequiredError: If the header is empty, malformed, nonmapping,
+            recursive, mixed, boolean, or otherwise not an exact integer.
     """
     try:
-        document = yaml.safe_load(content.decode("utf-8")) or {}
+        document = yaml.safe_load(content.decode("utf-8"))
     except (UnicodeError, yaml.YAMLError) as exc:
-        raise ValueError(f"invalid presentation state document {relative_path}") from exc
+        raise MigrationRequiredError("invalid") from exc
     if not isinstance(document, dict):
-        return None
+        raise MigrationRequiredError("invalid")
     has_version = "version" in document
     has_schema_version = "schema_version" in document
     if has_version and has_schema_version:
         raise MigrationRequiredError("mixed")
-    marker = document.get("version", document.get("schema_version", 0))
+    if not has_version and not has_schema_version:
+        raise MigrationRequiredError("invalid")
+    marker = document.get("version", document.get("schema_version"))
     if type(marker) is bool:
         raise MigrationRequiredError("bool")
     if type(marker) is not int:
