@@ -117,6 +117,42 @@ def test_workflow_lock_rejects_unsafe_sidecar_without_touching_outside_sentinel(
             temporary_directory.cleanup()
 
 
+def test_workflow_lock_closes_anchor_descriptor_when_sidecar_acquisition_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Close the retained anchor descriptor when sidecar acquisition raises.
+
+    Leaving the parent-directory descriptor open on every rejected sidecar
+    attempt would leak one file descriptor per rejected symlink, FIFO,
+    directory, or socket sidecar, and per real lock-contention timeout --
+    exactly the attack and contention scenarios this module guards against.
+    Repeated failures would exhaust the process descriptor table.
+
+    Args:
+        tmp_path: Per-test temporary project directory.
+        monkeypatch: Hook that forces sidecar acquisition to fail.
+    """
+    project_root = _legacy_project(tmp_path, 2)
+    import presentation_workflow_lock as workflow_lock_module
+
+    def always_fail(*args: Any, **kwargs: Any) -> int:
+        """Simulate every sidecar-acquisition failure path without opening one."""
+        raise TransactionError("synthetic sidecar acquisition failure")
+
+    monkeypatch.setattr(
+        workflow_lock_module, "_acquire_workflow_sidecar", always_fail
+    )
+
+    open_fd_count_before = len(os.listdir("/proc/self/fd"))
+    for _ in range(50):
+        with pytest.raises(TransactionError, match="synthetic sidecar"):
+            with _workflow_lock(project_root):
+                pass
+    open_fd_count_after = len(os.listdir("/proc/self/fd"))
+
+    assert open_fd_count_after == open_fd_count_before
+
+
 def test_workflow_lock_rejects_state_directory_rebind_before_workflow_write(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

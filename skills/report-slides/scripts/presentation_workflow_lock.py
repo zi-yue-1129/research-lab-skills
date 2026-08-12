@@ -59,9 +59,13 @@ def workflow_lock(project_root: Path) -> Iterator[None]:
     if not journal_pending:
         require_schema_v2(root)
     anchored = _workflow_anchor(root, create_parents=not journal_pending)
-    descriptor = _acquire_workflow_sidecar(
-        anchored, create=not journal_pending
-    )
+    try:
+        descriptor = _acquire_workflow_sidecar(
+            anchored, create=not journal_pending
+        )
+    except BaseException:
+        anchored.close()
+        raise
     try:
         _require_current_workflow_sidecar(root, anchored, descriptor)
         if journal_pending:
