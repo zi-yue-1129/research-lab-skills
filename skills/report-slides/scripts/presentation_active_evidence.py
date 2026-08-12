@@ -74,7 +74,7 @@ def project_active_evidence(
     """
     if not isinstance(snapshot, EvidenceSnapshot):
         raise TypeError("snapshot must be an EvidenceSnapshot")
-    envelopes = _merged_envelopes(snapshot, history)
+    envelopes = merged_envelopes(snapshot, history)
     objects = _cas_objects(snapshot, history)
     updates: dict[str, Mapping[str, str | None]] = {}
     blockers_by_deck: dict[str, tuple[Mapping[str, Any], ...]] = {}
@@ -120,10 +120,27 @@ def project_active_evidence(
     )
 
 
-def _merged_envelopes(
+def merged_envelopes(
     snapshot: EvidenceSnapshot, history: Any
 ) -> Mapping[str, Mapping[str, Any]]:
-    """Merge frozen persisted and historical envelopes without latest-wins."""
+    """Merge frozen persisted and historical envelopes without latest-wins.
+
+    An envelope is retained only when every source that declares its ID agrees
+    on the exact immutable content, so a disagreeing pair fails closed by
+    dropping the ID entirely rather than preferring either source.
+
+    Args:
+        snapshot: Frozen state whose evidence store may hold persisted
+            envelopes.
+        history: Historical projection exposing an ``envelopes`` mapping.
+
+    Returns:
+        Immutable validated envelopes keyed by evidence ID.
+
+    Raises:
+        TypeError: If the historical projection or evidence store is not a
+            mapping.
+    """
     historical = getattr(history, "envelopes", None)
     if not isinstance(historical, Mapping):
         raise TypeError("history must expose an envelopes mapping")
@@ -136,7 +153,7 @@ def _merged_envelopes(
             if not isinstance(evidence_id, str) or not isinstance(raw, Mapping):
                 continue
             try:
-                envelope = validate_envelope(raw)
+                envelope = validate_envelope(thaw_frozen(raw))
             except EvidenceContractError:
                 continue
             if envelope["id"] != evidence_id:
@@ -904,6 +921,26 @@ def _requires_current_validation(deck: Mapping[str, Any]) -> bool:
     if any(deck.get(field) is not None for field in pointer_fields):
         return True
     return deck.get("status") == "completed"
+
+
+def thaw_frozen(value: Any) -> Any:
+    """Return a mutable copy of one frozen snapshot value.
+
+    Snapshots freeze parsed documents, turning every JSON/YAML array into a
+    tuple.  The shared evidence contract deliberately requires exact ``list``
+    types, so frozen records must be thawed before they are validated.
+
+    Args:
+        value: Any frozen snapshot value.
+
+    Returns:
+        An equal value whose mappings are ``dict`` and sequences are ``list``.
+    """
+    if isinstance(value, Mapping):
+        return {key: thaw_frozen(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [thaw_frozen(item) for item in value]
+    return value
 
 
 def _mapping(value: object) -> Mapping[str, Any]:

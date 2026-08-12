@@ -59,6 +59,14 @@ class SnapshotError(MigrationError):
     """Raised when an immutable evidence snapshot cannot be built safely."""
 
 
+class EvidenceCasIntegrityError(SnapshotError):
+    """Raised when persisted evidence CAS bytes do not match their digest.
+
+    Gates translate this exact failure into a dedicated structured blocker so
+    an offline tamper is never reported as a generic unavailable snapshot.
+    """
+
+
 @dataclass(frozen=True)
 class PlanPreimage:
     """One no-follow immutable preimage for a current approved plan.
@@ -700,7 +708,9 @@ def _capture_persisted_cas_objects(
                     continue
                 raise SnapshotError(f"cannot snapshot evidence CAS object: {exc}") from exc
             if object_.digest != digest:
-                raise SnapshotError("persisted evidence CAS object digest mismatch")
+                raise EvidenceCasIntegrityError(
+                    "persisted evidence CAS object digest mismatch"
+                )
             objects[cas_path] = object_
     return objects
 

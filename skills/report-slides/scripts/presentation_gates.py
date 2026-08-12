@@ -9,15 +9,17 @@ atomic state transition.  A predicate never infers missing evidence.
 from __future__ import annotations
 
 import hashlib
-import json
 import re
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, NoReturn
 
 from presentation_contracts import contract_sha256, load_contract
 from presentation_events import effective_review_results, load_artifacts, load_events, load_plans, load_review_results
+from presentation_evidence_gates import (
+    final_visual_review_blockers,
+    resolve_current_evidence,
+)
 from validate_deck_plan import validate_deck_approval, validate_deck_plan
-from validate_visual_review import derive_overall_status, validate_review_record
 from validate_visual_module import validate_complex_visual_spec, validate_worker_assignment
 
 _APPROVED_STATUSES = frozenset(
@@ -79,8 +81,18 @@ def _state() -> Any:
     return presentation_state
 
 
-def _fail(error_type: type[GateError], predicate: str, deck_id: str, blockers: list[dict[str, Any]]) -> None:
-    """Raise one gate exception with a deterministic blocker message."""
+def fail_gate(error_type: type[GateError], predicate: str, deck_id: str, blockers: list[dict[str, Any]]) -> NoReturn:
+    """Raise one gate exception with a deterministic blocker message.
+
+    Args:
+        error_type: Typed gate exception to raise.
+        predicate: Stable predicate name reported by the structured CLI error.
+        deck_id: Deck the predicate was evaluated for.
+        blockers: Machine-readable failure evidence.
+
+    Raises:
+        GateError: Always, using ``error_type``.
+    """
     summary = "; ".join(f"{blocker.get('reason', blocker)}{': ' + str(blocker['message']) if isinstance(blocker, dict) and blocker.get('message') else ''}" for blocker in blockers)
     raise error_type(
         predicate,
@@ -183,14 +195,14 @@ def assert_plan_reviewable(project_root: Path, deck_id: str) -> dict[str, Any]:
     try:
         deck = _deck(project_root, deck_id)
     except Exception as exc:  # noqa: BLE001 - gated not-found becomes structured evidence
-        _fail(PlanGateError, "plan_reviewable", deck_id, [{"reason": "unknown_deck", "message": str(exc)}])
+        fail_gate(PlanGateError, "plan_reviewable", deck_id, [{"reason": "unknown_deck", "message": str(exc)}])
     _, document, blockers = _plan_blockers(project_root, deck)
     if deck.get("status") not in {"planning", "content_review", "awaiting_approval"}:
         blockers.append({"reason": f"status:{deck.get('status')}"})
     if deck.get("plan_revision_required"):
         blockers.append({"reason": "replacement_plan_required", "next_action": "register_plan"})
     if blockers:
-        _fail(PlanGateError, "plan_reviewable", deck_id, blockers)
+        fail_gate(PlanGateError, "plan_reviewable", deck_id, blockers)
     record, _, _ = _plan_blockers(project_root, deck)
     return {"deck": deck, "plan": document, "plan_record": record}
 
@@ -214,12 +226,12 @@ def assert_plan_approvable(project_root: Path, approval: dict[str, Any]) -> dict
     blockers: list[dict[str, Any]] = []
     if not isinstance(approval, dict):
         blockers.append({"reason": "approval must be a mapping"})
-        _fail(ApprovalGateError, "plan_approvable", deck_id, blockers)
+        fail_gate(ApprovalGateError, "plan_approvable", deck_id, blockers)
     blockers.extend({"reason": error} for error in validate_deck_approval(approval))
     try:
         deck = _deck(project_root, deck_id)
     except Exception as exc:  # noqa: BLE001 - gated not-found becomes structured evidence
-        _fail(ApprovalGateError, "plan_approvable", deck_id, [{"reason": "unknown_deck", "message": str(exc)}])
+        fail_gate(ApprovalGateError, "plan_approvable", deck_id, [{"reason": "unknown_deck", "message": str(exc)}])
     record, plan, plan_blockers = _plan_blockers(project_root, deck)
     blockers.extend(plan_blockers)
     if plan is not None and record is not None:
@@ -283,7 +295,7 @@ def assert_plan_approvable(project_root: Path, approval: dict[str, Any]) -> dict
     if approval.get("decision") != "approve":
         blockers.append({"reason": "decision must be approve"})
     if blockers:
-        _fail(ApprovalGateError, "plan_approvable", deck_id, blockers)
+        fail_gate(ApprovalGateError, "plan_approvable", deck_id, blockers)
     return {"deck": deck, "approval": approval, "plan_record": record, "plan": plan}
 
 
@@ -303,7 +315,7 @@ def assert_production_allowed(project_root: Path, deck_id: str) -> dict[str, Any
     try:
         deck = _deck(project_root, deck_id)
     except Exception as exc:  # noqa: BLE001 - gated not-found becomes structured evidence
-        _fail(ProductionGateError, "production_allowed", deck_id, [{"reason": "unknown_deck", "message": str(exc)}])
+        fail_gate(ProductionGateError, "production_allowed", deck_id, [{"reason": "unknown_deck", "message": str(exc)}])
     blockers: list[dict[str, Any]] = []
     if deck.get("status") not in _APPROVED_STATUSES:
         blockers.append({"reason": f"status:{deck.get('status')}"})
@@ -316,7 +328,7 @@ def assert_production_allowed(project_root: Path, deck_id: str) -> dict[str, Any
     if plan is not None and deck.get("approved_plan_sha256") != contract_sha256(plan):
         blockers.append({"reason": "approved_plan_digest_stale"})
     if blockers:
-        _fail(ProductionGateError, "production_allowed", deck_id, blockers)
+        fail_gate(ProductionGateError, "production_allowed", deck_id, blockers)
     return deck
 
 
@@ -352,12 +364,12 @@ def assert_module_assignable(project_root: Path, module_id: str, assignment: dic
     try:
         module, slide, deck_id = _module_context(project_root, module_id)
     except Exception as exc:  # noqa: BLE001 - gated not-found becomes structured evidence
-        _fail(AssignmentGateError, "module_assignable", "<unknown>", [{"reason": "unknown_module", "message": str(exc)}])
+        fail_gate(AssignmentGateError, "module_assignable", "<unknown>", [{"reason": "unknown_module", "message": str(exc)}])
     blockers: list[dict[str, Any]] = []
     try:
         deck = assert_production_allowed(project_root, deck_id)
     except ProductionGateError as exc:
-        _fail(AssignmentGateError, "module_assignable", deck_id, exc.blockers)
+        fail_gate(AssignmentGateError, "module_assignable", deck_id, exc.blockers)
     if not isinstance(assignment, dict):
         blockers.append({"reason": "assignment must be a mapping"})
     else:
@@ -425,7 +437,7 @@ def assert_module_assignable(project_root: Path, module_id: str, assignment: dic
             except (OSError, ValueError) as exc:
                 blockers.append({"reason": "invalid_visual_spec", "message": str(exc)})
     if blockers:
-        _fail(AssignmentGateError, "module_assignable", deck_id, blockers)
+        fail_gate(AssignmentGateError, "module_assignable", deck_id, blockers)
     return {"deck": deck, "slide": slide, "module": module, "assignment": assignment}
 
 
@@ -446,11 +458,11 @@ def assert_module_publishable(project_root: Path, module_id: str, artifact: dict
     try:
         module, slide, deck_id = _module_context(project_root, module_id)
     except Exception as exc:  # noqa: BLE001 - gated not-found becomes structured evidence
-        _fail(PublicationGateError, "module_publishable", "<unknown>", [{"reason": "unknown_module", "message": str(exc)}])
+        fail_gate(PublicationGateError, "module_publishable", "<unknown>", [{"reason": "unknown_module", "message": str(exc)}])
     try:
         deck = assert_production_allowed(project_root, deck_id)
     except ProductionGateError as exc:
-        _fail(PublicationGateError, "module_publishable", deck_id, exc.blockers)
+        fail_gate(PublicationGateError, "module_publishable", deck_id, exc.blockers)
     blockers: list[dict[str, Any]] = []
     assignment_records = _state().load_assignments(project_root)
     current_path = module.get("assignment_path")
@@ -497,7 +509,7 @@ def assert_module_publishable(project_root: Path, module_id: str, artifact: dict
                     if actual_digest != artifact.get("sha256"):
                         blockers.append({"reason": "artifact_digest_mismatch", "expected": artifact.get("sha256"), "actual": actual_digest})
     if blockers:
-        _fail(PublicationGateError, "module_publishable", deck_id, blockers)
+        fail_gate(PublicationGateError, "module_publishable", deck_id, blockers)
     return {"deck": deck, "slide": slide, "module": module, "assignment": assignment, "artifact": artifact}
 
 _FINDING_KINDS = frozenset({"clipping", "overlap", "text-reflow", "connector-drift", "crop", "unreadably-small-text", "missing-image", "z-order", "alignment", "other", "unsupported-claim", "duplicated-content", "missing-limitation", "excessive-background", "unnecessary-visual", "weak-continuity"})
@@ -599,7 +611,7 @@ def assert_slide_passable(project_root: Path, slide_id: str) -> dict[str, Any]:
     state = _state()
     slides = state.load_slides(project_root)
     if slide_id not in slides:
-        _fail(ReviewGateError, "slide_passable", "<unknown>", [{"reason": "unknown_slide", "slide_id": slide_id}])
+        fail_gate(ReviewGateError, "slide_passable", "<unknown>", [{"reason": "unknown_slide", "slide_id": slide_id}])
     slide = slides[slide_id]
     deck_id = str(slide.get("deck_id"))
     _deck(project_root, deck_id)
@@ -620,14 +632,14 @@ def assert_slide_passable(project_root: Path, slide_id: str) -> dict[str, Any]:
     if slide.get("status") not in {"review_required", "passed"}:
         blockers.append({"reason": f"status:{slide.get('status')}"})
     if blockers:
-        _fail(ReviewGateError, "slide_passable", deck_id, blockers)
+        fail_gate(ReviewGateError, "slide_passable", deck_id, blockers)
     return {"slide": slide, "reviews": reviews}
 def assert_module_passable(project_root: Path, module_id: str) -> dict[str, Any]:
     """Assert independent scientific and visual-quality module reviews pass."""
     modules = _state().load_visual_modules(project_root)
     module = modules.get(module_id)
     if module is None:
-        _fail(ReviewGateError, "module_passable", "<unknown>", [{"reason": "unknown_module", "module_id": module_id}])
+        fail_gate(ReviewGateError, "module_passable", "<unknown>", [{"reason": "unknown_module", "module_id": module_id}])
     slides = _state().load_slides(project_root)
     deck_id = str(slides.get(module.get("slide_id"), {}).get("deck_id"))
     _deck(project_root, deck_id)
@@ -641,7 +653,7 @@ def assert_module_passable(project_root: Path, module_id: str) -> dict[str, Any]
     if module.get("status") not in {"review_required", "passed"}:
         blockers.append({"reason": f"status:{module.get('status')}"})
     if blockers:
-        _fail(ReviewGateError, "module_passable", deck_id, blockers)
+        fail_gate(ReviewGateError, "module_passable", deck_id, blockers)
     return {"module": module, "reviews": reviews}
 def assert_draft_reviewable(project_root: Path, deck_id: str, preview: dict[str, Any]) -> dict[str, Any]:
     """Assert a complete rendered slide set is available for draft review.
@@ -660,7 +672,7 @@ def assert_draft_reviewable(project_root: Path, deck_id: str, preview: dict[str,
     try:
         deck = _deck(project_root, deck_id)
     except Exception as exc:  # noqa: BLE001 - gated not-found becomes structured evidence
-        _fail(DraftGateError, "draft_reviewable", deck_id, [{"reason": "unknown_deck", "message": str(exc)}])
+        fail_gate(DraftGateError, "draft_reviewable", deck_id, [{"reason": "unknown_deck", "message": str(exc)}])
     blockers: list[dict[str, Any]] = []
     try:
         assert_production_allowed(project_root, deck_id)
@@ -670,7 +682,7 @@ def assert_draft_reviewable(project_root: Path, deck_id: str, preview: dict[str,
         blockers.append({"reason": f"status:{deck.get('status')}"})
     if not isinstance(preview, dict):
         blockers.append({"reason": "preview must be a mapping"})
-        _fail(DraftGateError, "draft_reviewable", deck_id, blockers)
+        fail_gate(DraftGateError, "draft_reviewable", deck_id, blockers)
     if preview.get("deck_id") != deck_id:
         blockers.append({"reason": "deck_id_mismatch"})
     rendered = preview.get("rendered_slide_paths")
@@ -739,7 +751,7 @@ def assert_draft_reviewable(project_root: Path, deck_id: str, preview: dict[str,
             if not isinstance(digest, str) or _SHA256.fullmatch(digest) is None:
                 blockers.append({"reason": "invalid_preview_artifact_digest", "path": artifact_path})
     if blockers:
-        _fail(DraftGateError, "draft_reviewable", deck_id, blockers)
+        fail_gate(DraftGateError, "draft_reviewable", deck_id, blockers)
     return {
         "deck": deck,
         "preview": preview,
@@ -749,179 +761,6 @@ def assert_draft_reviewable(project_root: Path, deck_id: str, preview: dict[str,
         ],
     }
 
-
-def _current_records(records: Mapping[str, Any], deck_id: str) -> list[dict[str, Any]]:
-    """Return only non-superseded records belonging to one deck."""
-    return [
-        dict(record)
-        for record in records.values()
-        if isinstance(record, Mapping)
-        and record.get("deck_id") == deck_id
-        and record.get("status") != "superseded"
-    ]
-
-
-def _verify_artifact_digests(
-    project_root: Path, digests: Any, blockers: list[dict[str, Any]], reason_prefix: str
-) -> None:
-    """Verify caller-declared artifact digests against bytes on disk."""
-    if digests is None:
-        return
-    if not isinstance(digests, Mapping):
-        blockers.append({"reason": f"{reason_prefix}_digests_must_be_mapping"})
-        return
-    for raw_path, digest in digests.items():
-        if not isinstance(raw_path, str) or Path(raw_path).is_absolute() or ".." in Path(raw_path).parts:
-            blockers.append({"reason": f"{reason_prefix}_digest_path_invalid", "path": raw_path})
-            continue
-        if not isinstance(digest, str) or _SHA256.fullmatch(digest) is None:
-            blockers.append({"reason": f"{reason_prefix}_digest_invalid", "path": raw_path})
-            continue
-        path = project_root / raw_path
-        if not path.is_file():
-            blockers.append({"reason": f"{reason_prefix}_digest_file_missing", "path": raw_path})
-            continue
-        actual = hashlib.sha256(path.read_bytes()).hexdigest()
-        if actual != digest:
-            blockers.append({"reason": f"{reason_prefix}_digest_mismatch", "path": raw_path, "actual": actual})
-
-
-def _png_paths(value: Any) -> set[str]:
-    """Collect every PNG path named by a visual-review document."""
-    if isinstance(value, str):
-        return {value} if value.lower().endswith(".png") else set()
-    if isinstance(value, Mapping):
-        paths: set[str] = set()
-        for child in value.values():
-            paths.update(_png_paths(child))
-        return paths
-    if isinstance(value, list):
-        paths: set[str] = set()
-        for child in value:
-            paths.update(_png_paths(child))
-        return paths
-    return set()
-
-
-def _verify_persisted_png_records(
-    project_root: Path, deck_id: str, document: Mapping[str, Any], blockers: list[dict[str, Any]]
-) -> None:
-    """Require one persisted, byte-matching artifact record per named PNG."""
-    try:
-        records = load_artifacts(project_root)
-    except Exception as exc:  # noqa: BLE001 - malformed stores are gate blockers
-        blockers.append({"reason": "persisted_artifact_store_invalid", "message": str(exc)})
-        return
-    for raw_path in sorted(_png_paths(document)):
-        path = Path(raw_path)
-        if path.is_absolute() or ".." in path.parts:
-            blockers.append({"reason": "inspected_png_path_invalid", "path": raw_path})
-            continue
-        matches = [
-            record for record in records.values()
-            if record.get("deck_id") == deck_id
-            and record.get("path", record.get("relative_path")) == raw_path
-        ]
-        if not matches:
-            blockers.append({"reason": "missing_persisted_artifact", "path": raw_path})
-            continue
-        if len(matches) != 1:
-            blockers.append({"reason": "ambiguous_persisted_artifact", "path": raw_path})
-            continue
-        record = matches[0]
-        digest = record.get("sha256")
-        resolved = project_root / path
-        if not resolved.is_file():
-            blockers.append({"reason": "missing_persisted_artifact_file", "path": raw_path})
-        elif not isinstance(digest, str) or _SHA256.fullmatch(digest) is None:
-            blockers.append({"reason": "invalid_persisted_artifact_digest", "path": raw_path})
-        elif hashlib.sha256(resolved.read_bytes()).hexdigest() != digest:
-            blockers.append({"reason": "persisted_artifact_digest_mismatch", "path": raw_path})
-
-
-def _final_visual_review(
-    project_root: Path, deck_id: str, completion: Mapping[str, Any], blockers: list[dict[str, Any]]
-) -> dict[str, Any] | None:
-    """Validate the persisted visual-review JSON and all named final artifacts."""
-    raw_path = completion.get("visual_review_path", completion.get("review_record_path"))
-    if not isinstance(raw_path, str) or not raw_path:
-        blockers.append({"reason": "visual_review_path_required"})
-        return None
-    review_path = Path(raw_path)
-    if review_path.is_absolute():
-        resolved = review_path.resolve()
-        try:
-            resolved.relative_to(project_root.resolve())
-        except ValueError:
-            blockers.append({"reason": "visual_review_path_outside_project"})
-            return None
-    else:
-        if ".." in review_path.parts:
-            blockers.append({"reason": "visual_review_path_invalid"})
-            return None
-        resolved = (project_root / review_path).resolve()
-    if not resolved.is_file():
-        blockers.append({"reason": "missing_visual_review_record", "path": raw_path})
-        return None
-    artifact_root_raw = completion.get("artifact_root")
-    artifact_root = project_root
-    if isinstance(artifact_root_raw, str) and artifact_root_raw:
-        candidate = Path(artifact_root_raw)
-        if candidate.is_absolute():
-            artifact_root = candidate.resolve()
-        elif ".." in candidate.parts:
-            blockers.append({"reason": "artifact_root_invalid"})
-        else:
-            artifact_root = (project_root / candidate).resolve()
-    try:
-        issues = validate_review_record(resolved, artifact_root)
-        document = json.loads(resolved.read_text(encoding="utf-8"))
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
-        blockers.append({"reason": "invalid_visual_review_record", "message": str(exc)})
-        return None
-    blockers.extend({"reason": f"visual_review:{issue.path}:{issue.message}"} for issue in issues)
-    if not isinstance(document, Mapping):
-        blockers.append({"reason": "visual_review_root_not_mapping"})
-        return None
-    if document.get("deck_id") != deck_id:
-        blockers.append({"reason": "visual_review_deck_id_mismatch"})
-    if document.get("output_format") != "pptx":
-        blockers.append({"reason": "output_format_pptx_required"})
-    _verify_persisted_png_records(project_root, deck_id, document, blockers)
-    try:
-        derived = derive_overall_status(document)
-        if derived.status != "passed" or not derived.completion_allowed:
-            blockers.append({"reason": "visual_review_not_passing"})
-    except ValueError as exc:
-        blockers.append({"reason": "visual_review_overall_invalid", "message": str(exc)})
-    artifacts = document.get("artifacts", {})
-    digest_map = completion.get("artifact_digests", document.get("artifact_digests"))
-    if not isinstance(digest_map, Mapping):
-        blockers.append({"reason": "final_artifact_digests_required"})
-    elif isinstance(document, Mapping):
-        for png_path in sorted(_png_paths(document)):
-            if png_path not in digest_map:
-                blockers.append({"reason": "final_png_digest_required", "path": png_path})
-    if isinstance(artifacts, Mapping):
-        pptx_path = artifacts.get("pptx")
-        if not isinstance(pptx_path, str) or not pptx_path:
-            blockers.append({"reason": "final_pptx_artifact_required"})
-        else:
-            pptx_resolved = artifact_root / pptx_path
-            if not pptx_resolved.is_file():
-                blockers.append({"reason": "missing_final_pptx", "path": pptx_path})
-            elif not isinstance(digest_map, Mapping) or pptx_path not in digest_map:
-                blockers.append({"reason": "final_pptx_digest_required", "path": pptx_path})
-        declared_review = artifacts.get("review_record")
-        if isinstance(declared_review, str) and (artifact_root / declared_review).resolve() != resolved:
-            blockers.append({"reason": "visual_review_record_binding_mismatch"})
-    _verify_artifact_digests(
-        project_root,
-        digest_map,
-        blockers,
-        "completion_artifact",
-    )
-    return dict(document)
 
 
 def assert_deck_completable(project_root: Path, deck_id: str, completion: dict[str, Any]) -> dict[str, Any]:
@@ -944,7 +783,7 @@ def assert_deck_completable(project_root: Path, deck_id: str, completion: dict[s
     try:
         deck = _deck(project_root, deck_id)
     except Exception as exc:  # noqa: BLE001 - gated not-found becomes structured evidence
-        _fail(CompletionGateError, "deck_completable", deck_id, [{"reason": "unknown_deck", "message": str(exc)}])
+        fail_gate(CompletionGateError, "deck_completable", deck_id, [{"reason": "unknown_deck", "message": str(exc)}])
     blockers: list[dict[str, Any]] = []
     try:
         assert_production_allowed(project_root, deck_id)
@@ -954,7 +793,13 @@ def assert_deck_completable(project_root: Path, deck_id: str, completion: dict[s
         blockers.append({"reason": f"status:{deck.get('status')}"})
     if not isinstance(completion, dict):
         blockers.append({"reason": "completion must be a mapping"})
-    slides = _current_records(_state().load_slides(project_root), deck_id)
+    slides = [
+        dict(record)
+        for record in _state().load_slides(project_root).values()
+        if isinstance(record, Mapping)
+        and record.get("deck_id") == deck_id
+        and record.get("status") != "superseded"
+    ]
     slide_ids = {slide.get("id") for slide in slides}
     modules = [
         dict(module)
@@ -977,23 +822,15 @@ def assert_deck_completable(project_root: Path, deck_id: str, completion: dict[s
             assert_module_passable(project_root, str(module.get("id")))
         except ReviewGateError as exc:
             blockers.extend({"reason": f"module:{module.get('id')}:{item.get('reason', item)}"} for item in exc.blockers)
-    previews = [event for event in load_events(project_root, "draft_preview") if event.get("deck_id") == deck_id]
-    decisions = [event for event in load_events(project_root, "draft_decision") if event.get("deck_id") == deck_id]
-    current_preview = next((event for event in previews if event.get("id") == deck.get("draft_preview_id")), None)
-    if current_preview is None:
-        blockers.append({"reason": "missing_draft_preview"})
-    current_decision = next((event for event in decisions if event.get("id") == deck.get("draft_approval_id")), None)
-    if current_decision is None:
-        blockers.append({"reason": "missing_draft_approval"})
-    if current_preview is not None and current_decision is not None:
-        preview_digest = current_preview.get("preview_sha256")
-        if current_decision.get("decision") != "approve":
-            blockers.append({"reason": "draft_decision_not_approve"})
-        if current_decision.get("preview_id") != current_preview.get("id"):
-            blockers.append({"reason": "draft_decision_preview_id_mismatch"})
-        if current_decision.get("preview_sha256") != preview_digest:
-            blockers.append({"reason": "draft_decision_preview_digest_mismatch"})
-    visual_review = _final_visual_review(project_root, deck_id, completion, blockers) if isinstance(completion, Mapping) else None
+    current = resolve_current_evidence(
+        project_root, deck_id, ("draft_preview", "draft_approval")
+    )
+    blockers.extend(dict(blocker) for blocker in current.blockers)
+    visual_review = (
+        final_visual_review_blockers(project_root, deck_id, completion, blockers)
+        if isinstance(completion, Mapping)
+        else None
+    )
     if blockers:
-        _fail(CompletionGateError, "deck_completable", deck_id, blockers)
+        fail_gate(CompletionGateError, "deck_completable", deck_id, blockers)
     return {"deck": deck, "completion": completion, "slides": slides, "modules": modules, "visual_review": visual_review}

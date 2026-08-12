@@ -9,7 +9,6 @@ sharing one strict interpretation of rendered-slide and contact-sheet paths.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import sys
@@ -21,6 +20,7 @@ import yaml
 from presentation_contracts import contract_sha256, load_contract
 from presentation_artifact_provenance import canonical_source_digest, mapping_key_blockers
 from presentation_events import load_artifacts, load_plans
+from presentation_evidence_cas import CasError, read_verified_source
 from presentation_gates import DraftGateError, assert_draft_reviewable
 from presentation_state import load_slides
 from validate_deck_plan import validate_deck_plan
@@ -454,11 +454,17 @@ def _artifact_digest_map(
             blockers.append({"reason": "missing_artifact_digest", "paths": sorted(missing)})
     actual: dict[str, str] = {}
     for relative in sorted(expected):
-        path = project_root / relative
-        if not path.is_file():
-            blockers.append({"reason": "missing_rendered_artifact", "path": relative})
+        try:
+            digest = read_verified_source(project_root, relative).digest
+        except CasError as exc:
+            message = str(exc)
+            reason = (
+                "missing_rendered_artifact"
+                if message.startswith("missing source artifact:")
+                else "unreadable_rendered_artifact"
+            )
+            blockers.append({"reason": reason, "path": relative, "message": message})
             continue
-        digest = hashlib.sha256(path.read_bytes()).hexdigest()
         actual[relative] = digest
         supplied_digest = supplied.get(relative)
         if strict and not _is_sha256(supplied_digest):
