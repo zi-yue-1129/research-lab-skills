@@ -17,7 +17,7 @@ from migration_scope import MigrationError, canonical_relative_path
 from presentation_contracts import contract_sha256
 from presentation_evidence_cas import CasObject
 from presentation_evidence_contracts import EvidenceContractError, validate_envelope
-from presentation_evidence_snapshot import EvidenceSnapshot, parse_yaml_document
+from presentation_evidence_snapshot import EvidenceSnapshot, parse_yaml_document, thaw
 from validate_deck_plan import validate_deck_approval
 from validate_visual_review import derive_overall_status, validate_review_document
 
@@ -153,7 +153,7 @@ def merged_envelopes(
             if not isinstance(evidence_id, str) or not isinstance(raw, Mapping):
                 continue
             try:
-                envelope = validate_envelope(thaw_frozen(raw))
+                envelope = validate_envelope(thaw(raw))
             except EvidenceContractError:
                 continue
             if envelope["id"] != evidence_id:
@@ -921,26 +921,6 @@ def _requires_current_validation(deck: Mapping[str, Any]) -> bool:
     if any(deck.get(field) is not None for field in pointer_fields):
         return True
     return deck.get("status") == "completed"
-
-
-def thaw_frozen(value: Any) -> Any:
-    """Return a mutable copy of one frozen snapshot value.
-
-    Snapshots freeze parsed documents, turning every JSON/YAML array into a
-    tuple.  The shared evidence contract deliberately requires exact ``list``
-    types, so frozen records must be thawed before they are validated.
-
-    Args:
-        value: Any frozen snapshot value.
-
-    Returns:
-        An equal value whose mappings are ``dict`` and sequences are ``list``.
-    """
-    if isinstance(value, Mapping):
-        return {key: thaw_frozen(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [thaw_frozen(item) for item in value]
-    return value
 
 
 def _mapping(value: object) -> Mapping[str, Any]:

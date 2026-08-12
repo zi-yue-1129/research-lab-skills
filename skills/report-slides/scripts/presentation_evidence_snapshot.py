@@ -747,6 +747,51 @@ def _declared_artifact_paths(event: Mapping[str, Any]) -> tuple[str, ...]:
     return tuple(paths)
 
 
+def freeze(value: Any) -> Any:
+    """Return a deeply immutable copy of one parsed value.
+
+    Every ``EvidenceSnapshot`` must be built through this, whatever its origin,
+    so that consumers never see different nested container types depending on
+    how the snapshot was constructed.
+
+    Args:
+        value: Parsed YAML/JSON value to make immutable.
+
+    Returns:
+        An immutable copy: mappings become ``MappingProxyType``, sequences
+        become ``tuple``, and sets become ``frozenset``.
+
+    Raises:
+        SnapshotError: If a container aliases itself through the active
+            recursive path.
+    """
+    return _freeze(value)
+
+
+def thaw(value: Any) -> Any:
+    """Return a deeply mutable copy of one frozen snapshot value.
+
+    This is the inverse of :func:`freeze` and the single shared implementation
+    for the whole evidence stack. Snapshots freeze every sequence into a tuple
+    while the evidence contract requires exact ``list`` types, so any frozen
+    record must be thawed before it is validated.
+
+    Args:
+        value: Any frozen (or already mutable) snapshot value.
+
+    Returns:
+        An equal value whose mappings are ``dict``, sequences are ``list``, and
+        sets are ``set``.
+    """
+    if isinstance(value, Mapping):
+        return {key: thaw(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [thaw(item) for item in value]
+    if isinstance(value, (set, frozenset)):
+        return {thaw(item) for item in value}
+    return value
+
+
 def _freeze(value: Any, active_ids: set[int] | None = None) -> Any:
     """Freeze parsed values while rejecting only active YAML alias cycles.
 

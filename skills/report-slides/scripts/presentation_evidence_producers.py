@@ -29,6 +29,7 @@ from presentation_evidence_projection import (
 )
 from presentation_evidence_snapshot import build_snapshot
 from presentation_events import load_events
+from presentation_evidence_gates import assert_draft_approvable
 from presentation_gates import assert_deck_completable
 from presentation_evidence_workflow import (
     _candidate_snapshot,
@@ -200,7 +201,7 @@ def approve_draft_v2(
             )
         checked = validate_draft_preview(project_root, deck_id, preview)
         blockers, approval_mode, approved_by = _draft_approval_blockers(
-            workflow, decision, deck, preview, yes_draft
+            workflow, decision, preview, yes_draft
         )
         if blockers:
             summary = "; ".join(str(item.get("reason", item)) for item in blockers)
@@ -210,6 +211,11 @@ def approve_draft_v2(
                 blockers,
                 f"draft_approvable blocked for deck {deck_id}: {summary}",
             )
+        # Authorize from the current evidence pointer and its verified CAS
+        # bytes before any event is constructed. Without this the producer
+        # would happily bind an approval to a preview whose artifacts no
+        # longer exist, leaving a deck the completion gate can never accept.
+        assert_draft_approvable(project_root, deck_id, decision)
         plan_id = deck.get("current_plan_id")
         plan_version = deck.get("approved_plan_version")
         plan_sha256 = deck.get("approved_plan_sha256")
@@ -624,14 +630,25 @@ def _validate_draft_decision(
 def _draft_approval_blockers(
     workflow: Any,
     decision: Mapping[str, Any],
-    deck: Mapping[str, Any],
     preview: Mapping[str, Any],
     yes_draft: bool,
 ) -> tuple[list[dict[str, Any]], str, str]:
-    """Validate the decision's current preview and explicit identity binding."""
+    """Validate decision shape, digest binding, and explicit approver identity.
+
+    Pointer currency is deliberately not checked here: ``assert_draft_approvable``
+    authorizes it against ``draft_preview_evidence_id``, so comparing the legacy
+    ``draft_preview_id`` would be a redundant second authorization path.
+
+    Args:
+        workflow: Lazily imported workflow module, retained for call symmetry.
+        decision: Parsed Draft Decision contract mapping.
+        preview: Immutable preview source event selected by the current pointer.
+        yes_draft: Explicit non-interactive approval authorization.
+
+    Returns:
+        Structured blockers, the resolved approval mode, and the approver.
+    """
     blockers: list[dict[str, Any]] = []
-    if decision.get("preview_id") != deck.get("draft_preview_id"):
-        blockers.append({"reason": "preview_id_not_current"})
     if decision.get("preview_sha256") != preview.get("preview_sha256"):
         blockers.append({"reason": "preview_digest_mismatch"})
     if decision.get("decision") != "approve":

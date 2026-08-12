@@ -9,7 +9,7 @@ from pathlib import Path
 import subprocess
 import sys
 import threading
-from typing import Any
+from typing import Any, Mapping
 
 import pytest
 import yaml
@@ -634,3 +634,77 @@ def test_targeted_revision_clears_all_current_pointers_but_preserves_history(
         )
     )
     assert evidence_store_path(project_root).read_bytes() == history_before
+
+
+def _container_shapes(value: Any, trail: str = "") -> dict[str, str]:
+    """Map every nested location to its container type name.
+
+    Args:
+        value: Frozen snapshot value to describe.
+        trail: Accumulated location label for the current node.
+
+    Returns:
+        Location-keyed container type names for mappings and sequences.
+    """
+    shapes = {trail: type(value).__name__}
+    if isinstance(value, Mapping):
+        for key in sorted(value, key=str):
+            shapes.update(_container_shapes(value[key], f"{trail}.{key}"))
+    elif isinstance(value, (list, tuple)):
+        for index, item in enumerate(value):
+            shapes.update(_container_shapes(item, f"{trail}[{index}]"))
+    return shapes
+
+
+def test_every_snapshot_origin_produces_identical_container_types(
+    tmp_path: Path,
+) -> None:
+    """A derived snapshot must be shape-identical to a captured one.
+
+    ``_candidate_snapshot`` used to wrap records shallowly, leaving nested
+    lists as ``list`` while ``build_snapshot`` froze them to ``tuple``. Code
+    could then validate cleanly against a candidate and still fail against
+    real state -- the root cause behind both frozen-tuple defects in this task.
+
+    Args:
+        tmp_path: Per-test temporary directory.
+    """
+    from presentation_evidence_snapshot import build_snapshot, freeze, thaw
+    from presentation_evidence_workflow import _candidate_snapshot
+    from presentation_migration_v2 import _snapshot_with_stores
+    from test_presentation_workflow import _complete_fixture
+
+    project_root, _, _, _, _, _ = _complete_fixture(tmp_path)
+    captured = build_snapshot(project_root)
+    expected = _container_shapes(captured.stores["evidence"])
+    assert "tuple" in set(expected.values())
+
+    candidate = _candidate_snapshot(captured)
+    derived = _snapshot_with_stores(captured, thaw(captured.stores))
+
+    assert _container_shapes(candidate.stores["evidence"]) == expected
+    assert _container_shapes(derived.stores["evidence"]) == expected
+    assert _container_shapes(freeze(thaw(captured.stores["evidence"]))) == expected
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"a": [1, {"b": (2, 3)}]},
+        [{"c": {"d"}}],
+        {"e": frozenset({"f"})},
+        "scalar",
+    ],
+)
+def test_shared_thaw_inverts_shared_freeze(value: Any) -> None:
+    """freeze/thaw round-trips to mutable containers of equal content.
+
+    Args:
+        value: Parsed-shaped value to round-trip.
+    """
+    from presentation_evidence_snapshot import freeze, thaw
+
+    round_tripped = thaw(freeze(value))
+
+    assert round_tripped == thaw(value)
+    assert _container_shapes(freeze(round_tripped)) == _container_shapes(freeze(value))

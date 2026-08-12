@@ -30,6 +30,8 @@ from presentation_evidence_snapshot import (
     build_snapshot,
 )
 from presentation_gates import CompletionGateError, DraftGateError, assert_deck_completable
+from presentation_workflow import approve_draft
+from test_presentation_evidence_workflow import _approval_ready_project
 from test_presentation_workflow import _complete_fixture
 
 
@@ -459,6 +461,47 @@ def test_draft_approvable_rejects_an_inconsistent_decision(
         assert_draft_approvable(project, deck_id, decision)
 
     assert reason in _reasons(error.value.blockers)
+
+
+def test_approve_draft_producer_enforces_the_same_gate_as_assert_draft_approvable(
+    tmp_path: Path,
+) -> None:
+    """The producer must reject what the gate rejects, not diverge from it.
+
+    Before this was wired up, deleting a CAS object backing the current preview
+    left the gate raising ``evidence_cas_object_missing`` while
+    ``approve_draft`` cheerfully wrote a ``draft_approval`` envelope and moved
+    the deck to ``validating`` -- a dead-end the completion gate could never
+    accept.
+    """
+    project, deck_id, decision_path = _approval_ready_project(tmp_path)
+    decision = yaml.safe_load(decision_path.read_text(encoding="utf-8"))
+    pointer = _deck(project, deck_id)["draft_preview_evidence_id"]
+    reference = _evidence(project)[pointer]["artifact_refs"][0]
+    (project / reference["cas_path"]).unlink()
+
+    with pytest.raises(DraftGateError) as gate_error:
+        assert_draft_approvable(project, deck_id, decision)
+    with pytest.raises(DraftGateError) as producer_error:
+        approve_draft(project, decision_path)
+
+    assert _reasons(gate_error.value.blockers) == {"evidence_cas_object_missing"}
+    assert _reasons(producer_error.value.blockers) == {"evidence_cas_object_missing"}
+    after = _deck(project, deck_id)
+    assert after["draft_approval_evidence_id"] is None
+    assert after["status"] == "draft_review"
+
+
+def test_approve_draft_producer_accepts_intact_current_preview_evidence(
+    tmp_path: Path,
+) -> None:
+    """The new gate call does not block a legitimate approval."""
+    project, deck_id, decision_path = _approval_ready_project(tmp_path)
+
+    result = approve_draft(project, decision_path)
+
+    assert result["evidence_id"]
+    assert _deck(project, deck_id)["draft_approval_evidence_id"] == result["evidence_id"]
 
 
 def test_completion_gate_accepts_current_pointer_selected_evidence(

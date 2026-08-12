@@ -228,19 +228,22 @@ def test_v2_noop_preserves_every_existing_byte_mode_mtime_and_lock_inode(tmp_pat
 
 
 def _completed_v2_project(tmp_path: Path) -> tuple[Path, str]:
-    """Produce a contract-valid schema-2 project with a genuinely completed deck.
+    """Complete a deck through the real v2 producers and patch nothing after.
 
-    ``_complete_fixture`` drives the real v2 producers, so the deck ends up
-    holding all three current evidence pointers and four persisted envelopes.
-    It does, however, take two shortcuts that a published deck would not: it
-    advances a slide and a visual module past ``planned`` without ever running
-    publication, which is what normally records ``slide_spec_path`` and the
-    module's spec/assignment/manifest paths. Both shortcuts are repaired here
-    so the project satisfies the schema-2 store contract:
+    This drives the genuine pipeline -- ``register_draft_preview`` ->
+    ``approve_draft`` -> ``complete_deck`` -- so the resulting state is exactly
+    what the Task 6 producers create: four persisted envelopes and all three
+    current evidence pointers, with ``slides.slide_spec_path`` left null
+    because no writer in the system ever assigns it.
 
-    * the slide gets the spec path and digest publication would have written;
-    * the never-published visual module is dropped, which is faithful because
-      completion evidence references only the final PPTX and rendered PNGs.
+    No visual module is created. ``_complete_fixture`` adds one purely to
+    exercise module review, but it never records an assignment or an artifact
+    manifest for it, so that module is genuinely invalid state rather than a
+    validator problem: real writers do populate
+    ``visual_modules.assignment_path`` (``presentation_events.create_assignment_record``)
+    and ``artifact_manifest_path`` (``publish_presentation_artifact``), and
+    those contract checks are correct. A deck of native slides with no complex
+    visuals is an ordinary, fully realistic deck.
 
     Args:
         tmp_path: Per-test temporary directory.
@@ -248,25 +251,86 @@ def _completed_v2_project(tmp_path: Path) -> tuple[Path, str]:
     Returns:
         The project root and its completed deck ID.
     """
-    from test_presentation_workflow import _complete_fixture
+    from PIL import Image
 
-    project, deck_id, _, _, _, _ = _complete_fixture(tmp_path)
-    spec_relative = "contracts/slide-spec.yaml"
-    spec_path = project / spec_relative
-    spec_path.parent.mkdir(parents=True, exist_ok=True)
-    spec_path.write_text("slide_id: slide-01\n", encoding="utf-8")
-    spec_digest = hashlib.sha256(spec_path.read_bytes()).hexdigest()
-    slides_path = _state(project) / "slides.yaml"
-    slides = _read_yaml(slides_path)
-    for record in slides["slides"].values():
-        if record.get("status") != "planned":
-            record["slide_spec_path"] = spec_relative
-            record["slide_spec_sha256"] = spec_digest
-    slides_path.write_text(yaml.safe_dump(slides), encoding="utf-8")
-    modules_path = _state(project) / "visual_modules.yaml"
-    modules = _read_yaml(modules_path)
-    modules["visual_modules"] = {}
-    modules_path.write_text(yaml.safe_dump(modules), encoding="utf-8")
+    from presentation_events import create_artifact_record
+    from presentation_state import create_slide, record_review, set_slide_status
+    from presentation_workflow import approve_draft, complete_deck, register_draft_preview
+    from test_presentation_workflow import (
+        _approved_project,
+        _materialize_visual_review,
+        _plan,
+        _write_draft_preview,
+    )
+    from presentation_contracts import contract_sha256
+
+    project, deck_id, _ = _approved_project(tmp_path)
+    slide = create_slide(project, deck_id, "slide-01", "Evidence changes decisions")
+    for status in ("ready", "assigned", "producing", "review_required"):
+        set_slide_status(project, slide["id"], status)
+    record_review(project, "slide", slide["id"], "scientific-reviewer", "scientific", "passed")
+    record_review(project, "slide", slide["id"], "visual-reviewer", "visual_quality", "passed")
+    set_slide_status(project, slide["id"], "passed")
+    decks_path = _state(project) / "decks.yaml"
+    decks = _read_yaml(decks_path)
+    decks["decks"][deck_id]["status"] = "draft_review"
+    decks_path.write_text(yaml.safe_dump(decks), encoding="utf-8")
+    for path in (project / "renders/slide-1.png", project / "renders/contact.png"):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (20, 20), (1, 2, 3)).save(path)
+    registered = register_draft_preview(
+        project,
+        _write_draft_preview(
+            project,
+            deck_id,
+            project / "renders/slide-1.png",
+            project / "renders/contact.png",
+        ),
+    )
+    decision = project / "decision.yaml"
+    decision.write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": 1,
+                "deck_id": deck_id,
+                "preview_id": registered["preview"]["id"],
+                "preview_sha256": registered["preview"]["preview_sha256"],
+                "decision": "approve",
+                "approved_by": "reviewer",
+            }
+        ),
+        encoding="utf-8",
+    )
+    approve_draft(project, decision)
+    visual_review = _materialize_visual_review(project, deck_id)
+    for relative in ("deck/final.pptx", "renders/source/slide-1.png", "renders/pptx/slide-1.png"):
+        artifact_kind = "deck-pptx" if relative.endswith(".pptx") else "slide-png"
+        provenance = (
+            {}
+            if artifact_kind == "deck-pptx"
+            else {
+                "plan_version": 1,
+                "plan_sha256": contract_sha256(_plan(deck_id)),
+                "slide_record_id": slide["id"],
+                "attempt": int(slide.get("attempt", 1)),
+            }
+        )
+        create_artifact_record(
+            project,
+            deck_id,
+            artifact_kind,
+            relative,
+            hashlib.sha256((project / relative).read_bytes()).hexdigest(),
+            "reviewer",
+            slide_id=slide["id"],
+            **provenance,
+        )
+    completion = project / "completion.yaml"
+    completion.write_text(
+        yaml.safe_dump({"visual_review_path": str(visual_review.relative_to(project))}),
+        encoding="utf-8",
+    )
+    complete_deck(project, deck_id, completion)
     return project, deck_id
 
 
@@ -289,6 +353,11 @@ def test_v2_noop_on_a_genuinely_completed_deck_reports_no_blocked_ids(
         "visual_review",
         "deck_completion",
     }
+    # The producers really do leave this null; the store contract must accept it.
+    assert all(
+        record["slide_spec_path"] is None
+        for record in _read_yaml(_state(project) / "slides.yaml")["slides"].values()
+    )
     presentations = project / ".research" / "presentations"
     before = _exact_regular_tree(presentations)
 

@@ -22,7 +22,7 @@ from presentation_evidence_contracts import (
     envelope_sha256,
     validate_envelope,
 )
-from presentation_evidence_snapshot import EvidenceSnapshot
+from presentation_evidence_snapshot import EvidenceSnapshot, thaw as _thaw
 from validate_deck_plan import validate_deck_approval
 from validate_visual_review import derive_overall_status, validate_review_document
 from presentation_active_evidence import (  # noqa: F401 - public API re-export
@@ -976,14 +976,3 @@ def _canonical_digest(value: Mapping[str, Any], label: str) -> str:
         return contract_sha256(value)
     except (TypeError, ValueError, RecursionError) as exc:
         raise ProjectionError(f"{label} cannot be canonically hashed: {exc}") from exc
-
-
-def _thaw(value: Any) -> Any:
-    """Return a mutable local copy of a frozen snapshot value."""
-    if isinstance(value, Mapping):
-        return {key: _thaw(item) for key, item in value.items()}
-    if isinstance(value, tuple):
-        return [_thaw(item) for item in value]
-    if isinstance(value, frozenset):
-        return {_thaw(item) for item in value}
-    return value

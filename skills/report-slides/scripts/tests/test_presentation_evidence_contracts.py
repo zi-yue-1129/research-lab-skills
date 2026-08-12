@@ -587,3 +587,108 @@ def test_validate_deck_evidence_pointers_rejects_invalid_current_evidence(
 
     with pytest.raises(EvidenceContractError, match=expected):
         validate_deck_evidence_pointers(deck, deepcopy(evidence))
+
+
+def _producer_slide_record(status: str = "passed") -> dict[str, Any]:
+    """Return the exact slide shape the state writers actually persist.
+
+    ``presentation_state.create_slide`` initializes ``slide_spec_path`` and
+    ``slide_spec_sha256`` to None and no writer ever assigns them, so this is
+    what a passed slide really looks like on disk.
+
+    Args:
+        status: Lifecycle status to stamp on the record.
+
+    Returns:
+        A producible slide record with null spec fields.
+    """
+    return {
+        "id": "sld-1",
+        "deck_id": "deck-1",
+        "plan_slide_id": "slide-01",
+        "title": "Evidence changes decisions",
+        "status": status,
+        "created_at": "2026-08-09T00:00:00Z",
+        "updated_at": "2026-08-09T00:00:00Z",
+        "created_by": "workflow",
+        "approved_takeaway_sha256": None,
+        "approved_evidence_sha256": None,
+        "slide_spec_path": None,
+        "slide_spec_sha256": None,
+        "attempt": 1,
+    }
+
+
+@pytest.mark.parametrize("status", ["ready", "assigned", "producing", "passed"])
+def test_slide_record_accepts_a_null_spec_path_outside_planned(status: str) -> None:
+    """A null slide_spec_path is valid at every status, because none is written.
+
+    Args:
+        status: Lifecycle status past ``planned`` that the writers can reach.
+    """
+    record = _producer_slide_record(status)
+
+    validated = validate_store_record("slides", record, relations=_relations())
+
+    assert validated["slide_spec_path"] is None
+
+
+def test_slide_record_still_requires_a_path_for_a_declared_spec_digest() -> None:
+    """The digest/path pairing invariant survives the lifecycle relaxation."""
+    record = _producer_slide_record()
+    record["slide_spec_sha256"] = _DIGEST
+
+    with pytest.raises(EvidenceContractError, match="slide_spec_sha256 requires slide_spec_path"):
+        validate_store_record("slides", record, relations=_relations())
+
+
+@pytest.mark.parametrize("status", ["ready", "assigned", "producing", "passed"])
+def test_visual_module_accepts_a_null_visual_spec_path_outside_planned(
+    status: str,
+) -> None:
+    """A null visual_spec_path is valid at every status, because none is written.
+
+    Args:
+        status: Lifecycle status past ``planned`` that the writers can reach.
+    """
+    record = deepcopy(_relations()["visual_modules"]["mod-source"])
+    record.update(
+        {
+            "status": status,
+            "visual_spec_path": None,
+            "assignment_path": "contracts/assignment.yaml",
+            "artifact_manifest_path": "artifacts/hero.yaml",
+        }
+    )
+    record.pop("visual_spec_sha256")
+
+    validated = validate_store_record("visual_modules", record, relations=_relations())
+
+    assert validated["visual_spec_path"] is None
+
+
+def test_visual_module_still_requires_a_path_for_a_declared_spec_digest() -> None:
+    """The visual-spec digest/path pairing invariant is unchanged."""
+    record = deepcopy(_relations()["visual_modules"]["mod-source"])
+    record.update({"status": "passed", "visual_spec_path": None})
+
+    with pytest.raises(EvidenceContractError, match="visual_spec digest requires visual_spec_path"):
+        validate_store_record("visual_modules", record, relations=_relations())
+
+
+@pytest.mark.parametrize("field", ["assignment_path", "artifact_manifest_path"])
+def test_visual_module_still_requires_written_paths_outside_planned(field: str) -> None:
+    """Fields that real writers do populate stay required past ``planned``.
+
+    ``presentation_events.create_assignment_record`` writes ``assignment_path``
+    and publication writes ``artifact_manifest_path``, so unlike the spec paths
+    these remain genuine lifecycle invariants.
+
+    Args:
+        field: Written module path field that must stay required.
+    """
+    record = deepcopy(_relations()["visual_modules"]["mod-source"])
+    record.update({"status": "passed", field: None})
+
+    with pytest.raises(EvidenceContractError, match=f"{field} is required outside planned"):
+        validate_store_record("visual_modules", record, relations=_relations())

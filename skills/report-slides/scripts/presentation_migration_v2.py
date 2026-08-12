@@ -29,7 +29,7 @@ from presentation_evidence_projection import (
     project_historical_evidence,
     project_visual_review_evidence,
 )
-from presentation_evidence_snapshot import EvidenceSnapshot
+from presentation_evidence_snapshot import EvidenceSnapshot, freeze, thaw as _thaw
 from presentation_evidence_store import evidence_store_path, serialize_evidence_store
 from presentation_no_follow import NoFollowPathError, open_parent_no_follow
 from validate_deck_plan import validate_deck_approval
@@ -279,15 +279,6 @@ def _mutable_stores(snapshot: EvidenceSnapshot) -> dict[str, dict[str, dict[str,
     }
 
 
-def _thaw(value: Any) -> Any:
-    """Copy frozen snapshot values into ordinary deterministic containers."""
-    if isinstance(value, Mapping):
-        return {key: _thaw(item) for key, item in value.items()}
-    if isinstance(value, tuple):
-        return [_thaw(item) for item in value]
-    if isinstance(value, list):
-        return [_thaw(item) for item in value]
-    return value
 
 
 def _validate_snapshot_scope(
@@ -368,16 +359,14 @@ def _available_historical_projection(snapshot: EvidenceSnapshot) -> HistoricalPr
 def _snapshot_with_stores(
     snapshot: EvidenceSnapshot, stores: Mapping[str, Mapping[str, Mapping[str, Any]]]
 ) -> EvidenceSnapshot:
-    """Return a frozen snapshot view with supplied immutable store records."""
-    frozen = MappingProxyType(
-        {
-            store_name: MappingProxyType(
-                {record_id: MappingProxyType(dict(record)) for record_id, record in records.items()}
-            )
-            for store_name, records in stores.items()
-        }
-    )
-    return replace(snapshot, stores=frozen)
+    """Return a frozen snapshot view with supplied immutable store records.
+
+    Freezing goes through the shared deep helper so a derived snapshot has
+    exactly the container types ``build_snapshot`` produces; a shallow wrap
+    here would leave nested lists as ``list`` and let code validate cleanly
+    against a derived snapshot yet fail against a real one.
+    """
+    return replace(snapshot, stores=freeze(stores))
 
 
 def _supporting_envelopes(

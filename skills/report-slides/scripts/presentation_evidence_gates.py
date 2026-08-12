@@ -26,7 +26,6 @@ from presentation_active_evidence import (
     ActiveEvidenceProjection,
     merged_envelopes,
     project_active_evidence,
-    thaw_frozen,
 )
 from presentation_evidence_cas import CasError, read_verified_source
 from presentation_evidence_projection import ProjectionError, project_historical_evidence
@@ -35,6 +34,7 @@ from presentation_evidence_snapshot import (
     EvidenceSnapshot,
     SnapshotError,
     build_snapshot,
+    thaw,
 )
 from presentation_events import StateParseError, load_artifacts
 from validate_visual_review import derive_overall_status, validate_review_record
@@ -186,7 +186,7 @@ def assert_current_evidence(
     envelope = current.envelopes.get(evidence_kind)
     if envelope is None:
         _fail_current(evidence_kind, deck_id, list(current.blockers))
-    return thaw_frozen(envelope)
+    return thaw(envelope)
 
 
 def assert_draft_approvable(
@@ -233,9 +233,9 @@ def assert_draft_approvable(
     if blockers or preview is None or current.deck is None:
         _fail_current("draft_preview", deck_id, blockers)
     return {
-        "deck": thaw_frozen(current.deck),
+        "deck": thaw(current.deck),
         "decision": dict(decision),
-        "preview": thaw_frozen(preview),
+        "preview": thaw(preview),
     }
 
 

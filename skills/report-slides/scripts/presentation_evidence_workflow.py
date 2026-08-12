@@ -23,7 +23,7 @@ from presentation_evidence_contracts import (
     validate_envelope,
 )
 from presentation_evidence_projection import ProjectionError
-from presentation_evidence_snapshot import EvidenceSnapshot
+from presentation_evidence_snapshot import EvidenceSnapshot, freeze, thaw
 from presentation_evidence_store import evidence_store_path, serialize_evidence_store
 from presentation_no_follow import (
     MissingPathError,
@@ -351,19 +351,12 @@ def _candidate_snapshot(
         amended = _mutable(record)
         amended.update(_mutable(updates))
         decks[deck_id] = amended
-    frozen_stores = MappingProxyType(
-        {
-            store_name: MappingProxyType(
-                {
-                    record_id: MappingProxyType(dict(record))
-                    for record_id, record in records.items()
-                }
-            )
-            for store_name, records in stores.items()
-        }
-    )
+    # Freeze deeply through the shared helper: a candidate snapshot must be
+    # indistinguishable in container types from one built by build_snapshot,
+    # otherwise validation that passes here can still fail on real state.
+    frozen_stores = freeze(stores)
     frozen_events = tuple(snapshot.events) + tuple(
-        MappingProxyType(_event_record(event)) for event in events
+        freeze(_event_record(event)) for event in events
     )
     objects = dict(snapshot.artifact_objects)
     objects.update(source_objects)
@@ -396,9 +389,12 @@ def _load_deck_after_commit(project_root: Path, deck_id: str) -> dict[str, Any]:
 
 
 def _mutable(value: Any) -> Any:
-    """Return a recursively mutable copy of one frozen snapshot value."""
-    if isinstance(value, Mapping):
-        return {key: _mutable(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_mutable(item) for item in value]
-    return value
+    """Return a recursively mutable copy of one frozen snapshot value.
+
+    Args:
+        value: Any frozen or mutable snapshot value.
+
+    Returns:
+        A deeply mutable copy produced by the shared snapshot thaw helper.
+    """
+    return thaw(value)

@@ -803,8 +803,11 @@ def _validate_module_spec(
         _require_digest(legacy_digest, "visual_modules.spec_sha256")
     resolved_digest = canonical_digest if canonical_digest is not None else legacy_digest
     if path is None:
-        if record.get("status") != "planned":
-            raise EvidenceContractError("visual_modules visual_spec_path is required outside planned lifecycle")
+        # As with slides.slide_spec_path, no writer ever assigns
+        # visual_modules.visual_spec_path; presentation_state initializes it to
+        # None and publication only reads it. The digest pairing invariant
+        # below is real and stays. assignment_path/artifact_manifest_path are
+        # different: real writers populate those, so their checks remain.
         if resolved_digest is not None:
             raise EvidenceContractError("visual_modules visual_spec digest requires visual_spec_path")
     else:
@@ -952,8 +955,10 @@ def _validate_slide_intrinsic(record: Mapping[str, Any]) -> bool:
     _require_positive_int(record.get("attempt"), "slides.attempt")
     path = record.get("slide_spec_path")
     if path is None:
-        if record.get("status") != "planned":
-            raise EvidenceContractError("slides.slide_spec_path is required outside planned lifecycle")
+        # No writer ever assigns slides.slide_spec_path: presentation_state
+        # initializes it to None, the retry path resets it to None, and
+        # publication only reads it. Requiring it outside "planned" would
+        # reject state the gates and producers themselves create and accept.
         if record.get("slide_spec_sha256") is not None:
             raise EvidenceContractError("slides.slide_spec_sha256 requires slide_spec_path")
     else:
