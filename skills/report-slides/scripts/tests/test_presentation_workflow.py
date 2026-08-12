@@ -35,6 +35,7 @@ from presentation_workflow import (
 )
 from render_plan_preview import _canonical_source_digest
 from render_review_sheet import compose_review_sheet
+from presentation_module_fixtures import record_module_production
 
 
 def test_workflow_actions_are_not_available_before_implementation() -> None:
@@ -342,6 +343,7 @@ def _complete_fixture(tmp_path: Path) -> tuple[Path, str, Path, Path, str, dict]
     record_review(project, "slide", slide["id"], "visual-reviewer", "visual_quality", "passed")
     set_slide_status(project, slide["id"], "passed")
     module = create_visual_module(project, slide["id"], "module-a", "architecture")
+    record_module_production(project, deck_id, slide["id"], module["id"])
     for status in ("ready", "assigned", "producing", "review_required"):
         set_module_status(project, module["id"], status)
     record_review(project, "module", module["id"], "scientific-reviewer", "scientific", "passed")

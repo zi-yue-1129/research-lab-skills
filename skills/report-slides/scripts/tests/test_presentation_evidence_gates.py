@@ -29,7 +29,13 @@ from presentation_evidence_snapshot import (
     EvidenceSnapshot,
     build_snapshot,
 )
-from presentation_gates import CompletionGateError, DraftGateError, assert_deck_completable
+from presentation_gates import (
+    CompletionGateError,
+    DraftGateError,
+    ReviewGateError,
+    assert_deck_completable,
+    assert_module_passable,
+)
 from presentation_workflow import approve_draft
 from test_presentation_evidence_workflow import _approval_ready_project
 from test_presentation_workflow import _complete_fixture
@@ -609,6 +615,71 @@ def test_completion_gate_rejects_a_mutated_final_artifact(
 
     with pytest.raises(CompletionGateError, match="digest_mismatch"):
         assert_deck_completable(project, deck_id, completion)
+
+
+@pytest.mark.parametrize("field", ["assignment_path", "artifact_manifest_path"])
+def test_completion_requires_real_module_production_provenance(
+    tmp_path: Path, field: str
+) -> None:
+    """A module that was never assigned or published cannot complete a deck.
+
+    ``set_module_status`` is a bare state-machine transition and the CLI calls
+    it directly for every step below ``passed``, so reviews alone would let a
+    module reach ``passed`` having never been produced. Completion must require
+    the provenance real writers record.
+
+    Args:
+        tmp_path: Per-test temporary directory.
+        field: Module provenance path cleared before the gate runs.
+    """
+    project, deck_id, completion_path = _completable(tmp_path)
+    completion = yaml.safe_load(completion_path.read_text(encoding="utf-8"))
+    document = _read_state(project, "visual_modules.yaml")
+    assert document["visual_modules"]
+    for record in document["visual_modules"].values():
+        record[field] = None
+    _write_state(project, "visual_modules.yaml", document)
+
+    with pytest.raises(CompletionGateError) as error:
+        assert_deck_completable(project, deck_id, completion)
+
+    assert any(
+        reason.endswith(f"missing_{field}") for reason in _reasons(error.value.blockers)
+    )
+
+
+@pytest.mark.parametrize("field", ["assignment_path", "artifact_manifest_path"])
+def test_module_passable_requires_production_provenance(
+    tmp_path: Path, field: str
+) -> None:
+    """The module review gate itself reports the missing provenance by name.
+
+    Args:
+        tmp_path: Per-test temporary directory.
+        field: Module provenance path cleared before the gate runs.
+    """
+    project, _, _ = _completable(tmp_path)
+    document = _read_state(project, "visual_modules.yaml")
+    module_id = next(iter(document["visual_modules"]))
+    document["visual_modules"][module_id][field] = None
+    _write_state(project, "visual_modules.yaml", document)
+
+    with pytest.raises(ReviewGateError) as error:
+        assert_module_passable(project, module_id)
+
+    assert _reasons(error.value.blockers) == {f"missing_{field}"}
+
+
+def test_module_passable_accepts_a_fully_produced_module(tmp_path: Path) -> None:
+    """A module carrying real assignment and artifact provenance passes."""
+    project, _, _ = _completable(tmp_path)
+    document = _read_state(project, "visual_modules.yaml")
+    module_id = next(iter(document["visual_modules"]))
+
+    checked = assert_module_passable(project, module_id)
+
+    assert checked["module"]["assignment_path"]
+    assert checked["module"]["artifact_manifest_path"]
 
 
 def test_completion_gate_rejects_a_removed_final_artifact_record(

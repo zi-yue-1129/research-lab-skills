@@ -635,7 +635,28 @@ def assert_slide_passable(project_root: Path, slide_id: str) -> dict[str, Any]:
         fail_gate(ReviewGateError, "slide_passable", deck_id, blockers)
     return {"slide": slide, "reviews": reviews}
 def assert_module_passable(project_root: Path, module_id: str) -> dict[str, Any]:
-    """Assert independent scientific and visual-quality module reviews pass."""
+    """Assert a module has real production provenance and passing reviews.
+
+    Reviews alone are not sufficient. ``set_module_status`` is a generic
+    state-machine transition with no assignment awareness, and the CLI calls it
+    directly for every transition below ``passed``, so a module can otherwise
+    reach ``passed`` having never been assigned or published. Requiring the
+    two paths that real writers populate -- ``assignment_path`` from
+    ``create_assignment_record`` and ``artifact_manifest_path`` from artifact
+    publication -- keeps this gate consistent with the schema-v2 store
+    contract, which rejects either being null once a module leaves ``planned``.
+
+    Args:
+        project_root: Project root containing presentation state.
+        module_id: Generated visual-module identifier.
+
+    Returns:
+        The module record and its effective role-specific reviews.
+
+    Raises:
+        ReviewGateError: If provenance is absent or either review role is
+            missing or failing.
+    """
     modules = _state().load_visual_modules(project_root)
     module = modules.get(module_id)
     if module is None:
@@ -652,6 +673,10 @@ def assert_module_passable(project_root: Path, module_id: str) -> dict[str, Any]
     blockers.extend({"reason": role} for role in sorted(_REVIEW_ROLES - roles))
     if module.get("status") not in {"review_required", "passed"}:
         blockers.append({"reason": f"status:{module.get('status')}"})
+    for field in ("assignment_path", "artifact_manifest_path"):
+        value = module.get(field)
+        if not isinstance(value, str) or not value:
+            blockers.append({"reason": f"missing_{field}"})
     if blockers:
         fail_gate(ReviewGateError, "module_passable", deck_id, blockers)
     return {"module": module, "reviews": reviews}
