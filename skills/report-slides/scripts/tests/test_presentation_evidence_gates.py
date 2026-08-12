@@ -8,18 +8,26 @@ content-addressed bytes, with no schema-v1 event fallback.
 
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 import pytest
 import yaml
 
-from presentation_evidence_cas import cas_relative_path
+from presentation_evidence_cas import CasObject, cas_relative_path
 from presentation_evidence_contracts import envelope_sha256
 from presentation_evidence_gates import (
+    _cas_blockers,
     assert_current_evidence,
     assert_draft_approvable,
+)
+from presentation_evidence_snapshot import (
+    EvidenceCasIntegrityError,
+    EvidenceSnapshot,
+    build_snapshot,
 )
 from presentation_gates import CompletionGateError, DraftGateError, assert_deck_completable
 from test_presentation_workflow import _complete_fixture
@@ -262,17 +270,100 @@ def test_current_evidence_rejects_a_deleted_cas_object(
     assert error.value.blockers[0]["cas_path"] == reference["cas_path"]
 
 
-def test_current_evidence_rejects_tampered_cas_bytes(tmp_path: Path) -> None:
-    """Rewriting immutable CAS bytes fails closed with a dedicated reason."""
+def test_current_evidence_rejects_snapshot_intercepted_cas_tamper(
+    tmp_path: Path,
+) -> None:
+    """Tampered CAS bytes fail closed at the snapshot capture boundary.
+
+    ``_capture_persisted_cas_objects`` re-hashes every persisted CAS object
+    while building the snapshot, so a tamper raises
+    ``EvidenceCasIntegrityError`` before ``_cas_blockers`` ever compares
+    references. This test pins that interception and the gate's translation of
+    it, not the gate's own digest-mismatch branch (see
+    ``test_cas_blockers_reports_unverified_object_digest_mismatch``).
+    """
     project, deck_id, _, _, _, _ = _complete_fixture(tmp_path)
     pointer = _deck(project, deck_id)["completion_evidence_id"]
     reference = _evidence(project)[pointer]["artifact_refs"][0]
     _overwrite_cas_object(project, reference["sha256"], b"tampered-cas-bytes")
 
+    with pytest.raises(EvidenceCasIntegrityError):
+        build_snapshot(project)
     with pytest.raises(CompletionGateError) as error:
         assert_current_evidence(project, deck_id, "deck_completion")
 
     assert _reasons(error.value.blockers) == {"evidence_cas_digest_mismatch"}
+
+
+def _snapshot_with_object(project: Path, cas_path: str, object_: CasObject) -> EvidenceSnapshot:
+    """Build a minimal frozen snapshot carrying one hand-made CAS object."""
+    return EvidenceSnapshot(
+        project_root=project,
+        schema_version=2,
+        stores=MappingProxyType({}),
+        events=(),
+        file_preimages=MappingProxyType({}),
+        artifact_objects=MappingProxyType({cas_path: object_}),
+    )
+
+
+@pytest.mark.parametrize("lying_digest_field", [True, False])
+def test_cas_blockers_reports_unverified_object_digest_mismatch(
+    tmp_path: Path, lying_digest_field: bool
+) -> None:
+    """The gate's own digest branch rejects objects that skipped verification.
+
+    This branch is unreachable through the producer pipeline because the
+    snapshot layer verifies persisted CAS objects first, so it is exercised
+    directly with hand-constructed inputs to pin it as defensive code.
+
+    Args:
+        tmp_path: Per-test temporary directory.
+        lying_digest_field: Whether ``CasObject.digest`` itself disagrees with
+            the reference, or agrees while the bytes underneath do not.
+    """
+    declared = hashlib.sha256(b"authorized-artifact").hexdigest()
+    other = hashlib.sha256(b"attacker-artifact").hexdigest()
+    cas_path = cas_relative_path(declared).as_posix()
+    object_ = CasObject(
+        digest=other if lying_digest_field else declared,
+        relative_path=cas_relative_path(declared),
+        content=b"attacker-artifact",
+        mode=0o444,
+    )
+    snapshot = _snapshot_with_object(tmp_path, cas_path, object_)
+    envelope = {
+        "artifact_refs": [
+            {"sha256": declared, "cas_path": cas_path, "artifact_kind": "final_pptx"}
+        ]
+    }
+
+    blockers = _cas_blockers(snapshot, envelope)
+
+    assert blockers == [
+        {
+            "reason": "evidence_cas_digest_mismatch",
+            "cas_path": cas_path,
+            "sha256": declared,
+        }
+    ]
+
+
+def test_cas_blockers_accepts_a_verified_object(tmp_path: Path) -> None:
+    """A genuinely verified CAS object produces no blocker."""
+    content = b"authorized-artifact"
+    declared = hashlib.sha256(content).hexdigest()
+    cas_path = cas_relative_path(declared).as_posix()
+    object_ = CasObject(
+        digest=declared,
+        relative_path=cas_relative_path(declared),
+        content=content,
+        mode=0o444,
+    )
+    snapshot = _snapshot_with_object(tmp_path, cas_path, object_)
+    envelope = {"artifact_refs": [{"sha256": declared, "cas_path": cas_path}]}
+
+    assert _cas_blockers(snapshot, envelope) == []
 
 
 def test_current_evidence_rejects_an_unknown_deck(tmp_path: Path) -> None:
@@ -436,8 +527,15 @@ def test_completion_gate_does_not_fall_back_to_legacy_draft_events(
     assert after["draft_approval_id"] == before["draft_approval_id"]
 
 
-def test_completion_gate_rejects_tampered_preview_cas_bytes(tmp_path: Path) -> None:
-    """Tampered current preview CAS bytes block completion authorization."""
+def test_completion_gate_rejects_snapshot_intercepted_preview_cas_tamper(
+    tmp_path: Path,
+) -> None:
+    """Tampered current preview CAS bytes block completion authorization.
+
+    As above, the tamper is intercepted while the snapshot is captured and the
+    completion gate translates it; this pins the end-to-end completion path,
+    not ``_cas_blockers``' own digest comparison.
+    """
     project, deck_id, completion_path = _completable(tmp_path)
     completion = yaml.safe_load(completion_path.read_text(encoding="utf-8"))
     pointer = _deck(project, deck_id)["draft_preview_evidence_id"]

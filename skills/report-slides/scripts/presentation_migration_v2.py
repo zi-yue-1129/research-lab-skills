@@ -254,7 +254,12 @@ def _validate_target_store(snapshot: EvidenceSnapshot) -> None:
     if evidence is None:
         raise MigrationError("schema-two state requires evidence.yaml")
     try:
-        serialize_evidence_store(evidence)
+        # Snapshot stores are frozen, so every list is a tuple. The evidence
+        # contract requires exact list types, so the store must be thawed
+        # before validation; _mutable_stores deliberately excludes evidence.
+        serialize_evidence_store(
+            {evidence_id: _thaw(record) for evidence_id, record in evidence.items()}
+        )
         mutable_stores = _mutable_stores(snapshot)
         for store_name, records in mutable_stores.items():
             for record in records.values():

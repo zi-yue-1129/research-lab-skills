@@ -227,6 +227,115 @@ def test_v2_noop_preserves_every_existing_byte_mode_mtime_and_lock_inode(tmp_pat
     assert sorted(presentations.glob("state.backup-*")) == before_backups
 
 
+def _completed_v2_project(tmp_path: Path) -> tuple[Path, str]:
+    """Produce a contract-valid schema-2 project with a genuinely completed deck.
+
+    ``_complete_fixture`` drives the real v2 producers, so the deck ends up
+    holding all three current evidence pointers and four persisted envelopes.
+    It does, however, take two shortcuts that a published deck would not: it
+    advances a slide and a visual module past ``planned`` without ever running
+    publication, which is what normally records ``slide_spec_path`` and the
+    module's spec/assignment/manifest paths. Both shortcuts are repaired here
+    so the project satisfies the schema-2 store contract:
+
+    * the slide gets the spec path and digest publication would have written;
+    * the never-published visual module is dropped, which is faithful because
+      completion evidence references only the final PPTX and rendered PNGs.
+
+    Args:
+        tmp_path: Per-test temporary directory.
+
+    Returns:
+        The project root and its completed deck ID.
+    """
+    from test_presentation_workflow import _complete_fixture
+
+    project, deck_id, _, _, _, _ = _complete_fixture(tmp_path)
+    spec_relative = "contracts/slide-spec.yaml"
+    spec_path = project / spec_relative
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text("slide_id: slide-01\n", encoding="utf-8")
+    spec_digest = hashlib.sha256(spec_path.read_bytes()).hexdigest()
+    slides_path = _state(project) / "slides.yaml"
+    slides = _read_yaml(slides_path)
+    for record in slides["slides"].values():
+        if record.get("status") != "planned":
+            record["slide_spec_path"] = spec_relative
+            record["slide_spec_sha256"] = spec_digest
+    slides_path.write_text(yaml.safe_dump(slides), encoding="utf-8")
+    modules_path = _state(project) / "visual_modules.yaml"
+    modules = _read_yaml(modules_path)
+    modules["visual_modules"] = {}
+    modules_path.write_text(yaml.safe_dump(modules), encoding="utf-8")
+    return project, deck_id
+
+
+def test_v2_noop_on_a_genuinely_completed_deck_reports_no_blocked_ids(
+    tmp_path: Path,
+) -> None:
+    """Rerunning migration on real completed v2 evidence stays an exact no-op.
+
+    Every other v2 no-op fixture carries an empty ``evidence.yaml``, so none of
+    them validates persisted ``draft_approval`` and ``visual_review``
+    envelopes, which exist only in the store and are never reprojected from
+    events. This test covers the plan-level "schema 2 to 2 exact no-op"
+    constraint for a project that actually holds them.
+    """
+    project, deck_id = _completed_v2_project(tmp_path)
+    evidence = _read_yaml(_state(project) / "evidence.yaml")["evidence"]
+    assert {record["evidence_kind"] for record in evidence.values()} == {
+        "draft_preview",
+        "draft_approval",
+        "visual_review",
+        "deck_completion",
+    }
+    presentations = project / ".research" / "presentations"
+    before = _exact_regular_tree(presentations)
+
+    plan = build_migration_plan(build_snapshot(project))
+    report = migration.migrate_state(project)
+
+    assert plan.source_schema_version == 2
+    assert plan.blocked_ids == ()
+    assert dict(plan.blockers) == {}
+    assert report == {
+        "source_schema_version": 2,
+        "target_schema_version": 2,
+        "migrated_ids": [],
+        "blocked_ids": [],
+        "blockers": {},
+        "changed_paths": [],
+    }
+    assert deck_id not in report["blockers"]
+    assert _exact_regular_tree(presentations) == before
+    assert not list((presentations / "transactions").glob("*.json"))
+    assert not list(presentations.glob("state.backup-*"))
+
+
+def test_v2_target_store_validation_thaws_frozen_evidence_records(
+    tmp_path: Path,
+) -> None:
+    """Frozen snapshot evidence must be thawed before contract validation.
+
+    Snapshot capture freezes every list into a tuple, but the evidence
+    contract requires exact list types. Validating the frozen store directly
+    rejects every persisted envelope, so a schema-2 project holding any
+    evidence could not be planned at all.
+    """
+    project, _ = _completed_v2_project(tmp_path)
+    snapshot = build_snapshot(project)
+    frozen = snapshot.stores["evidence"]
+    assert frozen
+    assert all(
+        isinstance(record["subject_ids"], tuple) for record in frozen.values()
+    )
+
+    plan = build_migration_plan(snapshot)
+
+    assert plan.source_schema_version == 2
+    assert plan.blocked_ids == ()
+
+
 def test_migration_acquires_workflow_then_state_event_and_cas_locks_in_order(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

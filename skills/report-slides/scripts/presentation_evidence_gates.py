@@ -502,7 +502,30 @@ def _selected_envelope(
 def _cas_blockers(
     snapshot: EvidenceSnapshot, envelope: Mapping[str, Any]
 ) -> list[dict[str, Any]]:
-    """Verify every referenced CAS object from the frozen snapshot capture."""
+    """Verify every referenced CAS object from the frozen snapshot capture.
+
+    ``evidence_cas_object_missing`` is the live path: a deleted CAS object is
+    skipped by ``_capture_persisted_cas_objects`` and simply never appears in
+    ``snapshot.artifact_objects``.
+
+    ``evidence_cas_digest_mismatch`` is deliberate defense in depth and is
+    unreachable through the normal pipeline. Objects keyed by ``cas_path`` can
+    only come from ``_capture_persisted_cas_objects``, which already proves
+    ``object_.digest == reference["sha256"]`` and raises
+    ``EvidenceCasIntegrityError`` otherwise, and ``read_verified_source``
+    always derives ``digest`` from the bytes it just read. The branch therefore
+    only fires for an object that reached this function without that
+    verification -- a hand-constructed ``CasObject``, or a future caller
+    sourcing objects from somewhere other than the snapshot capture. It is
+    covered directly by unit tests rather than through the producer pipeline.
+
+    Args:
+        snapshot: Frozen capture whose ``artifact_objects`` hold verified bytes.
+        envelope: Pointer-selected envelope whose references are checked.
+
+    Returns:
+        Structured blockers for every unverifiable reference, in declared order.
+    """
     blockers: list[dict[str, Any]] = []
     for reference in envelope.get("artifact_refs", ()):
         digest = reference.get("sha256")
