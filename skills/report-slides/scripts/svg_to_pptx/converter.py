@@ -284,11 +284,23 @@ class SvgConverter:
                     pass
 
     def _dispatch_native_data(self, slide: Any, elem: Any, role: str) -> None:
-        import sys
-        from pathlib import Path
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-        import pptx_native
+        """Materialize a ``data-pptx-role="table"/"chart"`` marker natively.
 
+        Every failure in this path -- missing attributes, a malformed bbox, an
+        unreadable or invalid sidecar, an unresolvable ``#<index>`` fragment,
+        missing schema keys -- is raised as ``NativeObjectMarkerError``. A
+        plain exception would be swallowed by ``_dispatch_children``'s
+        per-child guard, silently dropping the table or chart from the deck
+        while every gate still reported green.
+
+        Args:
+            slide: The python-pptx slide the object is added to.
+            elem: The ``<g>`` element carrying the marker attributes.
+            role: Either ``"table"`` or ``"chart"``.
+
+        Raises:
+            NativeObjectMarkerError: For any malformed or unusable marker.
+        """
         source = elem.get("data-pptx-source")
         bbox_raw = elem.get("data-pptx-bbox")
         if not source or not bbox_raw:
@@ -296,12 +308,31 @@ class SvgConverter:
                 f'data-pptx-role="{role}" requires both data-pptx-source and '
                 f"data-pptx-bbox (svg={self.svg_path})"
             )
-        data = self._load_pptx_source(source)
-        bx, by, bw, bh = (float(v) for v in bbox_raw.split(","))
-        bbox = (self.cs.x(bx), self.cs.y(by), self.cs.x(bw), self.cs.y(bh))
-        style = self._pptx_style(elem)
+        try:
+            data = self._load_pptx_source(source)
+            bbox = self._resolve_pptx_bbox(bbox_raw, role)
+            style = self._pptx_style(elem)
+            self._add_native_object(slide, role, source, data, bbox, style)
+        except NativeObjectMarkerError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - re-typed as a hard blocker
+            raise NativeObjectMarkerError(
+                f'data-pptx-role="{role}" with data-pptx-source={source!r} '
+                f"could not be materialized ({type(exc).__name__}: {exc}) "
+                f"(svg={self.svg_path})"
+            ) from exc
+
+    def _add_native_object(self, slide: Any, role: str, source: str,
+                           data: Dict[str, Any], bbox: Tuple[int, int, int, int],
+                           style: Dict[str, str]) -> None:
+        """Build the native table/chart object described by ``data``."""
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        import pptx_native
 
         if role == "table":
+            self._require_source_keys(data, ("columns", "rows"), role, source)
             pptx_native.add_native_table(
                 slide, data["columns"], data["rows"], bbox, style,
                 highlight_col=data.get("highlight_col"),
@@ -317,18 +348,60 @@ class SvgConverter:
             )
         chart_type = _CHART_TYPE_MAP[raw_type]
         if chart_type == "pie":
-            series = [{"label": data.get("title", ""), "values": data.get("values", [])}]
+            self._require_source_keys(data, ("categories", "values"), role, source)
+            series = [{"label": data.get("title", ""), "values": data["values"]}]
             pptx_native.add_native_chart(
                 slide, "pie", data["categories"], series, bbox, style,
                 colors=data.get("colors"),
             )
         else:
+            self._require_source_keys(data, ("categories", "series"), role, source)
             pptx_native.add_native_chart(
                 slide, chart_type, data["categories"], data["series"], bbox,
                 style, y_max=data.get("y_max"),
             )
 
+    def _require_source_keys(self, data: Dict[str, Any], keys: Tuple[str, ...],
+                             role: str, source: str) -> None:
+        """Assert the resolved sidecar payload carries every required key."""
+        if not isinstance(data, dict):
+            raise NativeObjectMarkerError(
+                f'data-pptx-role="{role}" source {source!r} must resolve to a '
+                f"JSON object, got {type(data).__name__} (svg={self.svg_path})"
+            )
+        missing = [key for key in keys if key not in data]
+        if missing:
+            raise NativeObjectMarkerError(
+                f'data-pptx-role="{role}" source {source!r} is missing required '
+                f"key(s) {missing} (svg={self.svg_path})"
+            )
+
+    def _resolve_pptx_bbox(self, bbox_raw: str,
+                           role: str) -> Tuple[int, int, int, int]:
+        """Parse ``data-pptx-bbox`` ("x,y,w,h" in SVG user units) into EMU."""
+        parts = [part.strip() for part in bbox_raw.split(",")]
+        if len(parts) != 4:
+            raise NativeObjectMarkerError(
+                f'data-pptx-role="{role}" data-pptx-bbox must be "x,y,w,h", '
+                f"got {bbox_raw!r} (svg={self.svg_path})"
+            )
+        try:
+            bx, by, bw, bh = (float(part) for part in parts)
+        except ValueError as exc:
+            raise NativeObjectMarkerError(
+                f'data-pptx-role="{role}" data-pptx-bbox has non-numeric '
+                f"values: {bbox_raw!r} (svg={self.svg_path})"
+            ) from exc
+        return (self.cs.x(bx), self.cs.y(by), self.cs.x(bw), self.cs.y(bh))
+
     def _dispatch_native_group(self, slide: Any, elem: Any, inherited_style: Dict) -> None:
+        """Convert a ``data-pptx-role="group"`` subtree into one native Group.
+
+        Per-child failures are tolerated the same way ``_dispatch_children``
+        tolerates them: one malformed child is skipped and the remaining
+        children still become a group, rather than the whole node vanishing.
+        ``NativeObjectMarkerError`` still propagates as a hard blocker.
+        """
         from .style_parser import compute_style
         from .text_converter import add_textbox
 
@@ -339,13 +412,24 @@ class SvgConverter:
         try:
             for child in elem:
                 tag = _local_tag(child)
-                style = compute_style(child, inherited_style)
-                if tag == "text" and id(child) not in self._text_to_shape:
-                    local_texts.append((child, style))
-                    continue
-                self._dispatch_element(slide, child, style)
+                try:
+                    style = compute_style(child, inherited_style)
+                    if tag == "text" and id(child) not in self._text_to_shape:
+                        local_texts.append((child, style))
+                        continue
+                    self._dispatch_element(slide, child, style)
+                except NativeObjectMarkerError:
+                    raise
+                except Exception as exc:  # noqa: BLE001 - skip one bad child
+                    if self.verbose:
+                        print(f"  [warn] {tag}: {exc}")
             for text_elem, text_style in local_texts:
-                box = add_textbox(slide, text_elem, text_style, self.cs)
+                try:
+                    box = add_textbox(slide, text_elem, text_style, self.cs)
+                except Exception as exc:  # noqa: BLE001 - skip one bad label
+                    if self.verbose:
+                        print(f"  [warn] text: {exc}")
+                    continue
                 if box is not None:
                     collected.append(box)
         finally:
@@ -359,26 +443,98 @@ class SvgConverter:
             pptx_native.add_native_group(slide, collected)
 
     def _load_pptx_source(self, source: str) -> Dict[str, Any]:
+        """Load the JSON payload referenced by ``data-pptx-source``.
+
+        Accepts either a path relative to the SVG's own directory or that
+        path plus a ``#<slide_index>`` fragment selecting one entry of a
+        ``slide_data.json`` ``slides`` array.
+
+        Args:
+            source: The raw ``data-pptx-source`` attribute value.
+
+        Returns:
+            The resolved JSON object.
+
+        Raises:
+            NativeObjectMarkerError: If the path escapes the SVG's directory,
+                the file cannot be read, the JSON is invalid, or the
+                ``#<index>`` fragment does not resolve.
+        """
         import json
         from pathlib import Path
         base_dir = Path(self.svg_path).resolve().parent
-        if "#" in source:
-            filename, _, index_str = source.partition("#")
-            payload = json.loads((base_dir / filename).read_text(encoding="utf-8"))
+        filename, separator, index_str = source.partition("#")
+        path = self._resolve_source_path(base_dir, filename, source)
+
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise NativeObjectMarkerError(
+                f"data-pptx-source {source!r} could not be read: {exc} "
+                f"(svg={self.svg_path})"
+            ) from exc
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise NativeObjectMarkerError(
+                f"data-pptx-source {source!r} is not valid JSON: {exc} "
+                f"(svg={self.svg_path})"
+            ) from exc
+
+        if not separator:
+            return payload
+
+        try:
             target_index = int(index_str)
-            for entry in payload.get("slides", []):
-                if entry.get("index") == target_index:
-                    return entry
-            raise ValueError(f"slide index {target_index} not found in {filename}")
-        return json.loads((base_dir / source).read_text(encoding="utf-8"))
+        except ValueError as exc:
+            raise NativeObjectMarkerError(
+                f"data-pptx-source {source!r} has a non-integer slide index "
+                f"{index_str!r} (svg={self.svg_path})"
+            ) from exc
+        if not isinstance(payload, dict):
+            raise NativeObjectMarkerError(
+                f"data-pptx-source {source!r} must resolve to a JSON object "
+                f"with a 'slides' array (svg={self.svg_path})"
+            )
+        for entry in payload.get("slides", []):
+            if isinstance(entry, dict) and entry.get("index") == target_index:
+                return entry
+        raise NativeObjectMarkerError(
+            f"data-pptx-source {source!r}: no slide with index {target_index} "
+            f"in {filename} (svg={self.svg_path})"
+        )
+
+    def _resolve_source_path(self, base_dir: Any, filename: str,
+                             source: str) -> Any:
+        """Resolve a sidecar filename, keeping it inside the SVG's directory.
+
+        A marker may only reference data shipped alongside the deck, so
+        parent-directory traversal and absolute paths are rejected rather
+        than silently loaded.
+        """
+        candidate = (base_dir / filename).resolve()
+        try:
+            candidate.relative_to(base_dir)
+        except ValueError as exc:
+            raise NativeObjectMarkerError(
+                f"data-pptx-source {source!r} resolves to {candidate}, outside "
+                f"the SVG's own directory {base_dir} (svg={self.svg_path})"
+            ) from exc
+        return candidate
 
     def _pptx_style(self, elem: Any) -> Dict[str, str]:
         """Resolve the color/font style for a native table or chart.
 
         Prefers an explicit ``data-pptx-style`` JSON attribute (the SVG
         producer's already-resolved style values, so custom project styles
-        carry through); falls back to generate_slides.py's built-in
-        defaults when absent.
+        carry through); falls back to generate_slides.py's built-in defaults
+        when the attribute is absent, which is the normal case for
+        hand-authored Path C markup.
+
+        Raises:
+            NativeObjectMarkerError: If the attribute is present but is not a
+                parseable JSON object -- falling back to defaults there would
+                silently discard the producer's intended styling.
         """
         import json
         defaults = {
@@ -387,12 +543,20 @@ class SvgConverter:
             "danger": "#dc2626", "font": "'Helvetica Neue', Arial, sans-serif",
         }
         raw = elem.get("data-pptx-style")
-        if not raw:
+        if raw is None:
             return defaults
         try:
             overrides = json.loads(raw)
-        except (json.JSONDecodeError, TypeError):
-            return defaults
+        except (json.JSONDecodeError, TypeError) as exc:
+            raise NativeObjectMarkerError(
+                f"data-pptx-style is not valid JSON: {raw!r} "
+                f"(svg={self.svg_path})"
+            ) from exc
+        if not isinstance(overrides, dict):
+            raise NativeObjectMarkerError(
+                f"data-pptx-style must be a JSON object, got "
+                f"{type(overrides).__name__} (svg={self.svg_path})"
+            )
         merged = dict(defaults)
         merged.update({k: v for k, v in overrides.items() if v})
         return merged
