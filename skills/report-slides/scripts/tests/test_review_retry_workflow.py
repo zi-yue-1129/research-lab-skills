@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from pathlib import Path
 import threading
+from typing import Iterator
 
 import pytest
 import yaml
@@ -421,15 +423,19 @@ def test_transaction_rollback_releases_sidecar_for_waiting_writer(
     writer_lock_attempted = threading.Event()
     writer_finished = threading.Event()
     writer_thread_id: list[int] = []
-    original_flock = presentation_state.fcntl.flock
+    original_guard = presentation_state.journal_admission_guard
 
-    def flock_with_writer_barrier(descriptor: int, operation: int) -> None:
-        """Observe the competing thread's actual non-blocking flock attempt."""
-        if writer_thread_id and threading.get_ident() == writer_thread_id[0] and operation & presentation_state.fcntl.LOCK_EX:
+    @contextmanager
+    def guard_with_writer_barrier(project_root: Path, timeout: int) -> Iterator[None]:
+        """Observe the competing thread's journal-guard acquisition attempt."""
+        if writer_thread_id and threading.get_ident() == writer_thread_id[0]:
             writer_lock_attempted.set()
-        original_flock(descriptor, operation)
+        with original_guard(project_root, timeout):
+            yield
 
-    monkeypatch.setattr(presentation_state.fcntl, "flock", flock_with_writer_barrier)
+    monkeypatch.setattr(
+        presentation_state, "journal_admission_guard", guard_with_writer_barrier
+    )
 
     def write_after_lock() -> None:
         """Persist an unrelated low-level state update once the sidecar is free."""

@@ -22,11 +22,11 @@ from presentation_no_follow import (
     MissingPathError,
     NoFollowPathError,
     open_parent_no_follow,
-    read_regular_siblings,
     temporary_path,
     write_bytes_at,
 )
 from presentation_transactions import TransactionError, WorkflowTransaction
+from presentation_transaction_files import journal_entry_names
 
 
 WORKFLOW_LOCK_RELATIVE_PATH = ".research/presentations/state/workflow.lock"
@@ -136,7 +136,7 @@ def _journal_preflight(project_root: Path) -> bool:
             f"workflow journal preflight requires no-follow access: {exc}"
         ) from exc
     try:
-        return bool(read_regular_siblings(anchored))
+        return bool(journal_entry_names(project_root))
     except NoFollowPathError as exc:
         raise TransactionError(
             f"workflow journal preflight requires regular files: {exc}"

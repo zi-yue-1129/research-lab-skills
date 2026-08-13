@@ -57,6 +57,7 @@ from presentation_transaction_errors import (
 )
 from presentation_transaction_journal_admission import (
     incomplete_transaction_journals,
+    journal_admission_guard,
     require_transaction_recovery,
 )
 
@@ -488,6 +489,7 @@ class WorkflowTransaction:
         self._presentations_anchor: AnchoredPath | None = None
         self._journal_anchor: AnchoredPath | None = None
         self._journal: Path | None = None
+        self._journal_guard: Any | None = None
         self._committed = False
 
     def __enter__(self) -> "WorkflowTransaction":
@@ -498,6 +500,12 @@ class WorkflowTransaction:
                 ".transaction-root-anchor",
                 create_parents=False,
             )
+            timeout = int(
+                os.environ.get("PRESENTATION_STATE_LOCK_TIMEOUT_SECONDS", "30")
+            )
+            journal_guard = journal_admission_guard(self.project_root, timeout)
+            journal_guard.__enter__()
+            self._journal_guard = journal_guard
             self._presentations_anchor = open_parent_beneath(
                 self._root_anchor,
                 ".research/presentations/.presentations-anchor",
@@ -517,9 +525,6 @@ class WorkflowTransaction:
                     self._cas_anchors[path] = anchored
                 else:
                     self._recovery_anchors[path] = anchored
-            timeout = int(
-                os.environ.get("PRESENTATION_STATE_LOCK_TIMEOUT_SECONDS", "30")
-            )
             for path in self._lock_paths:
                 if _is_cas_transaction_path(self.project_root, path):
                     anchored = self._cas_anchors.get(path)
@@ -969,6 +974,9 @@ class WorkflowTransaction:
         for anchored in self._recovery_anchors.values():
             anchored.close()
         self._recovery_anchors.clear()
+        if self._journal_guard is not None:
+            self._journal_guard.__exit__(None, None, None)
+            self._journal_guard = None
         if self._journal_anchor is not None:
             self._journal_anchor.close()
             self._journal_anchor = None

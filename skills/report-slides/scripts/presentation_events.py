@@ -30,6 +30,7 @@ from presentation_artifact_provenance import (
     validate_artifact_subject,
 )
 from presentation_transactions import _open_sidecar, require_transaction_recovery
+from presentation_transaction_journal_admission import journal_admission_guard
 
 
 EVENTS_RELATIVE_DIR = Path(".research/presentations/events")
@@ -74,29 +75,31 @@ def _locked_file(project_root: Path, path: Path) -> Iterator[None]:
     Raises:
         LockTimeoutError: If another process holds the lock too long.
     """
-    require_transaction_recovery(project_root, allow_publication_temporary=True)
-    lock_path = path.with_suffix(path.suffix + ".lock")
-    descriptor = _open_sidecar(path)
-    try:
-        deadline = time.monotonic() + LOCK_TIMEOUT_SECONDS
-        while True:
-            try:
-                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except OSError as exc:
-                if exc.errno not in (errno.EACCES, errno.EAGAIN):
-                    raise
-                if time.monotonic() >= deadline:
-                    raise LockTimeoutError(
-                        f"Could not acquire lock on {lock_path} within {LOCK_TIMEOUT_SECONDS}s"
-                    )
-                time.sleep(LOCK_POLL_INTERVAL_SECONDS)
-        require_transaction_recovery(project_root)
-        _ensure_research_gitignore(project_root)
-        yield
-    finally:
-        fcntl.flock(descriptor, fcntl.LOCK_UN)
-        os.close(descriptor)
+    with journal_admission_guard(project_root, LOCK_TIMEOUT_SECONDS):
+        require_transaction_recovery(project_root, allow_publication_temporary=True)
+        lock_path = path.with_suffix(path.suffix + ".lock")
+        descriptor = _open_sidecar(path)
+        try:
+            deadline = time.monotonic() + LOCK_TIMEOUT_SECONDS
+            while True:
+                try:
+                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except OSError as exc:
+                    if exc.errno not in (errno.EACCES, errno.EAGAIN):
+                        raise
+                    if time.monotonic() >= deadline:
+                        raise LockTimeoutError(
+                            f"Could not acquire lock on {lock_path} within "
+                            f"{LOCK_TIMEOUT_SECONDS}s"
+                        )
+                    time.sleep(LOCK_POLL_INTERVAL_SECONDS)
+            require_transaction_recovery(project_root)
+            _ensure_research_gitignore(project_root)
+            yield
+        finally:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+            os.close(descriptor)
 
 
 def events_shard_path(project_root: Path, when: datetime | None = None) -> Path:

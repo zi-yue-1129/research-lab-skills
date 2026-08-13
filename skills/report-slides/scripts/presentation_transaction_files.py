@@ -12,8 +12,8 @@ from typing import Any, Callable, Mapping, Sequence
 from presentation_no_follow import (
     AnchoredPath,
     MissingPathError,
+    NoFollowPathError,
     open_parent_no_follow,
-    read_regular_siblings,
     read_stable_regular,
 )
 
@@ -82,7 +82,17 @@ def journal_entry_names(project_root: Path) -> tuple[str, ...]:
     except MissingPathError:
         return ()
     try:
-        documents = read_regular_siblings(anchor)
+        documents: dict[str, bytes] = {}
+        for name in os.listdir(anchor.parent_fd):
+            metadata = os.stat(
+                name, dir_fd=anchor.parent_fd, follow_symlinks=False
+            )
+            if not stat.S_ISREG(metadata.st_mode):
+                raise NoFollowPathError(
+                    "journal child must be a regular no-follow file: "
+                    f"{anchor.display_path.with_name(name)}"
+                )
+            documents[name] = b""
         _validate_sibling_modes(anchor, documents)
         return tuple(sorted(documents))
     finally:
@@ -119,7 +129,17 @@ def durable_journal_names(
     except MissingPathError:
         return ()
     try:
-        documents = read_regular_siblings(anchor)
+        documents: dict[str, bytes] = {}
+        for name in os.listdir(anchor.parent_fd):
+            metadata = os.stat(
+                name, dir_fd=anchor.parent_fd, follow_symlinks=False
+            )
+            if not stat.S_ISREG(metadata.st_mode):
+                raise NoFollowPathError(
+                    "journal child must be a regular no-follow file: "
+                    f"{anchor.display_path.with_name(name)}"
+                )
+            documents[name] = b""
         _validate_sibling_modes(anchor, documents)
         durable: list[str] = []
         for name in sorted(documents):

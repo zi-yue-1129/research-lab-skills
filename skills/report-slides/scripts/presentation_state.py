@@ -20,6 +20,7 @@ from presentation_transactions import (
     incomplete_transaction_journals,
     require_transaction_recovery,
 )
+from presentation_transaction_journal_admission import journal_admission_guard
 from presentation_evidence_contracts import EVIDENCE_SCHEMA_VERSION
 from presentation_cli_errors import cli_error_payload
 from presentation_evidence_workflow import require_schema_v2
@@ -150,29 +151,31 @@ def _locked_file(project_root: Path, path: Path) -> Iterator[None]:
         LockTimeoutError: If the lock isn't acquired within
             LOCK_TIMEOUT_SECONDS.
     """
-    require_transaction_recovery(project_root, allow_publication_temporary=True)
-    lock_path = path.with_suffix(path.suffix + ".lock")
-    fd = _open_sidecar(path)
-    try:
-        deadline = time.monotonic() + LOCK_TIMEOUT_SECONDS
-        while True:
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except OSError as exc:
-                if exc.errno not in (errno.EACCES, errno.EAGAIN):
-                    raise
-                if time.monotonic() >= deadline:
-                    raise LockTimeoutError(
-                        f"Could not acquire lock on {lock_path} within {LOCK_TIMEOUT_SECONDS}s"
-                    )
-                time.sleep(LOCK_POLL_INTERVAL_SECONDS)
-        require_transaction_recovery(project_root)
-        _ensure_research_gitignore(project_root)
-        yield
-    finally:
-        fcntl.flock(fd, fcntl.LOCK_UN)
-        os.close(fd)
+    with journal_admission_guard(project_root, LOCK_TIMEOUT_SECONDS):
+        require_transaction_recovery(project_root, allow_publication_temporary=True)
+        lock_path = path.with_suffix(path.suffix + ".lock")
+        fd = _open_sidecar(path)
+        try:
+            deadline = time.monotonic() + LOCK_TIMEOUT_SECONDS
+            while True:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except OSError as exc:
+                    if exc.errno not in (errno.EACCES, errno.EAGAIN):
+                        raise
+                    if time.monotonic() >= deadline:
+                        raise LockTimeoutError(
+                            f"Could not acquire lock on {lock_path} within "
+                            f"{LOCK_TIMEOUT_SECONDS}s"
+                        )
+                    time.sleep(LOCK_POLL_INTERVAL_SECONDS)
+            require_transaction_recovery(project_root)
+            _ensure_research_gitignore(project_root)
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
 def _load_yaml_map(path: Path, top_key: str) -> Dict[str, Any]:
     """Load an id-keyed YAML document's records map.
     Args:
