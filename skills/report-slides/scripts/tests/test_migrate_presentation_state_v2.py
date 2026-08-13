@@ -177,6 +177,57 @@ def test_dry_run_is_zero_write_even_when_target_outputs_are_absent(tmp_path: Pat
     assert not list(presentations.glob("state.backup-*"))
 
 
+@pytest.mark.parametrize("source_version", [0, 1])
+def test_legacy_plan_path_is_emitted_as_matching_v2_path_alias(
+    tmp_path: Path, source_version: int
+) -> None:
+    """A canonical legacy plan path becomes both required schema-two aliases.
+
+    Removing the migration's plan-path normalization must make the target-state
+    rerun fail validation because the resulting record would retain only the
+    legacy ``plan_path`` key.
+    """
+    project = _legacy_project(tmp_path, source_version)
+    legacy_plan_path = "plans/deck-1-plan.yaml"
+    plan_document = project / legacy_plan_path
+    plan_document.parent.mkdir()
+    plan_document.write_text("schema_version: 1\n", encoding="utf-8")
+    _write_store(
+        project,
+        "plans.yaml",
+        {
+            "plan-1": {
+                "id": "plan-1",
+                "deck_id": "deck-1",
+                "version": 1,
+                "plan_path": legacy_plan_path,
+                "plan_sha256": "a" * 64,
+                "authored_by": "planner",
+            }
+        },
+        source_version,
+    )
+
+    dry_run = migration.migrate_state(project, dry_run=True)
+    migrated = migration.migrate_state(project)
+    plans = _read_yaml(_state(project) / "plans.yaml")["plans"]
+    rerun = migration.migrate_state(project)
+
+    assert dry_run["source_schema_version"] == source_version
+    assert dry_run["changed_paths"] == []
+    assert migrated["source_schema_version"] == source_version
+    assert plans["plan-1"]["plan_path"] == legacy_plan_path
+    assert plans["plan-1"]["path"] == legacy_plan_path
+    assert rerun == {
+        "source_schema_version": 2,
+        "target_schema_version": 2,
+        "migrated_ids": [],
+        "blocked_ids": [],
+        "blockers": {},
+        "changed_paths": [],
+    }
+
+
 def test_v2_noop_preserves_every_existing_byte_mode_mtime_and_lock_inode(tmp_path: Path) -> None:
     """A v2 rerun preserves every canonical operational lock exactly."""
     project = _legacy_project(tmp_path)

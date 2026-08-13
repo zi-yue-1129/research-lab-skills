@@ -109,6 +109,8 @@ def build_migration_plan(snapshot: EvidenceSnapshot) -> MigrationPlan:
     stores = _mutable_stores(snapshot)
     _validate_snapshot_scope(snapshot, stores)
     _validate_migrated_records(stores)
+    _normalize_legacy_plan_path_aliases(stores)
+    _validate_target_plan_records(stores)
     preliminary = _snapshot_with_stores(snapshot, stores)
     history_without_completion = _available_historical_projection(
         replace(
@@ -319,6 +321,39 @@ def _validate_migrated_records(
                 raise MigrationError(
                     f"invalid {store_name} migration record: {exc}"
                 ) from exc
+
+
+def _normalize_legacy_plan_path_aliases(
+    stores: Mapping[str, Mapping[str, dict[str, Any]]]
+) -> None:
+    """Emit the required schema-two plan path alias for validated legacy plans.
+
+    Args:
+        stores: Mutable state-store records already accepted by legacy contracts.
+    """
+    for record in stores.get("plans", {}).values():
+        if "plan_path" in record and "path" not in record:
+            record["path"] = record["plan_path"]
+
+
+def _validate_target_plan_records(
+    stores: Mapping[str, Mapping[str, Mapping[str, Any]]]
+) -> None:
+    """Validate normalized plans through the target schema-two contract.
+
+    Args:
+        stores: Complete mutable state-store records with normalized plan paths.
+
+    Raises:
+        MigrationError: If a normalized plan is not valid schema-two state.
+    """
+    for record in stores.get("plans", {}).values():
+        try:
+            validate_store_record("plans", record, relations=stores)
+        except EvidenceContractError as exc:
+            raise MigrationError(
+                f"invalid normalized plans migration record: {exc}"
+            ) from exc
 
 
 def _available_historical_projection(snapshot: EvidenceSnapshot) -> HistoricalProjection:

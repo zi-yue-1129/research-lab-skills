@@ -140,6 +140,58 @@ performed by the orchestrator itself — planning, review, and visual authoring
 are always dispatched to a named agent via the Task tool, and the orchestrator's
 job is to create records, validate agent output, and gate transitions.
 
+### Schema-v2 migration preflight
+
+Run the presentation workflow from the project root. Before the first workflow
+action for an existing presentation state, inspect the `version` or
+`schema_version` header in every YAML file under
+`.research/presentations/state/`. All existing state stores must have one
+shared schema version; mixed, malformed, or unsupported headers are not safe to
+infer from a single file.
+
+The required operator flow is:
+
+```text
+inspect schema -> migrate-state --dry-run -> migrate-state -> workflow action
+```
+
+Use the existing migration entry point; it is the only state-migration command:
+
+```bash
+PROJECT_ROOT="$(git rev-parse --show-toplevel)"
+MIGRATE="$(find ~/.claude -path "*/report-slides/scripts/migrate_presentation_state.py" | head -1)"
+
+STATE_DIR="$PROJECT_ROOT/.research/presentations/state"
+if [ -d "$STATE_DIR" ]; then
+  rg -n --glob '*.yaml' '^(version|schema_version):' "$STATE_DIR"
+else
+  echo "No presentation state exists; continue with Stage 1."
+fi
+
+# Preview first: this creates no locks, directories, sidecars, journals,
+# backups, CAS objects, or mtimes.
+python3 "$MIGRATE" --project-root "$PROJECT_ROOT" --dry-run --json
+
+# Apply only after reviewing the dry-run JSON report.
+python3 "$MIGRATE" --project-root "$PROJECT_ROOT" --json
+```
+
+Schema 0 and schema 1 are read-only workflow states. Any workflow write before
+migration fails with the structured JSON error `MigrationRequiredError` and
+identifies its source and required target schema version. After successful
+migration, schema 2 is the only workflow-write schema; re-running migration on
+schema 2 is an exact no-op.
+
+Schema-2 gates authorize only the immutable evidence envelope selected by the
+current deck pointer and the corresponding verified CAS bytes. They never fall
+back to a legacy event or a path-based assertion. Operational lock sidecars
+coordinate access only: they are not workflow evidence. Historical envelopes
+remain audit history, but an envelope marked `historical_unavailable` cannot
+authorize a current gate. A targeted revision preserves prior immutable
+evidence and clears the current preview, draft-approval, and completion
+evidence pointers; create and validate fresh current evidence before the next
+gated action.
+
 ### 1. Create the Deck
 
 Orchestrator. After Setup, before asking the user anything, create the Deck
