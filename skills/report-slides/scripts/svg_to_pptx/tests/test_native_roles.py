@@ -1,9 +1,10 @@
 import json
 from pathlib import Path
 
+import pytest
 from pptx import Presentation
 
-from svg_to_pptx.converter import SvgConverter
+from svg_to_pptx.converter import NativeObjectMarkerError, SvgConverter
 
 
 def _write_svg(tmp_path: Path, body: str) -> Path:
@@ -111,3 +112,17 @@ def test_group_role_wraps_child_shapes_in_native_group(tmp_path: Path):
     groups = [s for s in slide.shapes if s.shape_type == MSO_SHAPE_TYPE.GROUP]
     assert len(groups) == 1
     assert len(groups[0].shapes) == 2
+
+
+def test_missing_source_and_bbox_raises_native_object_marker_error(tmp_path: Path):
+    svg_path = _write_svg(tmp_path, (
+        '<g data-pptx-role="table">'
+        '<rect x="60" y="75" width="300" height="50" fill="#1e3a5f"/>'
+        '</g>'
+    ))
+    prs = Presentation()
+    layout = prs.slide_layouts[6]
+    conv = SvgConverter(str(svg_path))
+
+    with pytest.raises(NativeObjectMarkerError):
+        conv.convert(prs, layout)

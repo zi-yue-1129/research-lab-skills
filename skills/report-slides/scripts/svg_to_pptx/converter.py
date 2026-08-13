@@ -17,6 +17,12 @@ _XLINK_NS = "http://www.w3.org/1999/xlink"
 _CANVAS_TOLERANCE = 1e-6
 
 
+class NativeObjectMarkerError(ValueError):
+    """Raised when a data-pptx-role="table"/"chart" marker is missing or
+    malformed. Must propagate as a hard blocker -- never silently caught
+    by _dispatch_children's broad per-child exception guard."""
+
+
 @dataclass
 class CoordSystem:
     svg_w: float
@@ -197,6 +203,8 @@ class SvgConverter:
             try:
                 style = compute_style(elem, inherited)
                 self._dispatch_element(slide, elem, style)
+            except NativeObjectMarkerError:
+                raise
             except Exception as exc:
                 if self.verbose:
                     print(f"  [warn] {tag}: {exc}")
@@ -283,7 +291,7 @@ class SvgConverter:
         source = elem.get("data-pptx-source")
         bbox_raw = elem.get("data-pptx-bbox")
         if not source or not bbox_raw:
-            raise ValueError(
+            raise NativeObjectMarkerError(
                 f'data-pptx-role="{role}" requires both data-pptx-source and '
                 f"data-pptx-bbox (svg={self.svg_path})"
             )
