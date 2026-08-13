@@ -800,6 +800,30 @@ def test_manifest_with_modules_ref_pointing_at_missing_file_fails(tmp_path: Path
     assert any(issue.path == "modules_ref" for issue in issues)
 
 
+def test_manifest_without_pptx_construct_is_valid(tmp_path: Path) -> None:
+    # A manifest with no pptx_construct key at all must still pass -- the
+    # field is additive, not required.
+    manifest_path = _write_asset(tmp_path)
+    assert validate_manifest(manifest_path) == []
+
+
+def test_manifest_with_invalid_pptx_construct_is_rejected(tmp_path: Path) -> None:
+    asset_dir = tmp_path / "training-pipeline"
+    payload = _complete_payload(asset_dir)
+    payload["pptx_construct"] = "not_a_real_value"
+    manifest_path = _write_asset(tmp_path, payload=payload)
+    issues = validate_manifest(manifest_path)
+    assert "pptx_construct" in _issue_paths(issues)
+
+
+def test_manifest_with_valid_pptx_construct_passes(tmp_path: Path) -> None:
+    asset_dir = tmp_path / "training-pipeline"
+    payload = _complete_payload(asset_dir)
+    payload["pptx_construct"] = "native_table"
+    manifest_path = _write_asset(tmp_path, payload=payload)
+    assert validate_manifest(manifest_path) == []
+
+
 def test_cli_requires_exactly_one_validation_target(tmp_path: Path) -> None:
     """Reject missing and multiple mutually exclusive CLI targets."""
     manifest_path = _write_asset(tmp_path)

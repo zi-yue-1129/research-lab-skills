@@ -59,6 +59,18 @@ class ReuseAction(str, Enum):
     DERIVE = "derive"
 
 
+class PptxConstruct(str, Enum):
+    """Supported native PPTX construct kinds a module may end up as."""
+
+    NATIVE_TABLE = "native_table"
+    NATIVE_CHART = "native_chart"
+    NATIVE_GROUP = "native_group"
+    SVG_SHAPES = "svg_shapes"
+
+
+_PPTX_CONSTRUCT_VALUES = {member.value for member in PptxConstruct}
+
+
 @dataclass(frozen=True)
 class ValidationIssue:
     """Describe one deterministic validation failure.
@@ -124,6 +136,7 @@ def validate_manifest(manifest_path: Path) -> List[ValidationIssue]:
         issues,
     )
     _validate_review(document, path, issues)
+    _validate_pptx_construct(document, path, issues)
     _validate_route_provenance(
         authoring_route,
         source_paths,
@@ -625,6 +638,25 @@ def _validate_review(
         return
     if status == ReviewStatus.PASSED.value and not resolved.is_file():
         issues.append(_issue(path, "review.artifact", "review artifact does not exist"))
+
+
+def _validate_pptx_construct(document: Dict[str, Any], path: Path,
+                             issues: List[ValidationIssue]) -> None:
+    """Validate the optional pptx_construct field.
+
+    Unlike editability (required), pptx_construct is additive: manifests
+    written before this field existed simply don't have it, and that is
+    not itself a validation error -- absence just means the module has not
+    been migrated to a native PPTX construct yet.
+    """
+    if "pptx_construct" not in document:
+        return
+    value = document.get("pptx_construct")
+    if value not in _PPTX_CONSTRUCT_VALUES:
+        issues.append(_issue(
+            path, "pptx_construct",
+            f"must be one of {sorted(_PPTX_CONSTRUCT_VALUES)}, got {value!r}",
+        ))
 
 
 def _validate_route_provenance(
