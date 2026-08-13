@@ -62,6 +62,7 @@ class SvgConverter:
         self._connector_registry: List = []
         self._shape_registry: List = []
         self._pending_texts: List = []
+        self._group_collect: Optional[List[Any]] = None
 
     def convert(self, prs: Presentation, slide_layout: Any) -> Any:
         self._connector_registry = []
@@ -69,6 +70,7 @@ class SvgConverter:
         self._shape_labels = {}
         self._text_to_shape = {}
         self._pending_texts = []
+        self._group_collect = None
         slide = prs.slides.add_slide(slide_layout)
         self._resolve_defs()
         self._resolve_use_elements()
@@ -206,6 +208,8 @@ class SvgConverter:
             shape = dispatch_shape(
                 slide, elem, style, self.cs, self._shape_labels.get(id(elem))
             )
+            if shape is not None and self._group_collect is not None:
+                self._group_collect.append(shape)
             if shape is not None and tag in ("rect", "circle", "ellipse"):
                 try:
                     if tag == "rect":
@@ -236,14 +240,24 @@ class SvgConverter:
             self._connector_registry.extend(
                 [(conn, elem) for conn in conns]
             )
+            if self._group_collect is not None:
+                self._group_collect.extend(conns)
         elif tag == "path":
             from .path_parser import parse_path
             from .path_to_pptx import add_path_shape
             d = elem.get("d", "")
             if d:
-                add_path_shape(slide, parse_path(d), self.cs, style)
+                path_shape = add_path_shape(slide, parse_path(d), self.cs, style)
+                if path_shape is not None and self._group_collect is not None:
+                    self._group_collect.append(path_shape)
         elif tag == "g":
-            self._dispatch_children(slide, elem, style)
+            role = elem.get("data-pptx-role")
+            if role in ("table", "chart"):
+                self._dispatch_native_data(slide, elem, role)
+            elif role == "group":
+                self._dispatch_native_group(slide, elem, style)
+            else:
+                self._dispatch_children(slide, elem, style)
 
     def _bind_connectors(self, slide: Any) -> None:
         from .connector import build_anchor_map
@@ -259,6 +273,114 @@ class SvgConverter:
                     _try_bind(conn, begin_pt, end_pt, anchor_map)
                 except Exception:
                     pass
+
+    def _dispatch_native_data(self, slide: Any, elem: Any, role: str) -> None:
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        import pptx_native
+
+        source = elem.get("data-pptx-source")
+        bbox_raw = elem.get("data-pptx-bbox")
+        if not source or not bbox_raw:
+            raise ValueError(
+                f'data-pptx-role="{role}" requires both data-pptx-source and '
+                f"data-pptx-bbox (svg={self.svg_path})"
+            )
+        data = self._load_pptx_source(source)
+        bx, by, bw, bh = (float(v) for v in bbox_raw.split(","))
+        bbox = (self.cs.x(bx), self.cs.y(by), self.cs.x(bw), self.cs.y(bh))
+        style = self._pptx_style(elem)
+
+        if role == "table":
+            pptx_native.add_native_table(
+                slide, data["columns"], data["rows"], bbox, style,
+                highlight_col=data.get("highlight_col"),
+            )
+            return
+
+        chart_type = {"bar_chart": "bar", "line_chart": "line",
+                     "pie_chart": "pie"}.get(data.get("type"), "bar")
+        if chart_type == "pie":
+            series = [{"label": data.get("title", ""), "values": data.get("values", [])}]
+            pptx_native.add_native_chart(
+                slide, "pie", data["categories"], series, bbox, style,
+                colors=data.get("colors"),
+            )
+        else:
+            pptx_native.add_native_chart(
+                slide, chart_type, data["categories"], data["series"], bbox,
+                style, y_max=data.get("y_max"),
+            )
+
+    def _dispatch_native_group(self, slide: Any, elem: Any, inherited_style: Dict) -> None:
+        from .style_parser import compute_style
+        from .text_converter import add_textbox
+
+        collected: List[Any] = []
+        previous_sink = self._group_collect
+        self._group_collect = collected
+        local_texts: List = []
+        try:
+            for child in elem:
+                tag = _local_tag(child)
+                style = compute_style(child, inherited_style)
+                if tag == "text" and id(child) not in self._text_to_shape:
+                    local_texts.append((child, style))
+                    continue
+                self._dispatch_element(slide, child, style)
+            for text_elem, text_style in local_texts:
+                box = add_textbox(slide, text_elem, text_style, self.cs)
+                if box is not None:
+                    collected.append(box)
+        finally:
+            self._group_collect = previous_sink
+
+        if len(collected) >= 2:
+            import sys
+            from pathlib import Path
+            sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+            import pptx_native
+            pptx_native.add_native_group(slide, collected)
+
+    def _load_pptx_source(self, source: str) -> Dict[str, Any]:
+        import json
+        from pathlib import Path
+        base_dir = Path(self.svg_path).resolve().parent
+        if "#" in source:
+            filename, _, index_str = source.partition("#")
+            payload = json.loads((base_dir / filename).read_text(encoding="utf-8"))
+            target_index = int(index_str)
+            for entry in payload.get("slides", []):
+                if entry.get("index") == target_index:
+                    return entry
+            raise ValueError(f"slide index {target_index} not found in {filename}")
+        return json.loads((base_dir / source).read_text(encoding="utf-8"))
+
+    def _pptx_style(self, elem: Any) -> Dict[str, str]:
+        """Resolve the color/font style for a native table or chart.
+
+        Prefers an explicit ``data-pptx-style`` JSON attribute (the SVG
+        producer's already-resolved style values, so custom project styles
+        carry through); falls back to generate_slides.py's built-in
+        defaults when absent.
+        """
+        import json
+        defaults = {
+            "accent": "#1e3a5f", "white": "#ffffff", "card": "#f8fafc",
+            "bg": "#ffffff", "body": "#374151", "good": "#059669",
+            "danger": "#dc2626", "font": "'Helvetica Neue', Arial, sans-serif",
+        }
+        raw = elem.get("data-pptx-style")
+        if not raw:
+            return defaults
+        try:
+            overrides = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return defaults
+        merged = dict(defaults)
+        merged.update({k: v for k, v in overrides.items() if v})
+        return merged
 
 
 def _try_bind(conn: Any, begin_pt: tuple, end_pt: tuple, anchor_map: Dict) -> None:
