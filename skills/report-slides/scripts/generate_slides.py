@@ -224,26 +224,30 @@ def render_bar_chart(sl: dict, meta: dict) -> str:
     y_max      = float(sl.get("y_max", 100))
     note       = sl.get("note", "")
     footer     = meta.get("footer", "")
+    slide_index = sl.get("index", 0)
 
     parts = [frame(title, footer)]
+    chart_parts = []
 
-    # Gridlines & Y-axis labels
     for i in range(6):
         val = y_max * i / 5
         y   = CB - (val / y_max) * CH
-        parts.append(f'<line x1="{CL}" y1="{y:.1f}" x2="{CR}" y2="{y:.1f}" '
+        chart_parts.append(f'<line x1="{CL}" y1="{y:.1f}" x2="{CR}" y2="{y:.1f}" '
                      f'stroke="{S["border"]}" stroke-width="1"/>')
-        parts.append(f'<text x="{CL - 8}" y="{y + 4:.1f}" font-size="10" '
+        chart_parts.append(f'<text x="{CL - 8}" y="{y + 4:.1f}" font-size="10" '
                      f'fill="{S["muted"]}" text-anchor="end">{val:.0f}%</text>')
 
-    parts.append(f'<line x1="{CL}" y1="{CT}" x2="{CL}" y2="{CB}" '
+    chart_parts.append(f'<line x1="{CL}" y1="{CT}" x2="{CL}" y2="{CB}" '
                  f'stroke="{S["muted"]}" stroke-width="1.5"/>')
-    parts.append(f'<line x1="{CL}" y1="{CB}" x2="{CR}" y2="{CB}" '
+    chart_parts.append(f'<line x1="{CL}" y1="{CB}" x2="{CR}" y2="{CB}" '
                  f'stroke="{S["muted"]}" stroke-width="1.5"/>')
 
     n_cats = len(categories)
     n_ser  = len(series)
     if not n_cats or not n_ser:
+        parts.append(_wrap_pptx_role("chart", slide_index, chart_parts,
+                                     bbox=(60, 70, 1080, 500),
+                                     style_keys=("font",)))
         return svg("\n  ".join(parts))
 
     cat_slot = CW / n_cats
@@ -254,7 +258,7 @@ def render_bar_chart(sl: dict, meta: dict) -> str:
     for ci, cat in enumerate(categories):
         gx = CL + ci * cat_slot + pad
         lx = gx + group_w / 2
-        parts.append(f'<text x="{lx:.1f}" y="{CB + 20}" font-size="12" font-weight="600" '
+        chart_parts.append(f'<text x="{lx:.1f}" y="{CB + 20}" font-size="12" font-weight="600" '
                      f'fill="{S["body"]}" text-anchor="middle">{esc(cat)}</text>')
 
         for si, ser in enumerate(series):
@@ -267,27 +271,155 @@ def render_bar_chart(sl: dict, meta: dict) -> str:
             bh    = max((val / y_max) * CH, 2)
             by    = CB - bh
 
-            parts.append(f'<rect x="{bx:.1f}" y="{by:.1f}" '
+            chart_parts.append(f'<rect x="{bx:.1f}" y="{by:.1f}" '
                          f'width="{bar_w - 3:.1f}" height="{bh:.1f}" fill="{color}"/>')
             if bh > 16:
-                parts.append(f'<text x="{bx + (bar_w - 3) / 2:.1f}" y="{by - 4:.1f}" '
+                chart_parts.append(f'<text x="{bx + (bar_w - 3) / 2:.1f}" y="{by - 4:.1f}" '
                              f'font-size="11" font-weight="700" fill="{color}" '
                              f'text-anchor="middle">{val:.1f}%</text>')
 
-    # Legend
     lx = CL
     for si, ser in enumerate(series):
         color = ser.get("color", S["blue"])
-        parts.append(f'<rect x="{lx + si * 230}" y="{CB + 40}" '
+        chart_parts.append(f'<rect x="{lx + si * 230}" y="{CB + 40}" '
                      f'width="16" height="12" fill="{color}"/>')
-        parts.append(f'<text x="{lx + si * 230 + 22}" y="{CB + 51}" '
+        chart_parts.append(f'<text x="{lx + si * 230 + 22}" y="{CB + 51}" '
                      f'font-size="12" fill="{S["body"]}">{esc(ser.get("label", ""))}</text>')
 
     if note:
-        parts.append(f'<text x="{CR}" y="{CB + 51}" font-size="10" '
+        chart_parts.append(f'<text x="{CR}" y="{CB + 51}" font-size="10" '
                      f'fill="{S["muted"]}" text-anchor="end">{esc(note)}</text>')
 
+    parts.append(_wrap_pptx_role("chart", slide_index, chart_parts,
+                                 bbox=(60, 70, 1080, 500),
+                                 style_keys=("font",)))
     return svg("\n  ".join(parts))
+
+
+def render_line_chart(sl: dict, meta: dict) -> str:
+    """SVG preview for a line chart. Same slide_data.json schema as
+    bar_chart (categories/series/y_max/note); svg_to_pptx/converter.py
+    replaces this hand-drawn preview with a real native line chart."""
+    title      = sl.get("title", "")
+    categories = sl.get("categories", [])
+    series     = sl.get("series", [])
+    y_max      = float(sl.get("y_max", 100))
+    note       = sl.get("note", "")
+    footer     = meta.get("footer", "")
+    slide_index = sl.get("index", 0)
+
+    parts = [frame(title, footer)]
+    chart_parts = []
+
+    for i in range(6):
+        val = y_max * i / 5
+        y   = CB - (val / y_max) * CH
+        chart_parts.append(f'<line x1="{CL}" y1="{y:.1f}" x2="{CR}" y2="{y:.1f}" '
+                     f'stroke="{S["border"]}" stroke-width="1"/>')
+        chart_parts.append(f'<text x="{CL - 8}" y="{y + 4:.1f}" font-size="10" '
+                     f'fill="{S["muted"]}" text-anchor="end">{val:.0f}%</text>')
+    chart_parts.append(f'<line x1="{CL}" y1="{CT}" x2="{CL}" y2="{CB}" '
+                 f'stroke="{S["muted"]}" stroke-width="1.5"/>')
+    chart_parts.append(f'<line x1="{CL}" y1="{CB}" x2="{CR}" y2="{CB}" '
+                 f'stroke="{S["muted"]}" stroke-width="1.5"/>')
+
+    n_cats = len(categories)
+    if n_cats:
+        step = CW / max(n_cats - 1, 1)
+        for ci, cat in enumerate(categories):
+            x = CL + ci * step
+            chart_parts.append(f'<text x="{x:.1f}" y="{CB + 20}" font-size="12" '
+                         f'fill="{S["body"]}" text-anchor="middle">{esc(cat)}</text>')
+        for ser in series:
+            vals = ser.get("values", [])
+            color = ser.get("color", S["blue"])
+            points = []
+            for ci, val in enumerate(vals[:n_cats]):
+                x = CL + ci * step
+                y = CB - (float(val) / y_max) * CH
+                points.append(f"{x:.1f},{y:.1f}")
+                chart_parts.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="4" fill="{color}"/>')
+            if len(points) > 1:
+                chart_parts.append(f'<polyline points="{" ".join(points)}" '
+                             f'fill="none" stroke="{color}" stroke-width="2.5"/>')
+
+    if note:
+        chart_parts.append(f'<text x="{CR}" y="{CB + 51}" font-size="10" '
+                     f'fill="{S["muted"]}" text-anchor="end">{esc(note)}</text>')
+
+    parts.append(_wrap_pptx_role("chart", slide_index, chart_parts,
+                                 bbox=(60, 70, 1080, 500),
+                                 style_keys=("font",)))
+    return svg("\n  ".join(parts))
+
+
+def render_pie_chart(sl: dict, meta: dict) -> str:
+    """SVG preview for a pie chart. Schema: categories/values/colors(optional)/
+    note. svg_to_pptx/converter.py replaces this preview with a real native
+    pie chart."""
+    import math
+    title      = sl.get("title", "")
+    categories = sl.get("categories", [])
+    values     = sl.get("values", [])
+    colors     = sl.get("colors") or [S["blue"], S["good"], S["warn"], S["danger"], S["accent"]]
+    note       = sl.get("note", "")
+    footer     = meta.get("footer", "")
+    slide_index = sl.get("index", 0)
+
+    parts = [frame(title, footer)]
+    if not categories or not values:
+        return svg("\n  ".join(parts))
+
+    cx, cy, r = 420, 340, 200
+    total = sum(values) or 1
+    chart_parts = []
+    angle = -math.pi / 2
+    for i, val in enumerate(values):
+        frac = val / total
+        end_angle = angle + frac * 2 * math.pi
+        x1, y1 = cx + r * math.cos(angle), cy + r * math.sin(angle)
+        x2, y2 = cx + r * math.cos(end_angle), cy + r * math.sin(end_angle)
+        large_arc = 1 if (end_angle - angle) > math.pi else 0
+        color = colors[i % len(colors)]
+        chart_parts.append(
+            f'<path d="M{cx},{cy} L{x1:.1f},{y1:.1f} '
+            f'A{r},{r} 0 {large_arc} 1 {x2:.1f},{y2:.1f} Z" fill="{color}"/>'
+        )
+        angle = end_angle
+
+    for i, cat in enumerate(categories):
+        ly = 160 + i * 32
+        color = colors[i % len(colors)]
+        chart_parts.append(f'<rect x="700" y="{ly}" width="16" height="16" fill="{color}"/>')
+        chart_parts.append(f'<text x="724" y="{ly + 13}" font-size="13" '
+                     f'fill="{S["body"]}">{esc(cat)}</text>')
+
+    if note:
+        chart_parts.append(f'<text x="1100" y="600" font-size="10" fill="{S["muted"]}" '
+                     f'text-anchor="end">{esc(note)}</text>')
+
+    parts.append(_wrap_pptx_role("chart", slide_index, chart_parts,
+                                 bbox=(140, 90, 900, 480),
+                                 style_keys=("font",)))
+    return svg("\n  ".join(parts))
+
+
+def _wrap_pptx_role(role: str, slide_index: int, inner_parts: list,
+                    bbox: tuple, style_keys: tuple, node_id: str = "") -> str:
+    """Wrap hand-drawn preview markup in the data-pptx-role marker so
+    svg_to_pptx/converter.py materializes a real native PPTX object instead
+    of flattening these shapes. bbox is (x, y, w, h) in SVG user units."""
+    style_json = esc(json.dumps({k: S[k] for k in style_keys if k in S}))
+    bx, by, bw, bh = bbox
+    attrs = [
+        f'data-pptx-role="{role}"',
+        f'data-pptx-source="slide_data.json#{slide_index}"',
+        f'data-pptx-bbox="{bx:.1f},{by:.1f},{bw:.1f},{bh:.1f}"',
+        f'data-pptx-style="{style_json}"',
+    ]
+    if node_id:
+        attrs.append(f'data-node-id="{esc(node_id)}"')
+    return (f'<g {" ".join(attrs)}>\n  ' + "\n  ".join(inner_parts) + '\n  </g>')
 
 
 def render_table(sl: dict, meta: dict) -> str:
@@ -296,6 +428,7 @@ def render_table(sl: dict, meta: dict) -> str:
     rows          = sl.get("rows", [])
     highlight_col = sl.get("highlight_col")   # 0-indexed; colorizes +/- values
     footer        = meta.get("footer", "")
+    slide_index   = sl.get("index", 0)
 
     parts = [frame(title, footer)]
 
@@ -304,25 +437,26 @@ def render_table(sl: dict, meta: dict) -> str:
         return svg("\n  ".join(parts))
 
     tl, tr = 60, 1140
-    tw     = tr - tl
-    col_w  = tw / n_cols
-    row_h  = min(50, 450 / (len(rows) + 1))
-    top_y  = 75
+    tw      = tr - tl
+    col_w   = tw / n_cols
+    row_h   = min(50, 450 / (len(rows) + 1))
+    top_y   = 75
+    table_h = row_h * (len(rows) + 1)
 
-    # Header
-    parts.append(f'<rect x="{tl}" y="{top_y}" width="{tw}" '
-                 f'height="{row_h}" fill="{S["accent"]}"/>')
+    table_parts = [
+        f'<rect x="{tl}" y="{top_y}" width="{tw}" '
+        f'height="{row_h}" fill="{S["accent"]}"/>'
+    ]
     for ci, col in enumerate(columns):
         cx = tl + ci * col_w + col_w / 2
-        parts.append(f'<text x="{cx:.1f}" y="{top_y + row_h * 0.63:.1f}" '
+        table_parts.append(f'<text x="{cx:.1f}" y="{top_y + row_h * 0.63:.1f}" '
                      f'font-size="13" font-weight="700" fill="{S["white"]}" '
                      f'text-anchor="middle">{esc(col)}</text>')
 
-    # Data rows
     for ri, row in enumerate(rows):
         ry = top_y + (ri + 1) * row_h
         bg = S["card"] if ri % 2 == 0 else S["bg"]
-        parts.append(f'<rect x="{tl}" y="{ry:.1f}" width="{tw}" '
+        table_parts.append(f'<rect x="{tl}" y="{ry:.1f}" width="{tw}" '
                      f'height="{row_h:.1f}" fill="{bg}" '
                      f'stroke="{S["border"]}" stroke-width="0.5"/>')
         for ci, cell in enumerate(row):
@@ -335,12 +469,18 @@ def render_table(sl: dict, meta: dict) -> str:
                     color = S["good"]
                 elif "-" in cs:
                     color = S["danger"]
-            parts.append(f'<text x="{cx:.1f}" y="{cy:.1f}" font-size="13" '
+            table_parts.append(f'<text x="{cx:.1f}" y="{cy:.1f}" font-size="13" '
                          f'fill="{color}" text-anchor="middle">{esc(cell)}</text>')
 
-    parts.append(f'<rect x="{tl}" y="{top_y}" width="{tw}" '
-                 f'height="{row_h * (len(rows) + 1):.1f}" fill="none" '
+    table_parts.append(f'<rect x="{tl}" y="{top_y}" width="{tw}" '
+                 f'height="{table_h:.1f}" fill="none" '
                  f'stroke="{S["border"]}" stroke-width="1.5"/>')
+
+    parts.append(_wrap_pptx_role(
+        "table", slide_index, table_parts,
+        bbox=(tl, top_y, tw, table_h),
+        style_keys=("accent", "white", "card", "bg", "body", "good", "danger", "font"),
+    ))
 
     return svg("\n  ".join(parts))
 
@@ -447,34 +587,37 @@ def render_timeline(sl: dict, meta: dict) -> str:
     for i, (ev, x) in enumerate(zip(events, xs)):
         color = ev.get("color", S["accent"])
         above = i % 2 == 0
+        event_parts = []
 
-        parts.append(f'<circle cx="{x:.1f}" cy="{y0}" r="10" '
+        event_parts.append(f'<circle cx="{x:.1f}" cy="{y0}" r="10" '
                      f'fill="{color}" stroke="{S["bg"]}" stroke-width="2"/>')
 
-        # Connector
         if above:
-            parts.append(f'<line x1="{x:.1f}" y1="{y0 - 10}" x2="{x:.1f}" y2="{y0 - 28}" '
+            event_parts.append(f'<line x1="{x:.1f}" y1="{y0 - 10}" x2="{x:.1f}" y2="{y0 - 28}" '
                          f'stroke="{color}" stroke-width="1.5" stroke-dasharray="3,2"/>')
             ty = y0 - 46
         else:
-            parts.append(f'<line x1="{x:.1f}" y1="{y0 + 10}" x2="{x:.1f}" y2="{y0 + 28}" '
+            event_parts.append(f'<line x1="{x:.1f}" y1="{y0 + 10}" x2="{x:.1f}" y2="{y0 + 28}" '
                          f'stroke="{color}" stroke-width="1.5" stroke-dasharray="3,2"/>')
             ty = y0 + 42
 
         label = ev.get("label", "")
         label_lines = wrap(label, 18)
-        parts.append(tlines(label_lines, x, ty, 13, S["accent"], "middle", "700"))
+        event_parts.append(tlines(label_lines, x, ty, 13, S["accent"], "middle", "700"))
 
         date_str = ev.get("date", "")
         if date_str:
             dy = y0 + 28 if above else y0 - 20
-            parts.append(f'<text x="{x:.1f}" y="{dy}" font-size="10" '
+            event_parts.append(f'<text x="{x:.1f}" y="{dy}" font-size="10" '
                          f'fill="{S["muted"]}" text-anchor="middle">{esc(date_str)}</text>')
 
         detail = ev.get("detail", "")
         if detail:
             det_y = ty + len(label_lines) * 18 + 6
-            parts.append(tlines(wrap(detail, 20), x, det_y, 11, S["muted"], "middle"))
+            event_parts.append(tlines(wrap(detail, 20), x, det_y, 11, S["muted"], "middle"))
+
+        parts.append(f'<g data-pptx-role="group" data-node-id="event-{i}">\n    '
+                    + "\n    ".join(event_parts) + '\n  </g>')
 
     return svg("\n  ".join(parts))
 
@@ -526,6 +669,8 @@ RENDERERS = {
     "title":         render_title,
     "bullet_list":   render_bullet_list,
     "bar_chart":     render_bar_chart,
+    "line_chart":    render_line_chart,
+    "pie_chart":     render_pie_chart,
     "table":         render_table,
     "metric_cards":  render_metric_cards,
     "two_column":    render_two_column,
@@ -753,6 +898,10 @@ def main(arguments: Sequence[str] | None = None) -> int:
         generated += 1
 
     print(f"\n{generated} slide(s) written to {args.out}")
+
+    import shutil
+    shutil.copy2(args.data, os.path.join(args.out, "slide_data.json"))
+
     return 0
 
 
