@@ -42,6 +42,19 @@ class Finding:
 
 
 def load_thresholds(path: Path = DEFAULT_THRESHOLDS_PATH) -> Dict[str, float]:
+    """Load the configurable detection thresholds for the safety-net scan.
+
+    Args:
+        path: Path to the thresholds YAML file. Defaults to
+            `references/native_object_thresholds.yaml`.
+
+    Returns:
+        A dict with exactly the keys `min_grid_rows`, `min_grid_cols`,
+        `min_bar_count`, `min_cluster_shapes`, and `position_tolerance_px`.
+
+    Raises:
+        ValueError: If a required key is missing from the YAML document.
+    """
     doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     required = ("min_grid_rows", "min_grid_cols", "min_bar_count",
                 "min_cluster_shapes", "position_tolerance_px")
@@ -79,7 +92,23 @@ def _rect_box(elem: Any) -> Tuple[float, float, float, float]:
 
 
 def scan_svg(svg_path: Path, thresholds: Dict[str, float]) -> List[Finding]:
-    """Flag hand-drawn table/chart/node patterns missing a data-pptx-role marker."""
+    """Flag hand-drawn table/chart/node patterns missing a data-pptx-role marker.
+
+    Parses the given SVG source and looks for three unmarked hand-drawn
+    patterns: a grid of aligned rects (table_like), a baseline-aligned
+    cluster of varying-height rects (chart_like), and a `<g>` combining
+    several shapes with a text label (node_cluster_like). Any rect or `<g>`
+    nested under an ancestor carrying `data-pptx-role="table"|"chart"|
+    "group"` is treated as already handled and excluded from detection.
+
+    Args:
+        svg_path: Path to the SVG file to scan.
+        thresholds: Detection thresholds as returned by `load_thresholds`.
+
+    Returns:
+        A list of `Finding`s for every unmarked pattern detected in this
+        SVG; empty if the SVG is clean.
+    """
     tree = etree.parse(str(svg_path))
     root = tree.getroot()
     tol = thresholds["position_tolerance_px"]
@@ -162,6 +191,23 @@ def _scan_node_clusters(slide_name: str, root: Any,
 
 
 def scan_pptx(pptx_path: Path, thresholds: Dict[str, float]) -> List[Finding]:
+    """Flag autoshape clusters in a produced PPTX with no native counterpart.
+
+    Opens the given .pptx and, for each slide, looks for the same two
+    autoshape-cluster patterns `scan_svg` looks for in source SVGs (a grid
+    of row-aligned autoshapes, and a cluster of ungrouped autoshapes) but
+    only flags them when the slide has no accompanying native table, chart,
+    or Group shape -- i.e. when the converter appears to have fallen through
+    to shape-flattening despite (presumably) marked-up source SVG.
+
+    Args:
+        pptx_path: Path to the produced .pptx file to scan.
+        thresholds: Detection thresholds as returned by `load_thresholds`.
+
+    Returns:
+        A list of `Finding`s, one per flagged slide/pattern combination;
+        empty if every autoshape cluster has an accompanying native object.
+    """
     from pptx import Presentation
     from pptx.enum.shapes import MSO_SHAPE_TYPE
 
@@ -204,6 +250,21 @@ def scan_pptx(pptx_path: Path, thresholds: Dict[str, float]) -> List[Finding]:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """CLI entry point for validate_native_objects.py.
+
+    Parses `--svg-dir`/`--pptx` (mutually exclusive, one required) and an
+    optional `--thresholds` override, runs the corresponding scan, and
+    prints results: `OK: ...` on stdout and exit 0 when no findings, or
+    `ERROR <slide> [<kind>]: <message>` lines on stderr and exit 1 when
+    findings exist.
+
+    Args:
+        argv: Command-line arguments to parse, excluding the program name.
+            Defaults to `sys.argv[1:]` via argparse when None.
+
+    Returns:
+        Process exit code: 0 if no findings were flagged, 1 otherwise.
+    """
     parser = argparse.ArgumentParser(
         description="Detect hand-drawn table/chart/node patterns missing "
                      "native PPTX table/chart/group objects."
