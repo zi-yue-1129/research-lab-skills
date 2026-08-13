@@ -760,7 +760,12 @@ Output directory: `$SLIDES_DIR/reports/YYYY-MM-DD_<name>/`
 
 ##### [A] Python renderer — usually [V:DATA]
 
-**Supported types:** `title` `bullet_list` `bar_chart` `table` `metric_cards` `two_column` `timeline` `conclusion` `score_trajectory` `pipeline_status`
+**Supported types:** `title` `bullet_list` `bar_chart` `line_chart` `pie_chart` `table` `metric_cards` `two_column` `timeline` `conclusion` `score_trajectory` `pipeline_status`
+
+`bar_chart`, `line_chart`, `pie_chart`, `table`, and `timeline` are exported as
+real native PPTX chart/table/group objects — the renderer emits the
+`data-pptx-role` markers automatically (see §9.1). Prefer one of these types
+over hand-authored SVG whenever the content is tabular or chart data.
 
 Write `slide_data.json` then run:
 ```bash
@@ -791,36 +796,48 @@ python3 scripts/generate_slides.py --data <dir>/slide_data.json --out <dir>/ --s
       ],
       "y_max": 100, "note": "n=..." },
 
-    { "index": 3, "type": "table",
+    { "index": 3, "type": "line_chart",
+      "title": "...", "categories": ["E1", "E2", "E3"],
+      "series": [
+        { "label": "train loss", "color": "#3b82f6", "values": [80, 60, 45] }
+      ],
+      "y_max": 100, "note": "n=..." },
+
+    { "index": 4, "type": "pie_chart",
+      "title": "...", "categories": ["Train", "Dev", "Test"],
+      "values": [70, 15, 15],
+      "colors": ["#3b82f6", "#059669", "#d97706"], "note": "n=..." },
+
+    { "index": 5, "type": "table",
       "title": "...", "columns": ["Metric", "Before", "After", "Delta"],
       "rows": [["Accuracy", "81.6%", "100%", "+18.4%"]],
       "highlight_col": 3 },
 
-    { "index": 4, "type": "metric_cards",
+    { "index": 6, "type": "metric_cards",
       "title": "...", "metrics": [
         { "label": "Overall", "value": "99.8%", "color": "#059669", "change": "+27%" }
       ]},
 
-    { "index": 5, "type": "timeline",
+    { "index": 7, "type": "timeline",
       "title": "...", "events": [
         { "label": "v1 baseline", "date": "2024-10-01", "color": "#d97706", "detail": "72%" },
         { "label": "v2 final",    "date": "2024-11-02", "color": "#059669", "detail": "100%" }
       ]},
 
-    { "index": 6, "type": "two_column",
+    { "index": 8, "type": "two_column",
       "title": "...",
       "left":  { "title": "Problem",      "content": ["point 1", "point 2"] },
       "right": { "title": "This Run",     "content": ["point 1", "point 2"] } },
 
-    { "index": 7, "type": "bullet_list",
+    { "index": 9, "type": "bullet_list",
       "title": "...", "bullets": ["item 1", "item 2"], "numbered": true },
 
-    { "index": 8, "type": "conclusion",
+    { "index": 10, "type": "conclusion",
       "title": "...",
       "conclusions": ["finding 1", "finding 2"],
       "next_steps":  ["step 1", "step 2"] },
 
-    { "index": 9, "type": "score_trajectory",
+    { "index": 11, "type": "score_trajectory",
       "title": "Review Score Progression",
       "dimensions": ["Originality", "Methodology", "Clarity", "Citations", "Contribution"],
       "rounds": [
@@ -829,7 +846,7 @@ python3 scripts/generate_slides.py --data <dir>/slide_data.json --out <dir>/ --s
       ],
       "note": "D1-D5 rubric, scale 1-5" },
 
-    { "index": 10, "type": "pipeline_status",
+    { "index": 12, "type": "pipeline_status",
       "title": "Pipeline Progress",
       "stages": [
         { "number": 1, "name": "RESEARCH", "status": "PASS", "date": "2026-06-08" },
