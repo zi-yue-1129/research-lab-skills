@@ -504,8 +504,8 @@ class SvgConverter:
             f"in {filename} (svg={self.svg_path})"
         )
 
-    def _resolve_source_path(self, base_dir: Any, filename: str,
-                             source: str) -> Any:
+    def _resolve_source_path(self, base_dir: Path, filename: str,
+                             source: str) -> Path:
         """Resolve a sidecar filename, keeping it inside the SVG's directory.
 
         A marker may only reference data shipped alongside the deck, so
