@@ -1,18 +1,51 @@
 #!/usr/bin/env python3
-"""validate_deck_plan.py -- Schema validator for the Deck Plan (with its
-embedded SlidePlanEntry list) and Deck Approval contracts, used at
-Stages 3-5 of the report-slides multi-agent workflow.
+"""Validate strict Deck Plan and Deck Approval contracts.
+
+The validator is intentionally small and deterministic so workflow gates can
+reuse it without depending on a specific contract source format.
 """
+
+from __future__ import annotations
+
 import argparse
+from datetime import datetime
 import json
+import re
 import sys
 from pathlib import Path
-from typing import Any, List
+from typing import Any
 
 import yaml
 
+from presentation_contracts import (
+    load_contract,
+    validate_acyclic_dependencies,
+    validate_schema_version,
+)
+
 _VISUAL_TYPES = frozenset({"native", "data", "generative", "hybrid", "none"})
+_PLAN_STATUSES = frozenset({"planning", "reviewed"})
 _DECK_APPROVAL_DECISIONS = frozenset({"approve", "revise"})
+_APPROVAL_MODES = frozenset({"interactive", "explicit_noninteractive", "preapproved"})
+_REVISION_SUBJECT_TYPES = frozenset({"plan", "deck", "slide", "module"})
+_REVISION_REQUESTERS = frozenset({"user", "reviewer"})
+_REVISION_KINDS = frozenset(
+    {
+        "revise_slide",
+        "add_slide",
+        "remove_slide",
+        "reorder_slides",
+        "change_emphasis",
+        "change_audience",
+        "change_duration",
+        "review_finding",
+        "module_retry",
+        "slide_retry",
+    }
+)
+_RFC3339_Z = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$"
+)
 
 
 def _load_document(path: Path) -> Any:
@@ -24,13 +57,10 @@ def _load_document(path: Path) -> Any:
     Returns:
         The parsed document.
     """
-    text = path.read_text(encoding="utf-8")
-    if path.suffix in (".yaml", ".yml"):
-        return yaml.safe_load(text)
-    return json.loads(text)
+    return load_contract(path)
 
 
-def validate_slide_plan_entry(entry: Any, index: int) -> List[str]:
+def validate_slide_plan_entry(entry: Any, index: int) -> list[str]:
     """Validate one SlidePlanEntry embedded in a Deck Plan.
 
     Args:
@@ -41,7 +71,7 @@ def validate_slide_plan_entry(entry: Any, index: int) -> List[str]:
     Returns:
         A list of human-readable error strings; empty if valid.
     """
-    errors: List[str] = []
+    errors: list[str] = []
     prefix = f"slides[{index}]"
     if not isinstance(entry, dict):
         return [f"{prefix}: must be a mapping"]
@@ -52,18 +82,25 @@ def validate_slide_plan_entry(entry: Any, index: int) -> List[str]:
         value = entry.get(field)
         if not isinstance(value, str) or not value.strip():
             errors.append(f"{prefix}.{field}: required non-empty string")
-    if not isinstance(entry.get("evidence_refs"), list):
-        errors.append(f"{prefix}.evidence_refs: required list")
+    evidence_refs = entry.get("evidence_refs")
+    if not isinstance(evidence_refs, list) or not evidence_refs:
+        errors.append(f"{prefix}.evidence_refs: required non-empty list")
+    elif any(not isinstance(reference, str) or not reference.strip() for reference in evidence_refs):
+        errors.append(f"{prefix}.evidence_refs: every reference must be a non-empty string")
     for key in ("dependencies", "open_questions"):
-        if key in entry and not isinstance(entry[key], list):
-            errors.append(f"{prefix}.{key}: must be a list if present")
+        if key not in entry:
+            errors.append(f"{prefix}.{key}: required list")
+        elif not isinstance(entry[key], list):
+            errors.append(f"{prefix}.{key}: required list")
+        elif any(not isinstance(value, str) or not value.strip() for value in entry[key]):
+            errors.append(f"{prefix}.{key}: every value must be a non-empty string")
     visual_type = entry.get("intended_visual_type")
     if isinstance(visual_type, str) and visual_type not in _VISUAL_TYPES:
         errors.append(f"{prefix}.intended_visual_type: must be one of {sorted(_VISUAL_TYPES)}, got {visual_type!r}")
     return errors
 
 
-def validate_deck_plan(doc: Any) -> List[str]:
+def validate_deck_plan(doc: Any) -> list[str]:
     """Validate a full Deck Plan document.
 
     Args:
@@ -72,35 +109,60 @@ def validate_deck_plan(doc: Any) -> List[str]:
     Returns:
         A list of human-readable error strings; empty if valid.
     """
-    errors: List[str] = []
+    errors: list[str] = []
     if not isinstance(doc, dict):
         return ["document must be a mapping"]
-    for field in ("deck_id", "purpose", "audience"):
+
+    errors.extend(validate_schema_version(doc))
+    for field in ("deck_id", "purpose", "audience", "core_narrative", "authored_by"):
         value = doc.get(field)
         if not isinstance(value, str) or not value.strip():
             errors.append(f"{field}: required non-empty string")
+
+    plan_version = doc.get("plan_version")
+    if (
+        isinstance(plan_version, bool)
+        or not isinstance(plan_version, int)
+        or plan_version <= 0
+    ):
+        errors.append("plan_version: required positive integer")
+
+    status = doc.get("status")
+    if not isinstance(status, str) or status not in _PLAN_STATUSES:
+        errors.append(f"status: must be one of {sorted(_PLAN_STATUSES)}, got {status!r}")
+
     duration = doc.get("estimated_duration_minutes")
     if not isinstance(duration, (int, float)) or isinstance(duration, bool) or duration <= 0:
         errors.append("estimated_duration_minutes: required positive number")
+
     slides = doc.get("slides")
     if not isinstance(slides, list) or not slides:
         errors.append("slides: required non-empty list")
     else:
-        seen_ids: set = set()
+        seen_ids: set[str] = set()
+        dependency_edges: dict[str, list[str]] = {}
         for i, entry in enumerate(slides):
             errors.extend(validate_slide_plan_entry(entry, i))
             slide_id = entry.get("slide_id") if isinstance(entry, dict) else None
-            if slide_id:
+            if isinstance(slide_id, str) and slide_id.strip():
                 if slide_id in seen_ids:
                     errors.append(f"slides[{i}].slide_id: duplicate slide_id {slide_id!r}")
                 seen_ids.add(slide_id)
+                dependencies = entry.get("dependencies")
+                if isinstance(dependencies, list):
+                    dependency_edges[slide_id] = dependencies
+        errors.extend(validate_acyclic_dependencies(seen_ids, dependency_edges, "dependencies"))
+
     for field in ("excluded_content", "known_gaps"):
-        if field in doc and not isinstance(doc[field], list):
-            errors.append(f"{field}: must be a list if present")
+        value = doc.get(field)
+        if not isinstance(value, list):
+            errors.append(f"{field}: required list")
+        elif any(not isinstance(item, str) or not item.strip() for item in value):
+            errors.append(f"{field}: every value must be a non-empty string")
     return errors
 
 
-def validate_deck_approval(doc: Any) -> List[str]:
+def validate_deck_approval(doc: Any) -> list[str]:
     """Validate a Deck Approval document.
 
     Args:
@@ -109,23 +171,117 @@ def validate_deck_approval(doc: Any) -> List[str]:
     Returns:
         A list of human-readable error strings; empty if valid.
     """
-    errors: List[str] = []
+    errors: list[str] = []
     if not isinstance(doc, dict):
         return ["document must be a mapping"]
+
+    errors.extend(validate_schema_version(doc))
     for field in ("deck_id", "approved_by"):
         value = doc.get(field)
         if not isinstance(value, str) or not value.strip():
             errors.append(f"{field}: required non-empty string")
+
+    plan_version = doc.get("plan_version")
+    if (
+        isinstance(plan_version, bool)
+        or not isinstance(plan_version, int)
+        or plan_version <= 0
+    ):
+        errors.append("plan_version: required positive integer")
+
+    plan_sha256 = doc.get("plan_sha256")
+    if not isinstance(plan_sha256, str) or re.fullmatch(r"[0-9a-f]{64}", plan_sha256) is None:
+        errors.append("plan_sha256: required 64-character lowercase hexadecimal digest")
+
     decision = doc.get("decision")
-    if decision not in _DECK_APPROVAL_DECISIONS:
+    if not isinstance(decision, str) or decision not in _DECK_APPROVAL_DECISIONS:
         errors.append(f"decision: must be one of {sorted(_DECK_APPROVAL_DECISIONS)}, got {decision!r}")
     if decision == "revise":
         revisions = doc.get("revisions_requested")
         if not isinstance(revisions, list) or not revisions:
             errors.append("revisions_requested: required non-empty list when decision is 'revise'")
-    if "plan_version" in doc and not isinstance(doc["plan_version"], int):
-        errors.append("plan_version: must be an int if present")
+        else:
+            for index, revision in enumerate(revisions):
+                errors.extend(_validate_revision_request(revision, index))
+    elif decision == "approve" and doc.get("revisions_requested"):
+        errors.append("revisions_requested: must be empty when decision is 'approve'")
+
+    approved_at = doc.get("approved_at")
+    if not isinstance(approved_at, str) or not _is_rfc3339_z(approved_at):
+        errors.append("approved_at: required RFC3339 timestamp ending in Z")
+
+    approval_mode = doc.get("approval_mode")
+    if not isinstance(approval_mode, str) or approval_mode not in _APPROVAL_MODES:
+        errors.append(
+            f"approval_mode: must be one of {sorted(_APPROVAL_MODES)}, got {approval_mode!r}"
+        )
     return errors
+
+
+def _validate_revision_request(revision: Any, index: int) -> list[str]:
+    """Validate one retained Revision Request embedded in an approval.
+
+    Args:
+        revision: Parsed Revision Request value.
+        index: Position in ``revisions_requested`` for error context.
+
+    Returns:
+        Human-readable contract errors for the request.
+    """
+    prefix = f"revisions_requested[{index}]"
+    if not isinstance(revision, dict):
+        return [f"{prefix}: must be a mapping"]
+
+    errors: list[str] = []
+    subject_type = revision.get("subject_type")
+    if not isinstance(subject_type, str) or subject_type not in _REVISION_SUBJECT_TYPES:
+        errors.append(
+            f"{prefix}.subject_type: must be one of {sorted(_REVISION_SUBJECT_TYPES)}, "
+            f"got {subject_type!r}"
+        )
+
+    subject_id = revision.get("subject_id")
+    if not isinstance(subject_id, str) or not subject_id.strip():
+        errors.append(f"{prefix}.subject_id: required non-empty string")
+
+    requested_by = revision.get("requested_by")
+    if not isinstance(requested_by, str) or requested_by not in _REVISION_REQUESTERS:
+        errors.append(
+            f"{prefix}.requested_by: must be one of {sorted(_REVISION_REQUESTERS)}, "
+            f"got {requested_by!r}"
+        )
+
+    instructions = revision.get("instructions")
+    if not isinstance(instructions, str) or not instructions.strip():
+        errors.append(f"{prefix}.instructions: required non-empty string")
+
+    if "superseded_subject_id" not in revision:
+        errors.append(f"{prefix}.superseded_subject_id: required string or null")
+    else:
+        superseded_subject_id = revision["superseded_subject_id"]
+        if superseded_subject_id is not None and (
+            not isinstance(superseded_subject_id, str) or not superseded_subject_id.strip()
+        ):
+            errors.append(f"{prefix}.superseded_subject_id: required string or null")
+
+    revision_kind = revision.get("revision_kind")
+    if not isinstance(revision_kind, str) or revision_kind not in _REVISION_KINDS:
+        errors.append(
+            f"{prefix}.revision_kind: must be one of {sorted(_REVISION_KINDS)}, "
+            f"got {revision_kind!r}"
+        )
+    return errors
+
+
+def _is_rfc3339_z(value: str) -> bool:
+    """Return whether ``value`` is a valid UTC RFC3339 timestamp with ``Z``."""
+    if _RFC3339_Z.fullmatch(value) is None:
+        return False
+    try:
+        datetime.fromisoformat(value[:-1] + "+00:00")
+    except ValueError:
+        return False
+    return True
 
 
 def main() -> None:
@@ -140,7 +296,7 @@ def main() -> None:
     target = args.plan or args.approval
     try:
         doc = _load_document(target)
-    except (OSError, yaml.YAMLError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError, yaml.YAMLError, json.JSONDecodeError) as exc:
         errors = [f"failed to read/parse {target}: {exc}"]
     else:
         errors = validate_deck_plan(doc) if args.plan else validate_deck_approval(doc)

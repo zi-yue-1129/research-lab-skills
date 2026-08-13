@@ -1,6 +1,8 @@
 """Compose labeled raster previews into a visual review sheet."""
 
 import argparse
+import hashlib
+import json
 import math
 import sys
 from pathlib import Path
@@ -8,11 +10,59 @@ from typing import List, Optional, Sequence, Tuple
 
 from PIL import Image, ImageDraw, ImageOps
 
+from presentation_gates import ProductionGateError, assert_production_allowed
+from presentation_artifact_provenance import canonical_source_digest
+from presentation_state import find_project_root
+
 
 GAP: int = 8
 HEADER_HEIGHT: int = 28
 BACKGROUND: Tuple[int, int, int] = (245, 247, 250)
 SUPPORTED_EXTENSIONS = frozenset({".jpeg", ".jpg", ".png"})
+
+
+def contact_sheet_source_digest(input_paths: Sequence[Path]) -> str:
+    """Return a canonical digest for an ordered rendered-image set.
+
+    Args:
+        input_paths: Ordered PNG or JPEG paths that will be composed.
+
+    Returns:
+        SHA-256 over the ordered project-facing path strings and file digests.
+
+    Raises:
+        ValueError: If the input sequence is empty, duplicated, or contains an
+            unsupported extension.
+        FileNotFoundError: If a declared source image is absent.
+    """
+    paths = [Path(input_path) for input_path in input_paths]
+    if not paths:
+        raise ValueError("at least one input image is required")
+    if len(set(paths)) != len(paths):
+        raise ValueError("input image paths must be unique")
+    labels: list[str] = []
+    if all(path.is_absolute() for path in paths):
+        try:
+            project_root = find_project_root(paths[0].parent)
+            root = project_root.resolve()
+            for path in paths:
+                labels.append(path.resolve(strict=True).relative_to(root).as_posix())
+        except (OSError, ValueError, RuntimeError) as error:
+            raise ValueError(
+                "absolute input paths must belong to a project with a .git root"
+            ) from error
+    elif any(path.is_absolute() for path in paths):
+        raise ValueError("input paths must be all relative or all absolute")
+    else:
+        labels = [path.as_posix() for path in paths]
+    digests: list[str] = []
+    for path in paths:
+        if not path.is_file():
+            raise FileNotFoundError(f"input image not found: {path}")
+        if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+            raise ValueError(f"unsupported input extension for {path}: expected PNG or JPEG")
+        digests.append(hashlib.sha256(path.read_bytes()).hexdigest())
+    return canonical_source_digest(labels, digests)
 
 
 def compose_review_sheet(
@@ -50,6 +100,10 @@ def compose_review_sheet(
         raise ValueError("cell_width must be positive")
     if cell_height <= 0:
         raise ValueError("cell_height must be positive")
+    if len(set(paths)) != len(paths):
+        raise ValueError("input image paths must be unique")
+    if Path(output_path) in paths:
+        raise ValueError("output path must not overwrite an input image")
 
     for path in paths:
         if not path.is_file():
@@ -142,6 +196,17 @@ def _parse_arguments(arguments: Optional[Sequence[str]]) -> argparse.Namespace:
         help="Output review-sheet path.",
     )
     parser.add_argument(
+        "--deck-id",
+        required=True,
+        help="Approved presentation Deck identifier.",
+    )
+    parser.add_argument(
+        "--project-root",
+        type=Path,
+        default=None,
+        help="Project root (defaults to the nearest ancestor of the current directory).",
+    )
+    parser.add_argument(
         "--columns",
         type=_positive_integer,
         default=2,
@@ -172,6 +237,37 @@ def main(arguments: Optional[Sequence[str]] = None) -> int:
         Zero on success, or one when composition or output fails.
     """
     parsed = _parse_arguments(arguments)
+    try:
+        project_root = (
+            parsed.project_root.resolve()
+            if parsed.project_root is not None
+            else find_project_root(Path.cwd())
+        )
+        assert_production_allowed(project_root, parsed.deck_id)
+    except ProductionGateError as error:
+        print(
+            json.dumps(
+                {
+                    "error": type(error).__name__,
+                    "predicate": error.predicate,
+                    "deck_id": error.deck_id,
+                    "blockers": error.blockers,
+                }
+            )
+        )
+        return 1
+    except Exception as error:  # noqa: BLE001 - keep CLI output parseable
+        print(
+            json.dumps(
+                {
+                    "error": "ProductionGateError",
+                    "predicate": "production_allowed",
+                    "deck_id": parsed.deck_id,
+                    "blockers": [{"reason": "project_root_invalid", "message": str(error)}],
+                }
+            )
+        )
+        return 1
     try:
         compose_review_sheet(
             parsed.input_paths,

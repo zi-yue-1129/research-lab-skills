@@ -3,7 +3,11 @@ import json
 import subprocess
 import sys
 import yaml
+import pytest
 from pathlib import Path
+
+from presentation_state import StateParseError, load_decks, record_review
+
 
 SCRIPT = Path(__file__).resolve().parent.parent / "presentation_state.py"
 
@@ -22,6 +26,23 @@ def _run(cwd: Path, *args: str) -> subprocess.CompletedProcess:
     )
 
 
+@pytest.mark.parametrize("version", [0, 1, 3, True, False, 2.0, "2"])
+def test_state_loaders_reject_non_exact_schema_two_markers(
+    tmp_path: Path, version: object
+) -> None:
+    """State readers reject legacy, future, boolean, and numeric-lookalike versions."""
+    project = _make_project(tmp_path)
+    path = project / ".research" / "presentations" / "state" / "decks.yaml"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        yaml.safe_dump({"version": version, "decks": {}}, sort_keys=True),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(StateParseError, match="Unsupported schema version"):
+        load_decks(project)
+
+
 def test_create_deck_returns_new_record(tmp_path: Path) -> None:
     project = _make_project(tmp_path)
 
@@ -34,6 +55,14 @@ def test_create_deck_returns_new_record(tmp_path: Path) -> None:
     assert data["status"] == "planning"
     assert data["plan_version"] == 0
     assert data["created_by"] == "research_narrative_planner"
+
+
+def test_yes_draft_flag_is_exposed_by_state_cli(tmp_path: Path) -> None:
+    """Expose draft approval's explicit non-interactive mode separately."""
+    result = _run(tmp_path, "--help")
+
+    assert result.returncode == 0
+    assert "--yes-draft" in result.stdout
 
 
 def test_create_deck_without_title_errors(tmp_path: Path) -> None:
@@ -61,14 +90,15 @@ def test_set_deck_status_illegal_transition_errors(tmp_path: Path) -> None:
     project = _make_project(tmp_path)
     deck = json.loads(_run(project, "--create-deck", "--title", "T", "--json").stdout)
 
-    # planning -> approved directly is illegal; must pass through
-    # content_review and awaiting_approval first.
+    # Generic status cannot bypass the approval evidence action.
     result = _run(project, "--set-deck-status", "--deck-id", deck["id"], "--status", "approved", "--json")
 
     assert result.returncode == 1
     data = json.loads(result.stdout)
-    assert data["error"] == "ValueError"
-    assert "Illegal deck transition" in data["message"]
+    assert data["error"] == "ApprovalGateError"
+    assert data["predicate"] == "plan_approvable"
+    assert data["deck_id"] == deck["id"]
+    assert data["blockers"]
 
 
 def test_set_deck_status_unrecognized_status_errors(tmp_path: Path) -> None:
@@ -174,12 +204,15 @@ def test_set_slide_status_illegal_transition_errors(tmp_path: Path) -> None:
         project, "--create-slide", "--deck-id", deck["id"], "--plan-slide-id", "slide-01", "--title", "T", "--json",
     ).stdout)
 
-    # planned -> passed directly is illegal.
+    # Generic status cannot bypass independent production reviews.
     result = _run(project, "--set-slide-status", "--slide-id", slide["id"], "--status", "passed", "--json")
 
     assert result.returncode == 1
     data = json.loads(result.stdout)
-    assert data["error"] == "ValueError"
+    assert data["error"] == "ReviewGateError"
+    assert data["predicate"] == "slide_passable"
+    assert data["deck_id"] == deck["id"]
+    assert data["blockers"]
 
 
 def test_set_slide_status_unknown_slide_id_errors(tmp_path: Path) -> None:
@@ -294,9 +327,9 @@ def test_module_cannot_start_producing_with_unresolved_dependency(tmp_path: Path
     assert "unresolved dependencies" in data["message"]
 
 
-def test_module_can_start_producing_once_dependency_passed(tmp_path: Path) -> None:
+def test_module_cannot_be_marked_passed_without_review_evidence(tmp_path: Path) -> None:
     project = _make_project(tmp_path)
-    _, slide_id = _make_deck_and_slide(project)
+    deck_id, slide_id = _make_deck_and_slide(project)
     upstream = json.loads(_run(
         project, "--create-visual-module", "--slide-id", slide_id,
         "--module-key", "upstream", "--module-type", "architecture", "--json",
@@ -306,15 +339,19 @@ def test_module_can_start_producing_once_dependency_passed(tmp_path: Path) -> No
         "--module-key", "downstream", "--module-type", "architecture",
         "--dependencies", upstream["id"], "--json",
     ).stdout)
-    for status in ("ready", "assigned", "producing", "review_required", "passed"):
+    for status in ("ready", "assigned", "producing", "review_required"):
         _run(project, "--set-module-status", "--module-id", upstream["id"], "--status", status, "--json")
     for status in ("ready", "assigned"):
         _run(project, "--set-module-status", "--module-id", downstream["id"], "--status", status, "--json")
 
-    result = _run(project, "--set-module-status", "--module-id", downstream["id"], "--status", "producing", "--json")
+    result = _run(project, "--set-module-status", "--module-id", upstream["id"], "--status", "passed", "--json")
 
-    assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout)["status"] == "producing"
+    assert result.returncode == 1
+    data = json.loads(result.stdout)
+    assert data["error"] == "ReviewGateError"
+    assert data["predicate"] == "module_passable"
+    assert data["deck_id"] == deck_id
+    assert data["blockers"]
 
 
 def test_two_independent_modules_can_both_reach_producing(tmp_path: Path) -> None:
@@ -344,15 +381,12 @@ def test_record_review_returns_new_event(tmp_path: Path) -> None:
     project = _make_project(tmp_path)
     deck_id, _ = _make_deck_and_slide(project)
 
-    result = _run(
-        project, "--record-review", "--subject-type", "deck", "--subject-id", deck_id,
-        "--reviewer-role", "content_reviewer", "--status", "failed",
-        "--findings-json", json.dumps([{"kind": "unsupported-claim", "description": "Slide 2 claims X without a citation"}]),
-        "--round", "1", "--json",
+    data = record_review(
+        project, "deck", deck_id, reviewer_id="reviewer", reviewer_role="content_reviewer",
+        status="failed", findings=[{"kind": "unsupported-claim", "description": "Slide 2 claims X without a citation"}],
+        round_number=1,
     )
 
-    assert result.returncode == 0, result.stderr
-    data = json.loads(result.stdout)
     assert data["id"].startswith("rev_")
     assert data["subject_type"] == "deck"
     assert data["subject_id"] == deck_id
@@ -372,7 +406,7 @@ def test_record_review_invalid_subject_type_errors(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     data = json.loads(result.stdout)
-    assert data["error"] == "ValueError"
+    assert data["error"] == "ReviewGateError"
 
 
 def test_record_review_invalid_status_errors(tmp_path: Path) -> None:
@@ -399,7 +433,8 @@ def test_record_review_unknown_subject_id_errors(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     data = json.loads(result.stdout)
-    assert data["error"] == "SlideNotFoundError"
+    assert data["error"] == "ReviewGateError"
+    assert set(data) == {"error", "predicate", "deck_id", "blockers"}
 
 
 def test_create_revision_request_returns_new_record(tmp_path: Path) -> None:
@@ -483,20 +518,29 @@ def test_check_production_allowed_blocks_before_approved(tmp_path: Path) -> None
 
     assert result.returncode == 1
     data = json.loads(result.stdout)
-    assert data["error"] == "ProductionNotAllowedError"
+    assert data["error"] == "ProductionGateError"
+    assert data["predicate"] == "production_allowed"
+    assert data["deck_id"] == deck["id"]
+    assert data["blockers"]
 
 
 def test_check_production_allowed_passes_at_approved(tmp_path: Path) -> None:
     project = _make_project(tmp_path)
     deck = json.loads(_run(project, "--create-deck", "--title", "T", "--json").stdout)
-    for status in ("content_review", "awaiting_approval", "approved"):
+    for status in ("content_review", "awaiting_approval"):
         _run(project, "--set-deck-status", "--deck-id", deck["id"], "--status", status, "--json")
+
+    approve = _run(project, "--set-deck-status", "--deck-id", deck["id"], "--status", "approved", "--json")
+    assert approve.returncode == 1
+    assert json.loads(approve.stdout)["error"] == "ApprovalGateError"
 
     result = _run(project, "--check-production-allowed", "--deck-id", deck["id"], "--json")
 
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 1
     data = json.loads(result.stdout)
-    assert data["status"] == "approved"
+    assert data["error"] == "ProductionGateError"
+    assert data["predicate"] == "production_allowed"
+    assert data["deck_id"] == deck["id"]
 
 
 def test_check_production_allowed_unknown_deck_id_errors(tmp_path: Path) -> None:
@@ -506,7 +550,8 @@ def test_check_production_allowed_unknown_deck_id_errors(tmp_path: Path) -> None
 
     assert result.returncode == 1
     data = json.loads(result.stdout)
-    assert data["error"] == "DeckNotFoundError"
+    assert data["error"] == "ProductionGateError"
+    assert set(data) == {"error", "predicate", "deck_id", "blockers"}
 
 
 def test_query_returns_deck_with_slides_modules_and_revisions(tmp_path: Path) -> None:
@@ -554,6 +599,177 @@ def test_query_after_reinvocation_reflects_durable_state_with_no_duplicates(tmp_
     assert first == second
     assert len(second["slides"]) == 1
     assert second["slides"][0]["status"] == "ready"
+
+
+def test_query_includes_review_history_and_next_actions(tmp_path: Path) -> None:
+    """Query exposes role-specific review history and the next legal action."""
+    project = _make_project(tmp_path)
+    deck_id, slide_id = _make_deck_and_slide(project)
+
+    from presentation_state import record_review
+    record_review(project, "slide", slide_id, "scientific-reviewer", "scientific", "passed")
+
+    resumed = json.loads(_run(project, "--query", "--deck-id", deck_id, "--json").stdout)
+    assert resumed["review_results"][0]["reviewer_role"] == "scientific"
+    assert resumed["next_actions"] == ["record_visual_quality_review"]
+
+
+def test_query_has_exact_resume_key_set(tmp_path: Path) -> None:
+    """Resume snapshots expose the complete stable public key set."""
+    project = _make_project(tmp_path)
+    deck_id, _ = _make_deck_and_slide(project)
+    snapshot = json.loads(_run(project, "--query", "--deck-id", deck_id, "--json").stdout)
+
+    assert set(snapshot) == {
+        "deck",
+        "plans",
+        "approval",
+        "slides",
+        "visual_modules",
+        "assignments",
+        "artifacts",
+        "review_results",
+        "revision_requests",
+        "draft_preview",
+        "draft_decision",
+        "blockers",
+        "next_actions",
+    }
+
+
+def test_legacy_keyword_review_call_persists_unverifiable_identity(tmp_path: Path) -> None:
+    """Legacy keyword calls remain valid without inventing reviewer identity."""
+    project = _make_project(tmp_path)
+    deck_id, _ = _make_deck_and_slide(project)
+    from presentation_state import load_review_results, record_review
+
+    result = record_review(
+        project,
+        "deck",
+        deck_id,
+        reviewer_role="content_reviewer",
+        status="passed",
+    )
+
+    assert result["reviewer_id"] is None
+    assert load_review_results(project)[0]["reviewer_id"] is None
+
+
+@pytest.mark.parametrize("reviewer_id", ["", "   ", 123, object()])
+def test_record_review_rejects_invalid_reviewer_identity(
+    tmp_path: Path, reviewer_id: object
+) -> None:
+    """Invalid reviewer IDs are rejected before an event can be persisted."""
+    project = _make_project(tmp_path)
+    deck_id, _ = _make_deck_and_slide(project)
+    from presentation_state import load_review_results, record_review
+
+    with pytest.raises(ValueError, match="reviewer_id"):
+        record_review(
+            project,
+            "deck",
+            deck_id,
+            reviewer_id=reviewer_id,
+            reviewer_role="content_reviewer",
+            status="passed",
+        )
+
+    assert load_review_results(project) == []
+
+
+def test_plan_review_does_not_satisfy_deck_review_action(tmp_path: Path) -> None:
+    """A plan review cannot satisfy the deck review requirement for its ID."""
+    project = _make_project(tmp_path)
+    deck_id, _ = _make_deck_and_slide(project)
+    from presentation_state import query, record_review, register_plan_record
+
+    register_plan_record(project, deck_id, "plans/plan.yaml", "a" * 64, "planner")
+    record_review(
+        project,
+        "plan",
+        deck_id,
+        reviewer_id="reviewer",
+        reviewer_role="content_reviewer",
+        status="passed",
+    )
+
+    snapshot = query(project, deck_id)
+
+    assert snapshot["next_actions"] == ["record_content_review"]
+
+
+def test_latest_review_round_controls_effective_next_action(tmp_path: Path) -> None:
+    """A later failed role review supersedes an earlier passing round."""
+    project = _make_project(tmp_path)
+    deck_id, slide_id = _make_deck_and_slide(project)
+    from presentation_state import record_review
+    record_review(project, "slide", slide_id, "scientific-a", "scientific", "passed", round_number=1)
+    record_review(project, "slide", slide_id, "scientific-a", "scientific", "failed", round_number=2)
+
+    snapshot = json.loads(_run(project, "--query", "--deck-id", deck_id, "--json").stdout)
+
+    assert len(snapshot["review_results"]) == 2
+    assert snapshot["next_actions"] != ["record_visual_quality_review"]
+    assert any(blocker["reason"] == "review:failed" for blocker in snapshot["blockers"])
+
+
+def test_integrity_scan_catches_supersession_dependency_and_ownership_drift(tmp_path: Path) -> None:
+    """Integrity diagnostics cover all new record foreign keys."""
+    project = _make_project(tmp_path)
+    deck_id, slide_id = _make_deck_and_slide(project)
+    other_deck = json.loads(_run(project, "--create-deck", "--title", "Other", "--json").stdout)
+    plans_path = project / ".research" / "presentations" / "state" / "plans.yaml"
+    assignments_path = project / ".research" / "presentations" / "state" / "assignments.yaml"
+    plans_path.parent.mkdir(parents=True, exist_ok=True)
+    plans_path.write_text(
+        yaml.safe_dump(
+            {
+                "version": 2,
+                "plans": {
+                    "wrong-key": {
+                        "id": "plan-real",
+                        "deck_id": deck_id,
+                        "version": 1,
+                        "supersedes_plan_id": "plan-missing",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    assignments_path.write_text(
+        yaml.safe_dump(
+            {
+                "version": 2,
+                "assignments": {
+                    "assignment-real": {
+                        "id": "assignment-real",
+                        "deck_id": deck_id,
+                        "slide_id": slide_id,
+                        "module_id": None,
+                        "dependencies": ["module-missing"],
+                    },
+                    "assignment-other": {
+                        "id": "assignment-other",
+                        "deck_id": other_deck["id"],
+                        "slide_id": slide_id,
+                        "module_id": None,
+                        "dependencies": [],
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(project, "--validate", "--json")
+
+    assert result.returncode == 0, result.stderr
+    violations = json.loads(result.stdout)["violations"]
+    assert any(v["field"] == "id" and v["entity"] == "plan" for v in violations)
+    assert any(v["field"] == "supersedes_plan_id" for v in violations)
+    assert any(v["field"] == "dependencies" for v in violations)
+    assert any(v["field"] == "slide_id" and v["entity"] == "assignment" for v in violations)
 
 
 def test_validate_on_clean_project_reports_no_violations(tmp_path: Path) -> None:

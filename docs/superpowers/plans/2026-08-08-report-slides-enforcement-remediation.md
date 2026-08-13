@@ -626,6 +626,15 @@ git add skills/report-slides/scripts/migrate_presentation_state.py \
 git commit -m "feat(report-slides): migrate gated presentation state"
 ```
 
+#### Historical context: superseded by evidence schema v2
+
+This Task 8 records the original schema-v1 remediation approach and remains
+historical context only. Its migration behavior is superseded by the approved
+[Report Slides Evidence Schema v2 Design](../specs/2026-08-09-report-slides-evidence-v2-design.md)
+and the corresponding [Evidence Schema v2 Implementation Plan](2026-08-09-report-slides-evidence-v2.md).
+The schema-v2 work defines immutable evidence envelopes, CAS-backed current
+pointers, migration from schemas 0/1, and the no-legacy-fallback gate model.
+
 ---
 
 ### Task 9: Align orchestrator instructions, personas, and setup packaging
