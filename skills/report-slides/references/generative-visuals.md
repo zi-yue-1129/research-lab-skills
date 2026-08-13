@@ -88,6 +88,7 @@ For a raster base plus overlay, declare:
 ```yaml
 authoring_route: hybrid
 editability: hybrid
+pptx_construct: native_group
 source_files:
   - overlay.svg
 generation:
@@ -99,6 +100,41 @@ generation:
 The overlay and raster use the same `1200 x 675` coordinate system. The
 manifest and completion record disclose which pixels remain raster and why.
 
+### Native PPTX object markers in the overlay
+
+The overlay SVG is converted to individual native PowerPoint shapes by
+`svg_to_pptx/converter.py`, so it carries the same non-negotiable marker rule
+as any other hand-authored SVG in this skill:
+
+> Any element that is one semantic visual unit — a diagram/flowchart node
+> (background shape + icon + label), a timeline/milestone event, a legend
+> entry, a callout box with its leader and text — MUST be wrapped in
+> `<g data-pptx-role="group" data-node-id="...">`. Tabular data MUST be
+> authored as `data-pptx-role="table"` with a `data-pptx-source` sidecar file,
+> never as hand-drawn grid rects/lines. Chart data MUST be authored as
+> `data-pptx-role="chart"` with a `data-pptx-source` sidecar file, never as
+> hand-drawn bars/lines/pie wedges. Producing a table or chart without these
+> markers, or a diagram node as ungrouped loose shapes, is a hard blocker at
+> Stage 9 — not a style preference.
+
+This matters more here than elsewhere: the "Editable overlay contract" already
+forces every legend, callout, axis, and numeric claim out of the pixels and
+into the overlay, so the overlay is precisely where unmarked hand-drawn
+legends and value tables would otherwise accumulate. `data-pptx-bbox`
+("x,y,w,h") is required on `table`/`chart` markers and uses the same
+`1200 x 675` coordinate system as the rest of the overlay; `group` markers
+derive their extent from their children and need no bbox.
+
+Record the resulting construct as `pptx_construct` in `manifest.yaml`
+(`native_table` / `native_chart` / `native_group` / `svg_shapes`). Verify with:
+
+```bash
+python3 scripts/validate_native_objects.py --svg-dir <dir containing overlay.svg>
+```
+
+A non-zero exit is a hard blocker; fix the markup rather than lowering
+`pptx_construct` to `svg_shapes`.
+
 ## Failure handling
 
 - Missing image-generation capability: record a blocker and stop the visual.
@@ -108,6 +144,10 @@ manifest and completion record disclose which pixels remain raster and why.
   regions are available.
 - Factual data or labels requested inside the image: move them to native SVG;
   do not ask the image model to draw them.
+- Unmarked table, chart, or node-cluster markup in the overlay
+  (`validate_native_objects.py` exits non-zero): add the required
+  `data-pptx-role` marker and re-run the check; do not proceed with the
+  finding outstanding.
 - Generated fake text, misleading structure, or visible artifacts: retain the
   failing render for diagnosis, revise the prompt or source, and repeat visual
   review.

@@ -34,6 +34,8 @@ Begin by analyzing the Slide Specification's `complexity_signals` and `layout_re
    - `generative`: Diagrams, flowcharts, conceptual illustrations, hand-drawn or AI-generated visuals.
    - `hybrid`: Mix of data and generative (e.g., an annotated chart).
 
+   **Any piece whose content is tabular or chart data MUST be routed `data` (or `hybrid` with the data part isolated in its own module) — never folded into a `generative` module as hand-drawn grid rects, bars, or pie wedges.** The `data` route reaches `generate_slides.py`, which emits the `data-pptx-role` markers that make the exported PPTX carry a real table/chart object. Burying a table inside a generative module is a hard blocker at Stage 9 (`validate_native_objects.py`), not a style preference. See "Native PPTX Object Requirement" below.
+
 3. **Assign Module Type** — Match each piece to one of four module types (and their corresponding worker agents in Stage 9):
    - `data_visualization`: Charts, graphs, tables (`data_visualization_worker_agent`).
    - `architecture`: System diagrams, flowcharts, structural visualizations (`architecture_diagram_worker_agent`).
@@ -55,6 +57,19 @@ Begin by analyzing the Slide Specification's `complexity_signals` and `layout_re
    - If no editability is specified, omit this field.
 
 8. **Style Tokens Reference** — Set `style_tokens_ref` to the path of a style file (e.g., `"tokens/slide-styles.yaml"`), or `null` if using default styles.
+
+## Native PPTX Object Requirement
+
+Your decomposition determines which worker authors each piece of SVG, and therefore which pieces can become real, editable PowerPoint objects on export. The rule the Stage 9 workers must follow — and that your module boundaries must make possible:
+
+> Any element that is one semantic visual unit — a diagram/flowchart node (background shape + icon + label), a timeline/milestone event, a legend entry — MUST be wrapped in `<g data-pptx-role="group" data-node-id="...">`. Tabular data MUST be authored as `data-pptx-role="table"` with a `data-pptx-source` sidecar file, never as hand-drawn grid rects/lines. Chart data MUST be authored as `data-pptx-role="chart"` with a `data-pptx-source` sidecar file, never as hand-drawn bars/lines/pie wedges. Producing a table or chart without these markers, or a diagram node as ungrouped loose shapes, is a hard blocker at Stage 9 — not a style preference.
+
+Two consequences for decomposition:
+
+- **Do not split one semantic node across modules.** A node's background shape, icon, and label must live in a single module so its worker can wrap them in one `data-pptx-role="group"` marker. A module boundary drawn through the middle of a node makes that grouping impossible.
+- **Do not merge tabular or chart content into a diagram module.** Give it its own `data`-route `data_visualization` module with its own `data-pptx-source` payload, so the converter materializes a native table/chart instead of flattening a hand-drawn grid.
+
+Record the resulting construct in each module's manifest via `pptx_construct` (`native_table` / `native_chart` / `native_group` / `svg_shapes`) when the workers produce it; `svg_shapes` means the module needs remediation, not that it passed.
 
 ## Output Format
 
@@ -110,3 +125,4 @@ Every module in your specification must satisfy these criteria. **Note:** Some c
 - **Reuse identity validity:** When `reuse_of` is set (not null), it must name a module id that exists in the project's manifests—not a fabricated id.
 - **Anchor naming consistency:** `input_anchors` and `output_anchors` should use consistent, descriptive naming (e.g., `"data-in"`, `"chart-out"`) to make connections readable.
 - **Message clarity:** The `message` field must concisely state the single most important thing this visual communicates; avoid vague or compound messages.
+- **Native-object routability:** No module boundary splits one semantic node (background shape + icon + label) across two modules, and no tabular/chart content is folded into a `generative` module. **(Manual check—not validated by script; enforced downstream by `validate_native_objects.py` at Stage 9.)**
