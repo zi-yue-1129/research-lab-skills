@@ -1,9 +1,48 @@
 # Configurable heuristic thresholds for validate_native_objects.py's
-# safety-net scan. These are deliberately loose -- the primary defense is
-# the data-pptx-role authoring rule in SKILL.md Stage 9.1 and the worker
-# agent instructions; this script only catches patterns the rule missed.
+# safety-net scan. The primary defense is the data-pptx-role authoring rule
+# in SKILL.md Stage 9.1 and the worker agent instructions; this script only
+# catches patterns the rule missed.
+#
+# The detector is deliberately tuned for PRECISION over recall: it must never
+# block the skill's own routine card/two-column/conclusion layouts, which are
+# multi-shape but are NOT hand-drawn tables/charts/diagram nodes. Missing an
+# unmarked pattern (false negative) is an accepted residual risk per the
+# design spec; blocking a compliant deck (false positive) is not.
+#
+# All *_px values are expressed in the skill's reference canvas
+# (1200 x 675 SVG user units); PPTX-mode geometry is normalized back into
+# that canvas before the thresholds are applied.
+
+# --- table grid ---
+# A grid row is >= min_grid_cols same-sized, non-overlapping rects sharing a
+# top edge; a table is >= min_grid_rows such rows with matching column
+# positions, stacked with at most max_row_gap_px between them (table cells
+# are adjacent; card/panel layouts are separated by visible gutters).
 min_grid_rows: 2
 min_grid_cols: 2
+max_row_gap_px: 8
+
+# --- bar chart ---
+# >= min_bar_count same-width, non-overlapping rects sharing a baseline with
+# at least two distinct heights.
 min_bar_count: 3
+
+# --- diagram node cluster ---
+# A node cluster is >= min_cluster_shapes shapes that touch or overlap
+# (within node_adjacency_px), whose combined bounding box covers at most
+# max_cluster_area_ratio of the canvas, containing a labeled host shape plus
+# at least one icon-like shape (at most max_icon_area_ratio of the host's
+# area and at most half the host's width and height). Full-width accent
+# stripes on a metric card or panel are therefore not icons, and a
+# half-canvas panel is not a node.
 min_cluster_shapes: 2
+node_adjacency_px: 4
+max_cluster_area_ratio: 0.15
+max_icon_area_ratio: 0.25
+
+# --- shared ---
+# Shapes at least chrome_extent_ratio of the canvas width or height are
+# decorative frame chrome (background fill, header/footer bars) and are
+# excluded from every pattern above.
+chrome_extent_ratio: 0.98
 position_tolerance_px: 2
