@@ -162,12 +162,20 @@ def add_native_chart(
 
     Returns:
         GraphicFrame containing the chart
+
+    Raises:
+        ValueError: If any series dict is missing the required "values" key
     """
     left, top, width, height = bbox
     chart_data = CategoryChartData()
     chart_data.categories = categories
     for series_index, entry in enumerate(series):
-        values = [float(v) for v in entry.get("values", [])]
+        if "values" not in entry:
+            raise ValueError(
+                f"Series {series_index}: 'values' key is required but missing. "
+                f"Received: {entry}"
+            )
+        values = [float(v) for v in entry["values"]]
         chart_data.add_series(entry.get("label", f"Series {series_index + 1}"), values)
 
     xl_type = {

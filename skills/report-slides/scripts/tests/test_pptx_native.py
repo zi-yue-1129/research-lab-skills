@@ -1,6 +1,7 @@
 import sys
 from pathlib import Path
 
+import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from pptx import Presentation
@@ -99,3 +100,16 @@ def test_add_native_group_returns_none_for_single_shape():
     slide = _new_slide()
     rect = slide.shapes.add_shape(1, Emu(0), Emu(0), Emu(100000), Emu(100000))
     assert add_native_group(slide, [rect]) is None
+
+
+def test_add_native_chart_raises_on_missing_values():
+    """Verify that ValueError is raised when 'values' key is missing from series."""
+    slide = _new_slide()
+    with pytest.raises(ValueError, match="'values' key is required but missing"):
+        add_native_chart(
+            slide, "bar",
+            categories=["Q1", "Q2"],
+            series=[{"label": "EN", "color": "#1e3a5f"}],  # Missing "values"
+            bbox=(Emu(1200000), Emu(900000), Emu(9000000), Emu(4200000)),
+            style=STYLE,
+        )
