@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
+import yaml
+
 from presentation_events import create_artifact_record, create_assignment_record
 
 
@@ -25,22 +27,46 @@ def record_module_production(
         slide_id: Slide record the module belongs to.
         module_id: Module receiving the assignment and artifact.
     """
+    assignment_relative = "assignments/module-a.yaml"
+    assignment_path = project / assignment_relative
+    assignment_path.parent.mkdir(parents=True, exist_ok=True)
+    assignment_path.write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": 1,
+                "module_id": module_id,
+                "worker_type": "architecture",
+                "dependencies": [],
+                "spec_sha256": "a" * 64,
+                "inputs_resolved": True,
+                "assigned_at": "2026-08-08T00:00:00Z",
+                "blocker": None,
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
     create_assignment_record(
         project,
         deck_id,
         module_id=module_id,
-        assignment_path="assignments/module-a.yaml",
+        assignment_path=assignment_relative,
         worker_id="worker-a",
         worker_type="architecture",
         spec_sha256="a" * 64,
         slide_id=slide_id,
     )
+    artifact_relative = "modules/module-a.svg"
+    artifact_bytes = b"module-a"
+    artifact_path = project / artifact_relative
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_bytes(artifact_bytes)
     create_artifact_record(
         project,
         deck_id,
         "module-svg",
-        "modules/module-a.svg",
-        hashlib.sha256(b"module-a").hexdigest(),
+        artifact_relative,
+        hashlib.sha256(artifact_bytes).hexdigest(),
         "worker-a",
         module_id=module_id,
         slide_id=slide_id,

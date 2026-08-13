@@ -383,8 +383,6 @@ def legacy_nullable_path_fields(
     if store_name == "slides":
         if set(candidate) in {_SLIDE_FIELDS, _SLIDE_RETRY_FIELDS}:
             _validate_slide_intrinsic(candidate)
-            if candidate.get("status") != "planned":
-                return frozenset()
         else:
             _validate_legacy_planned_slide(candidate)
         return frozenset({"slide_spec_path"})
@@ -395,7 +393,7 @@ def legacy_nullable_path_fields(
         }:
             _validate_visual_module_intrinsic(candidate)
             if candidate.get("status") != "planned":
-                return frozenset()
+                return frozenset({"visual_spec_path"})
         else:
             _validate_legacy_planned_module(candidate)
         return frozenset(
@@ -925,8 +923,10 @@ def _validate_assignment(
         raise EvidenceContractError("assignments relations do not describe one deck/slide/module chain")
     if module.get("assignment_path") != record["assignment_path"]:
         raise EvidenceContractError("assignments assignment_path does not match module relation")
-    module_digest = module.get("visual_spec_sha256", module.get("spec_sha256"))
-    if module_digest != record["spec_sha256"]:
+    module_digest = module.get("visual_spec_sha256")
+    if module_digest is None:
+        module_digest = module.get("spec_sha256")
+    if module_digest is not None and module_digest != record["spec_sha256"]:
         raise EvidenceContractError("assignments spec_sha256 does not match module relation")
 
 

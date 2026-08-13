@@ -418,13 +418,25 @@ def _nullable_fields_for_record(
     *,
     store_name: str | None,
 ) -> frozenset[str]:
-    """Return path fields nullable for one exact planned record schema.
+    """Return path fields nullable for one exact legacy record schema.
 
-    Nullability is intentionally tied to the public placeholder records rather
-    than to a field name.  Assignment records and arbitrary event payloads do
-    not receive any nullable path allowance.
+    Nullability is tied to the authoritative public record shape, never to a
+    field name. Spec paths may be null throughout valid lifecycles, while the
+    assignment and artifact paths remain nullable only for planned modules.
     """
-    if store_name not in {"slides", "visual_modules"} or value.get("status") != "planned":
+    if store_name not in {"slides", "visual_modules"}:
+        return frozenset()
+    nullable_path_fields = {
+        "slide_spec_path",
+        "visual_spec_path",
+        "assignment_path",
+        "artifact_manifest_path",
+    }
+    if not any(
+        value.get(field) is None
+        for field in nullable_path_fields
+        if field in value
+    ):
         return frozenset()
     try:
         nullable_fields = legacy_nullable_path_fields(store_name, value)
@@ -432,15 +444,9 @@ def _nullable_fields_for_record(
         raise MigrationError(f"invalid {store_name} record contract: {exc}") from exc
     if nullable_fields:
         return nullable_fields
-    nullable_path_fields = {
-        "slide_spec_path",
-        "visual_spec_path",
-        "assignment_path",
-        "artifact_manifest_path",
-    }
     if any(value.get(field) is None for field in nullable_path_fields if field in value):
         raise MigrationError(
-            f"planned {store_name} record with nullable paths must match its exact public schema"
+            f"{store_name} record with nullable paths must match its exact public schema"
         )
     return frozenset()
 

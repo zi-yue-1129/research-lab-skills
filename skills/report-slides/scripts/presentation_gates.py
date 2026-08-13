@@ -14,11 +14,18 @@ from pathlib import Path
 from typing import Any, Mapping, NoReturn
 
 from presentation_contracts import contract_sha256, load_contract
-from presentation_events import effective_review_results, load_artifacts, load_events, load_plans, load_review_results
+from presentation_events import (
+    effective_review_results,
+    load_artifacts,
+    load_events,
+    load_plans,
+    load_review_results,
+)
 from presentation_evidence_gates import (
     final_visual_review_blockers,
     resolve_current_evidence,
 )
+from presentation_module_lineage import resolve_module_production_lineage
 from validate_deck_plan import validate_deck_approval, validate_deck_plan
 from validate_visual_module import validate_complex_visual_spec, validate_worker_assignment
 
@@ -637,14 +644,10 @@ def assert_slide_passable(project_root: Path, slide_id: str) -> dict[str, Any]:
 def assert_module_passable(project_root: Path, module_id: str) -> dict[str, Any]:
     """Assert a module has real production provenance and passing reviews.
 
-    Reviews alone are not sufficient. ``set_module_status`` is a generic
-    state-machine transition with no assignment awareness, and the CLI calls it
-    directly for every transition below ``passed``, so a module can otherwise
-    reach ``passed`` having never been assigned or published. Requiring the
-    two paths that real writers populate -- ``assignment_path`` from
-    ``create_assignment_record`` and ``artifact_manifest_path`` from artifact
-    publication -- keeps this gate consistent with the schema-v2 store
-    contract, which rejects either being null once a module leaves ``planned``.
+    Reviews and non-empty paths are not sufficient. The gate resolves exactly
+    one current assignment and module artifact, validates their persisted
+    ownership and integrity, and rejects path strings whose records or bytes no
+    longer exist.
 
     Args:
         project_root: Project root containing presentation state.
@@ -673,13 +676,21 @@ def assert_module_passable(project_root: Path, module_id: str) -> dict[str, Any]
     blockers.extend({"reason": role} for role in sorted(_REVIEW_ROLES - roles))
     if module.get("status") not in {"review_required", "passed"}:
         blockers.append({"reason": f"status:{module.get('status')}"})
-    for field in ("assignment_path", "artifact_manifest_path"):
-        value = module.get(field)
-        if not isinstance(value, str) or not value:
-            blockers.append({"reason": f"missing_{field}"})
+    state = _state()
+    lineage, lineage_blockers = resolve_module_production_lineage(
+        project_root,
+        module,
+        deck_id,
+        {
+            "decks": state.load_decks(project_root),
+            "slides": slides,
+            "visual_modules": modules,
+        },
+    )
+    blockers.extend(lineage_blockers)
     if blockers:
         fail_gate(ReviewGateError, "module_passable", deck_id, blockers)
-    return {"module": module, "reviews": reviews}
+    return {"module": module, "reviews": reviews, **lineage}
 def assert_draft_reviewable(project_root: Path, deck_id: str, preview: dict[str, Any]) -> dict[str, Any]:
     """Assert a complete rendered slide set is available for draft review.
 
