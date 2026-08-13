@@ -16,6 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from pptx import Presentation
+from pptx.enum.chart import XL_CHART_TYPE
 
 from generate_slides import render_table, render_bar_chart, render_pie_chart
 from svg_to_pptx.converter import convert_file
@@ -57,11 +58,19 @@ def test_end_to_end_table_and_chart_slides_produce_native_objects(tmp_path: Path
     prs = Presentation(str(pptx_path))
     assert len(prs.slides) == 3
     has_table = any(getattr(s, "has_table", False) for s in prs.slides[0].shapes)
-    has_bar_chart = any(getattr(s, "has_chart", False) for s in prs.slides[1].shapes)
-    has_pie_chart = any(getattr(s, "has_chart", False) for s in prs.slides[2].shapes)
     assert has_table
-    assert has_bar_chart
-    assert has_pie_chart
+
+    bar_frame = next(
+        (s for s in prs.slides[1].shapes if getattr(s, "has_chart", False)), None
+    )
+    assert bar_frame is not None
+    assert bar_frame.chart.chart_type == XL_CHART_TYPE.COLUMN_CLUSTERED
+
+    pie_frame = next(
+        (s for s in prs.slides[2].shapes if getattr(s, "has_chart", False)), None
+    )
+    assert pie_frame is not None
+    assert pie_frame.chart.chart_type == XL_CHART_TYPE.PIE
 
     thresholds = load_thresholds()
     findings = scan_pptx(pptx_path, thresholds)
