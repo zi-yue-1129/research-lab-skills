@@ -56,7 +56,9 @@ def acquire_journal_admission(project_root: Path, timeout: int) -> int:
                 return descriptor
             except OSError as exc:
                 if exc.errno not in (errno.EACCES, errno.EAGAIN):
-                    raise
+                    raise TransactionError(
+                        f"journal admission guard failed: {exc}"
+                    ) from exc
                 if time.monotonic() >= deadline:
                     raise TransactionError(
                         "journal admission guard acquisition timed out"

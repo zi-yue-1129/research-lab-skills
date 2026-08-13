@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcntl
+import errno
 import os
 import threading
 from pathlib import Path
@@ -14,6 +15,7 @@ from presentation_transaction_journal_admission import (
     acquire_journal_admission,
     journal_admission_guard,
 )
+from presentation_transaction_errors import TransactionError
 from presentation_transaction_files import durable_journal_names
 
 
@@ -64,3 +66,23 @@ def test_journal_admission_waits_for_active_publisher(tmp_path: Path) -> None:
 
     assert entered.is_set()
     assert not writer.is_alive()
+
+
+def test_journal_admission_wraps_unsupported_flock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unsupported directory flock fails through the typed transaction API."""
+    project = tmp_path / "project"
+    project.mkdir()
+
+    def unsupported_flock(_descriptor: int, _operation: int) -> None:
+        """Simulate a filesystem that rejects directory advisory locks."""
+        raise OSError(errno.EOPNOTSUPP, "operation not supported")
+
+    monkeypatch.setattr(
+        "presentation_transaction_journal_admission.fcntl.flock",
+        unsupported_flock,
+    )
+
+    with pytest.raises(TransactionError, match="journal admission guard failed"):
+        acquire_journal_admission(project, 1)
