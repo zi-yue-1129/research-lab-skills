@@ -1,0 +1,9 @@
+# Configurable heuristic thresholds for validate_native_objects.py's
+# safety-net scan. These are deliberately loose -- the primary defense is
+# the data-pptx-role authoring rule in SKILL.md Stage 9.1 and the worker
+# agent instructions; this script only catches patterns the rule missed.
+min_grid_rows: 2
+min_grid_cols: 2
+min_bar_count: 3
+min_cluster_shapes: 2
+position_tolerance_px: 2
