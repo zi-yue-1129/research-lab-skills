@@ -30,7 +30,7 @@ Run the full mandatory visual-authoring gate exactly as defined in this skill's 
 3. **Classify:** Select exactly one route: `native` (editable SVG shapes and connectors) is the primary default for architecture and flow diagrams; use Mermaid as an optional alternative only when conversion preserves editability (see reference below).
 4. **Reference:** Load only the relevant references for the selected route from this skill's `references/` directory.
 5. **Author:** Create or modify a reusable source; resolve reuse, modification, or derivation identity before rendering.
-6. **Render:** Render the module to pixels. For `native` route ([V:NATIVE]), author SVG directly with editable shapes and connector elements. For Mermaid (optional, [B]): use the Mermaid rendering gate — check for `mmdc` availability, convert the `.mmd` source to SVG, and verify the output is fully editable; if `mmdc` is unavailable or conversion loses editability, fall back to native SVG and disclose the editability loss in the manifest.
+6. **Render:** Render the module to pixels. For `native` route ([V:NATIVE]), author SVG directly with editable shapes and connector elements. **Every semantic node — a background shape plus its icon and label, a boundary group, any cluster that represents one thing in the diagram — MUST be wrapped in `<g data-pptx-role="group" data-node-id="<stable-id>">` so `svg_to_pptx/converter.py` materializes it as one native PPTX Group shape instead of leaving its parts as disconnected shapes. This is a hard requirement enforced by `validate_native_objects.py` (see "Before Returning"), not a style choice.** For Mermaid (optional, [B]): use the Mermaid rendering gate — check for `mmdc` availability, convert the `.mmd` source to SVG, and verify the output is fully editable; if `mmdc` is unavailable or conversion loses editability, fall back to native SVG and disclose the editability loss in the manifest. Mermaid-sourced SVG cannot carry `data-pptx-role` markers, so a module rendered via Mermaid is exempt from the grouping requirement but must record `pptx_construct: svg_shapes` in its manifest.
 7. **Review:** Inspect the rendered pixels with model vision, revise the source if needed, and repeat render/vision until the visual review passes.
 8. **Manifest:** Validate the plan and the module's manifest:
    ```bash
@@ -58,7 +58,7 @@ Prefer `flowchart LR` for pipelines, `flowchart TD` for training stages, `stateD
 ## Output Format
 
 Return:
-1. **Module manifest** (`manifest.yaml`) with the existing schema (fields: `schema_version`, `diagram_id`, `purpose`, `diagram_type`, `authoring_route`, `editability`, `source_files`, `used_in`, `derived_from`, `based_on_revision`, `changes`, `generation`, `review`). Do not create a new schema variant.
+1. **Module manifest** (`manifest.yaml`) with the existing schema plus the additive `pptx_construct` field (fields: `schema_version`, `diagram_id`, `purpose`, `diagram_type`, `authoring_route`, `editability`, `source_files`, `used_in`, `derived_from`, `based_on_revision`, `changes`, `generation`, `review`, `pptx_construct`). Set `pptx_construct` to `native_group` when every semantic node was wrapped in a `data-pptx-role="group"` marker, or `svg_shapes` when it was not (e.g. a Mermaid-sourced module). Do not create a new schema variant beyond this one additive field.
 2. **Return summary** naming:
    - `module_id` (the exact ID from your Worker Assignment)
    - `manifest_path` (relative path to the module's manifest.yaml)
@@ -72,8 +72,9 @@ Verify:
 1. **Manifest validity:** The module's manifest passes `python3 scripts/validate_diagram_manifest.py --manifest <path>` with no errors.
 2. **Visual review:** The module's rendered pixels passed the mandatory pixel-vision review per the existing gate (§9.1–9.4 in `SKILL.md`).
 3. **Render artifact:** A pixel rendering (SVG preview or final PNG) exists and is named in the manifest's review records.
+4. **Native object check:** `python3 scripts/validate_native_objects.py --svg-dir <dir containing this module's SVG>` reports no unmarked node-cluster patterns for this module's source file.
 
-Missing manifest validity or visual review is a hard blocker — do not return a module that fails either check.
+Missing manifest validity, visual review, or the native object check is a hard blocker — do not return a module that fails any of them.
 
 ## Quality Criteria
 

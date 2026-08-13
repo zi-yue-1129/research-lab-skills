@@ -30,7 +30,7 @@ Run the full mandatory visual-authoring gate exactly as defined in this skill's 
 3. **Classify:** Select exactly one route: `data` (deterministic data-driven SVG for charts, tables, timelines) is the primary default for data visualization; use `native` (editable SVG shapes) only if the chart type does not fit the Python renderer's supported types (see reference below).
 4. **Reference:** Load only the relevant references for the selected route from this skill's `references/` directory.
 5. **Author:** Create or modify a reusable source; resolve reuse, modification, or derivation identity before rendering.
-6. **Render:** Render the module to pixels. For `data` route ([V:DATA]), use the existing `[A] Python renderer` — `generate_slides.py` — with `slide_data.json` following the schema documented in `SKILL.md` § "Generate slides" § "[A] Python renderer". For chart types not supported by the Python renderer, use `[V:NATIVE]` SVG (editable SVG shapes and connectors).
+6. **Render:** Render the module to pixels. For `data` route ([V:DATA]), use the existing `[A] Python renderer` — `generate_slides.py` — with `slide_data.json` following the schema documented in `SKILL.md` § "Generate slides" § "[A] Python renderer". `generate_slides.py` automatically wraps table/bar_chart/line_chart/pie_chart/timeline output in the `data-pptx-role` marker required by `svg_to_pptx/converter.py` — no extra action needed from you for this route. For chart types not supported by the Python renderer, use `[V:NATIVE]` SVG (editable SVG shapes and connectors); in that case you MUST hand-author the same `data-pptx-role="table"`/`"chart"` marker (with `data-pptx-source` and `data-pptx-bbox`) around any tabular or chart content yourself — a hand-drawn grid of rects or bars with no marker is a hard blocker enforced by `validate_native_objects.py`, not a style choice.
 7. **Review:** Inspect the rendered pixels with model vision, revise the source if needed, and repeat render/vision until the visual review passes.
 8. **Manifest:** Validate the plan and the module's manifest:
    ```bash
@@ -42,7 +42,7 @@ Run the full mandatory visual-authoring gate exactly as defined in this skill's 
 ## Output Format
 
 Return:
-1. **Module manifest** (`manifest.yaml`) with the existing schema (fields: `schema_version`, `diagram_id`, `purpose`, `diagram_type`, `authoring_route`, `editability`, `source_files`, `used_in`, `derived_from`, `based_on_revision`, `changes`, `generation`, `review`). Do not create a new schema variant.
+1. **Module manifest** (`manifest.yaml`) with the existing schema plus the additive `pptx_construct` field (fields: `schema_version`, `diagram_id`, `purpose`, `diagram_type`, `authoring_route`, `editability`, `source_files`, `used_in`, `derived_from`, `based_on_revision`, `changes`, `generation`, `review`, `pptx_construct`). Set `pptx_construct` to `native_table`/`native_chart` for the `data` route (the marker is emitted automatically), or based on your own marker use for `[V:NATIVE]`; use `svg_shapes` only when no marker could be applied. Do not create a new schema variant beyond this one additive field.
 2. **Return summary** naming:
    - `module_id` (the exact ID from your Worker Assignment)
    - `manifest_path` (relative path to the module's manifest.yaml)
@@ -56,8 +56,9 @@ Verify:
 1. **Manifest validity:** The module's manifest passes `python3 scripts/validate_diagram_manifest.py --manifest <path>` with no errors.
 2. **Visual review:** The module's rendered pixels passed the mandatory pixel-vision review per the existing gate (§9.1–9.4 in `SKILL.md`).
 3. **Render artifact:** A pixel rendering (SVG preview or final PNG) exists and is named in the manifest's review records.
+4. **Native object check:** `python3 scripts/validate_native_objects.py --svg-dir <dir containing this module's SVG>` reports no unmarked table/chart patterns for this module's source file.
 
-Missing manifest validity or visual review is a hard blocker — do not return a module that fails either check.
+Missing manifest validity, visual review, or the native object check is a hard blocker — do not return a module that fails any of them.
 
 ## Quality Criteria
 

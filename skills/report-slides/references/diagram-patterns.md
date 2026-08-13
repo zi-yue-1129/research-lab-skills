@@ -9,7 +9,9 @@ a raster base plus native SVG overlay for hybrid visuals.
 
 - **Default route:** `native` with native SVG.
 - **Editable elements:** nodes, labels, groups, boundaries, interfaces, and
-  connectors.
+  connectors. Every node (background shape + icon + label) MUST be a native
+  PPTX Group shape — wrap it in `<g data-pptx-role="group"
+  data-node-id="...">` — not a pile of ungrouped shapes.
 - **Semantic inputs:** system boundaries, components, ownership, inputs and
   outputs, interfaces, dependencies, and hierarchy.
 - **Layout recipe:** place the main reading direction left-to-right or
@@ -24,7 +26,9 @@ a raster base plus native SVG overlay for hybrid visuals.
 
 - **Default route:** `native` with native SVG.
 - **Editable elements:** steps, decisions, branch labels, terminal states, and
-  connectors.
+  connectors. Every step/decision node MUST be a native PPTX Group shape —
+  wrap it in `<g data-pptx-role="group" data-node-id="...">` — not a pile of
+  ungrouped shapes.
 - **Semantic inputs:** ordered actions, decision predicates, branch outcomes,
   success and failure terminals, retry loops, and return paths.
 - **Layout recipe:** use one dominant reading direction; give decisions a
@@ -38,7 +42,9 @@ a raster base plus native SVG overlay for hybrid visuals.
 
 - **Default route:** `data` with deterministic data-driven SVG.
 - **Editable elements:** dates, event labels, intervals, milestones, axis,
-  and dependency markers.
+  and dependency markers. Every event/milestone node MUST be a native PPTX
+  Group shape — wrap it in `<g data-pptx-role="group" data-node-id="...">`
+  — not a pile of ungrouped shapes.
 - **Semantic inputs:** ordered dates, durations, event text, milestones,
   dependencies, and the time unit or calendar basis.
 - **Layout recipe:** use a visible axis and aligned event lanes; use
@@ -53,7 +59,11 @@ a raster base plus native SVG overlay for hybrid visuals.
 
 - **Default route:** `data` with deterministic data-driven SVG.
 - **Editable elements:** source-data labels, axes, units, ticks, legend,
-  series, marks, annotations, and uncertainty indicators.
+  series, marks, annotations, and uncertainty indicators. Chart marks MUST
+  be a native PPTX chart object (`<g data-pptx-role="chart"
+  data-pptx-source="..." data-pptx-bbox="...">`) and tabular views MUST be a
+  native PPTX table object (`data-pptx-role="table"`) — not hand-drawn bars,
+  lines, or grid rects.
 - **Semantic inputs:** reconstructable source data, units, denominators, series
   names, sample sizes, uncertainty or error definitions, and the intended
   comparison.

@@ -479,14 +479,25 @@ conceptual illustrations:
    and record its route tag.
 4. **Reference:** load only the relevant references below for the selected route.
 5. **Author:** create or modify a reusable source; resolve reuse, modification,
-   or derivation identity before route-specific generation.
+   or derivation identity before route-specific generation. **Tabular data and
+   charts MUST be authored as `<g data-pptx-role="table"|"chart"
+   data-pptx-source="..." data-pptx-bbox="x,y,w,h">` around the preview
+   markup, never as hand-drawn grid rects or bars — see
+   `references/diagram-patterns.md`. Any semantic diagram node (a box plus
+   icon plus label, a timeline event, a legend entry) MUST be wrapped in
+   `<g data-pptx-role="group" data-node-id="...">`. These are hard
+   requirements enforced by `validate_native_objects.py` (step 8), not style
+   preferences.**
 6. **Render:** render both the subfigure and the complete slide to pixels.
 7. **Review:** inspect both pixel renders with model vision, revise the source,
    and repeat the render/vision loop until both gates pass.
 8. **Manifest:** validate the plan, each manifest, and the asset root:
    `python3 scripts/validate_diagram_manifest.py --plan <plan>`,
    `python3 scripts/validate_diagram_manifest.py --manifest <manifest>`, and
-   `python3 scripts/validate_diagram_manifest.py --root <asset-root>`.
+   `python3 scripts/validate_diagram_manifest.py --root <asset-root>`. Also
+   run the native-object safety net against the slide's SVG directory:
+   `python3 scripts/validate_native_objects.py --svg-dir <dir>` — a non-zero
+   exit is a hard blocker; fix the missing marker and re-render.
 9. **output-format branch — export, convert, and directly inspect, or mark
    not applicable:**
 
@@ -494,6 +505,11 @@ conceptual illustrations:
    if output_format is pptx:
        require statuses.svg_preview passed before export
        export the actual deck.pptx
+       run `python3 scripts/validate_native_objects.py --pptx <deck.pptx>` as
+           a hard blocker before validating package structure -- a non-zero
+           exit means a table/chart/node pattern reached the PPTX without
+           its native construct; fix the source marker or converter branch
+           and re-export
        validate package structure into statuses.pptx_structure
        convert the actual deck.pptx with LibreOffice or an equivalent
            office renderer (never the source SVG)
@@ -916,7 +932,7 @@ python3 -m svg_to_pptx \
     --out    "$SLIDES_DIR/reports/YYYY-MM-DD_<name>/deck.pptx"
 ```
 
-Native mode converts every SVG element to editable shapes: rectangles, ovals, text boxes, connectors, and paths (including Bézier curves). Text labels inside shapes are embedded directly — double-click a shape in PowerPoint to edit its text. Connectors re-route when shapes are moved.
+Native mode converts every SVG element to editable shapes: rectangles, ovals, text boxes, connectors, and paths (including Bézier curves). Text labels inside shapes are embedded directly — double-click a shape in PowerPoint to edit its text. Connectors re-route when shapes are moved. Content wrapped in a `data-pptx-role="table"`/`"chart"` marker becomes a real PPTX table or chart object (double-click to edit cell text or the chart's underlying data series, exactly like a manually-inserted PowerPoint table/chart); content wrapped in `data-pptx-role="group"` becomes one native Group shape.
 
 **SVG embed (backward-compatible, viewable but shapes are not individually editable):**
 ```bash
