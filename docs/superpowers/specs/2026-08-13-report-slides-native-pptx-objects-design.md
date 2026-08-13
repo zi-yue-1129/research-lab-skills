@@ -69,36 +69,53 @@ Out of scope (explicitly deferred, not part of this change):
 ## Architecture
 
 Keep SVG as the pixel-preview artifact used by the mandatory Stage 9
-visual-authoring gate (vision review needs pixels), but stop treating SVG as
-the source of truth for the *final* PPTX when the content is a table, chart,
-or a semantic multi-shape node. Add a second, structured path that builds
-these constructs directly with python-pptx's native APIs.
+visual-authoring gate (vision review needs pixels), but stop treating SVG
+shape-flattening as how the *final* PPTX gets a table, chart, or semantic
+multi-shape node. Native materialization happens in exactly one place:
+`scripts/svg_to_pptx/converter.py`, the sole "native shapes (recommended)"
+export path documented in `SKILL.md` § "PPTX export (optional)"
+(`python3 -m svg_to_pptx --slides <dir> --out deck.pptx`). Both Path A
+(`generate_slides.py`) and Path C (agent-authored SVG) write plain
+`slideNN.svg` files into the same output directory and are converted by the
+same `svg_to_pptx` invocation — there is no separate Path-A-only assembly
+step. (`generate_slides.py`'s own `to_pptx()` and the top-level `to_pptx.py`
+are the *SVG-embed* fallback mode — raster picture + SVG blip, no per-shape
+conversion at all — and are unchanged by this design; see "Out of scope.")
+
+Concretely, this means Path A's SVG renderers must emit the *same*
+`data-pptx-role` marker convention Path C agents use (see Component C) —
+Path A is a producer of annotated SVG, not a second consumer of
+`pptx_native`.
 
 ```
-                    ┌─────────────────────┐
-                    │  slide_data.json     │  (Path A, existing schema)
-                    │  or *.svg + sidecar  │  (Path C, new convention)
-                    │  data-pptx-role=...  │
-                    └──────────┬───────────┘
-                               │
-                 ┌─────────────┴──────────────┐
-                 │                             │
-        preview / vision review        final PPTX assembly
-        (existing SVG renderer,        (NEW: scripts/pptx_native.py)
-         unchanged)                     add_native_table / add_native_chart
-                                         / add_native_group
-                                                │
-                                                ▼
-                                   scripts/svg_to_pptx/converter.py
-                                   (existing shape/connector dispatch,
-                                    + NEW data-pptx-role branch that
-                                    calls pptx_native instead of
-                                    flattening the subtree)
-                                                │
-                                                ▼
-                                     validate_native_objects.py
-                                   (NEW gate: static SVG scan +
-                                    post-conversion PPTX assertions)
+        generate_slides.py                architecture_diagram_worker_agent,
+        render_table / render_bar_chart /  complex_visual_decomposer_agent,
+        render_line_chart / render_pie_chart /   data_visualization_worker_agent,
+        render_timeline                     free-form Claude SVG (Path C)
+        — emits <g data-pptx-role=...>      — emits <g data-pptx-role=...>
+          wrapping existing hand-drawn        wrapping node/table/chart
+          preview markup (Path A)             markup
+                 │                                    │
+                 └───────────────┬────────────────────┘
+                                  ▼
+                     slideNN.svg files in one output dir
+                     (existing SVG still used unchanged for
+                      the Stage 9 vision-review preview)
+                                  │
+                                  ▼
+                 python3 -m svg_to_pptx --slides <dir> --out deck.pptx
+                 scripts/svg_to_pptx/converter.py
+                 (existing shape/connector dispatch, + NEW
+                  data-pptx-role branch: table/chart roles call
+                  scripts/pptx_native.py instead of flattening the
+                  subtree; group roles flatten as today then wrap
+                  the result in add_native_group)
+                                  │
+                                  ▼
+                     scripts/validate_native_objects.py
+                   (NEW gate: static SVG scan + post-conversion
+                    PPTX assertions, wired into Stage 9/15 and
+                    presentation_evidence_gates.py)
 ```
 
 ## Components
@@ -106,8 +123,9 @@ these constructs directly with python-pptx's native APIs.
 ### A. `scripts/pptx_native.py` (new)
 
 A small library wrapping python-pptx's native object construction. Used
-directly by Path A's PPTX assembly step and by the converter's new
-`data-pptx-role` branch in Path C.
+exclusively by `svg_to_pptx/converter.py`'s new `data-pptx-role` dispatch
+branch (Component C) — the single materialization point for both Path A and
+Path C output.
 
 ```python
 def add_native_table(
@@ -141,35 +159,42 @@ A's `render_table` / `render_bar_chart` already use (`columns`/`rows`/
 Path A. Style mapping (see "Style mapping" below) is internal to this
 module.
 
-### B. Path A — dual output in `generate_slides.py`
+### B. Path A — marker-annotated SVG output in `generate_slides.py`
 
 SVG rendering (`render_table`, `render_bar_chart`, `render_timeline`)
-continues unchanged and remains the Stage 9 preview/vision-review artifact.
+continues to render the same hand-drawn preview markup, unchanged, so the
+Stage 9 vision-review gate keeps working exactly as today. What changes is
+that each function additionally wraps its content in the `data-pptx-role`
+marker (Component C's convention) so the *shared* `svg_to_pptx` converter
+materializes a native object instead of flattening shapes:
 
-The PPTX assembly step (currently `to_pptx()` / the `svg_to_pptx` converter
-run over Path A's SVGs) changes per slide type:
+- `render_table`: wraps its table markup in
+  `<g data-pptx-role="table" data-pptx-source="slide_data.json#<slide_index>"
+  data-pptx-bbox="...">`. The sidecar reference is the already-written
+  `slide_data.json` itself (Path A never needs a separate sidecar file — it
+  already has the structured data on hand) qualified with a `#<slide_index>`
+  fragment so the converter knows which slide entry to read.
+- `render_bar_chart` (and new `render_line_chart`, `render_pie_chart`):
+  same pattern with `data-pptx-role="chart"`.
+- `render_timeline`: each event's circle + connector + label(s) is wrapped
+  in `<g data-pptx-role="group" data-node-id="event-<i>">` — no
+  `data-pptx-source`/`data-pptx-bbox` needed, per Component C's rule that
+  `group` markers derive their extent from their actual children.
 
-- `table`, `bar_chart`, `line_chart` (new), `pie_chart` (new): do not convert
-  the SVG's shapes for these slides. Instead, read the slide's entry from
-  `slide_data.json` and call `pptx_native.add_native_table` /
-  `add_native_chart` directly, placed at the SVG frame's content bbox
-  (the existing `CL, CR, CT, CB` / table `tl, tr, top_y` constants, converted
-  to EMU). Title/footer chrome (the `frame()` header/footer bar) still comes
-  from the SVG conversion as ordinary shapes, since that part is decorative,
-  not data.
-- `timeline`: SVG conversion proceeds as today (dots, connectors, labels as
-  individual shapes), but immediately after each event's shapes are placed,
-  `add_native_group` wraps that event's circle + connector + label(s) into
-  one Group. Event boundaries are known because Path A's assembly step has
-  the same `events` list used to render the SVG — it doesn't need to infer
-  grouping from pixels.
+Title/footer chrome (the `frame()` header/footer bar) stays outside any
+`data-pptx-role` marker and converts as ordinary shapes today, since it's
+decorative, not data.
 
 `line_chart` and `pie_chart` are new `slide_data.json` slide types, added
 alongside `bar_chart` with an equivalent schema (`categories`/`series` for
 line; `categories`/single `series` of values for pie). Their SVG preview
 renderers (`render_line_chart`, `render_pie_chart`) are new, minimal, and
-only need to be good enough for the vision-review gate — they are not the
-final output.
+only need to be good enough for the vision-review gate — the converter
+replaces their content with a real native chart on export.
+
+`slide_data.json#<slide_index>` resolution and the `pptx_native` calls
+themselves live entirely in `scripts/svg_to_pptx/converter.py` (Component
+C) — Path A does not import or call `pptx_native` directly.
 
 ### C. Path C — semantic markers + converter branch
 
@@ -192,9 +217,18 @@ adds a marker convention agents wrap around semantic subtrees:
 </g>
 ```
 
-`data-pptx-source` points to a sidecar JSON file (same directory as the
-`.svg`) using the identical schema as Path A's `slide_data.json` table/chart
-entries. `data-pptx-bbox` is `"x,y,w,h"` in the SVG's own user units (the
+`data-pptx-source` resolves one of two ways, both loaded by the same helper
+(`converter.py`'s new `_load_pptx_source(base_dir, value) -> dict`):
+- A plain filename (`table_data.json`) — a sidecar JSON file in the same
+  directory as the `.svg`, using the identical schema as Path A's
+  `slide_data.json` table/chart entries. This is the form Path C agents use.
+- `slide_data.json#<slide_index>` — read `slide_data.json` from the same
+  directory and index into its `slides` array at `<slide_index>` (0-based,
+  matching the SVG's own `slideNN` numbering minus one). This is the form
+  Path A's renderers use, since the structured data already exists there
+  and a per-slide sidecar file would just be a redundant copy.
+
+`data-pptx-bbox` is `"x,y,w,h"` in the SVG's own user units (the
 same `viewBox`-relative coordinates every other element in the file already
 uses) — it is **required** on `table`/`chart` markers so the converter never
 has to infer a bounding box from the (skipped) preview children; it is
