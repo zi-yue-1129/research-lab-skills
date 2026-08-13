@@ -15,6 +15,7 @@ PPTX_H = 6_858_000
 _SVG_NS = "http://www.w3.org/2000/svg"
 _XLINK_NS = "http://www.w3.org/1999/xlink"
 _CANVAS_TOLERANCE = 1e-6
+_CHART_TYPE_MAP = {"bar_chart": "bar", "line_chart": "line", "pie_chart": "pie"}
 
 
 class NativeObjectMarkerError(ValueError):
@@ -307,8 +308,14 @@ class SvgConverter:
             )
             return
 
-        chart_type = {"bar_chart": "bar", "line_chart": "line",
-                     "pie_chart": "pie"}.get(data.get("type"), "bar")
+        raw_type = data.get("type")
+        if raw_type not in _CHART_TYPE_MAP:
+            raise NativeObjectMarkerError(
+                f'data-pptx-role="chart" source has unrecognized type '
+                f"{raw_type!r} (expected one of {sorted(_CHART_TYPE_MAP)}) "
+                f"(svg={self.svg_path})"
+            )
+        chart_type = _CHART_TYPE_MAP[raw_type]
         if chart_type == "pie":
             series = [{"label": data.get("title", ""), "values": data.get("values", [])}]
             pptx_native.add_native_chart(

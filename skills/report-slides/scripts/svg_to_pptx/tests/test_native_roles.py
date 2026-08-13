@@ -126,3 +126,27 @@ def test_missing_source_and_bbox_raises_native_object_marker_error(tmp_path: Pat
 
     with pytest.raises(NativeObjectMarkerError):
         conv.convert(prs, layout)
+
+
+def test_unrecognized_chart_type_raises_native_object_marker_error(tmp_path: Path):
+    # data.get("type") that isn't "bar_chart"/"line_chart"/"pie_chart" must
+    # raise instead of silently defaulting to a bar chart -- a wrong chart
+    # built with no error would be an unnoticed data-integrity failure.
+    (tmp_path / "chart_data.json").write_text(json.dumps({
+        "type": "scatter_chart",
+        "categories": ["Q1", "Q2"],
+        "series": [{"label": "EN", "color": "#1e3a5f", "values": [0.8, 0.9]}],
+        "y_max": 1.0,
+    }), encoding="utf-8")
+    svg_path = _write_svg(tmp_path, (
+        '<g data-pptx-role="chart" data-pptx-source="chart_data.json" '
+        'data-pptx-bbox="130,100,970,420">'
+        '<rect x="130" y="300" width="100" height="120" fill="#1e3a5f"/>'
+        '</g>'
+    ))
+    prs = Presentation()
+    layout = prs.slide_layouts[6]
+    conv = SvgConverter(str(svg_path))
+
+    with pytest.raises(NativeObjectMarkerError):
+        conv.convert(prs, layout)
