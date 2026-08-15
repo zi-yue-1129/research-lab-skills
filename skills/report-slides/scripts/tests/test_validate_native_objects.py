@@ -81,3 +81,35 @@ def test_clean_svg_passes(tmp_path: Path):
 def test_pptx_mode_requires_svg_dir_or_pptx_exclusively():
     result = _run()
     assert result.returncode != 0
+
+
+def test_text_missing_x_and_y_is_flagged(tmp_path: Path):
+    _write_svg(tmp_path, "slide05_label.svg", "<text>Floating label</text>")
+    result = _run("--svg-dir", str(tmp_path))
+    assert result.returncode == 1
+    assert "text_missing_coords" in result.stderr
+
+
+def test_text_with_coords_only_on_tspan_is_flagged(tmp_path: Path):
+    _write_svg(
+        tmp_path, "slide06_label.svg",
+        '<text><tspan x="200" y="140">Multi-Head</tspan>'
+        '<tspan x="200" dy="15">Attention</tspan></text>',
+    )
+    result = _run("--svg-dir", str(tmp_path))
+    assert result.returncode == 1
+    assert "text_missing_coords" in result.stderr
+
+
+def test_text_missing_only_y_is_flagged(tmp_path: Path):
+    _write_svg(tmp_path, "slide07_label.svg", '<text x="200">Label</text>')
+    result = _run("--svg-dir", str(tmp_path))
+    assert result.returncode == 1
+    assert "text_missing_coords" in result.stderr
+
+
+def test_text_with_x_and_y_on_the_element_passes(tmp_path: Path):
+    _write_svg(tmp_path, "slide08_label.svg",
+              '<text x="200" y="140">Compliant label</text>')
+    result = _run("--svg-dir", str(tmp_path))
+    assert result.returncode == 0

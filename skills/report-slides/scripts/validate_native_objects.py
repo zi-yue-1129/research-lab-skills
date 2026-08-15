@@ -75,6 +75,11 @@ _CHART_REMEDIATION = (
 _GROUP_REMEDIATION = (
     'Wrap the node in <g data-pptx-role="group" data-node-id="...">.'
 )
+_TEXT_COORDS_REMEDIATION = (
+    "Set x and y directly on the <text> element itself (matching every "
+    "renderer in this skill, e.g. generate_slides.py's tlines()) -- do not "
+    "rely on a <tspan> to carry the only copy of the position."
+)
 
 
 @dataclass(frozen=True)
@@ -508,6 +513,44 @@ def scan_svg(svg_path: Path, thresholds: Dict[str, float]) -> List[Finding]:
             f"{_CHART_REMEDIATION}",
         ))
     findings.extend(_scan_svg_node_clusters(slide_name, root, thresholds, sx, sy))
+    findings.extend(_scan_missing_text_coordinates(slide_name, root))
+    return findings
+
+
+def _scan_missing_text_coordinates(slide_name: str, root: Any) -> List[Finding]:
+    """Flag `<text>` elements missing `x` or `y` on the element itself.
+
+    Every renderer in this skill writes `x`/`y` directly on the `<text>`
+    tag, which `svg_to_pptx`'s label-attachment and standalone-textbox code
+    (`_compute_text_attachments`, `_collect_text_lines`, `add_textbox`)
+    reads to decide which shape a label belongs to and where it lands.
+    Coordinates set only on a child `<tspan>` are valid SVG and the
+    converter now tolerates them via a fallback (`_text_xy`), but that
+    fallback is a second line of defense, not the authoring convention --
+    this is the one place that convention is enforced.
+
+    Args:
+        slide_name: Name of the SVG file being scanned, used as the
+            `Finding.slide` label.
+        root: The parsed SVG document's root element.
+
+    Returns:
+        A `Finding` for every `<text>` element missing `x` and/or `y` on
+        itself; empty if every `<text>` in the document is compliant.
+    """
+    findings: List[Finding] = []
+    for elem in root.iter():
+        if _local_tag(elem) != "text":
+            continue
+        missing = [attr for attr in ("x", "y") if elem.get(attr) is None]
+        if not missing:
+            continue
+        snippet = "".join(elem.itertext()).strip()[:40]
+        findings.append(Finding(
+            slide_name, "text_missing_coords",
+            f"<text> is missing {' and '.join(missing)} on the element "
+            f"itself (content: {snippet!r}). {_TEXT_COORDS_REMEDIATION}",
+        ))
     return findings
 
 
