@@ -8,7 +8,7 @@ from pptx.util import Emu, Pt
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 
 from .style_parser import apply_fill, apply_stroke, resolve_color, compute_style
-from .converter import CoordSystem, _local_tag
+from .converter import CoordSystem, _local_tag, _text_xy
 
 _ALIGN = {"start": PP_ALIGN.LEFT, "middle": PP_ALIGN.CENTER, "end": PP_ALIGN.RIGHT}
 _ATTACHED_LABEL_TOP_PADDING_SVG = 4.0
@@ -168,7 +168,7 @@ def _collect_text_lines(text_elem: Any, parent_style: Dict) -> List[Tuple[str, D
     # Compute the text element's own style first so tspan children inherit correctly
     # (not from the enclosing shape's style, which is the parent_style here)
     text_style = compute_style(text_elem, parent_style)
-    baseline_y = float(text_elem.get("y", 0))
+    _, baseline_y = _text_xy(text_elem)
     direct_text = (text_elem.text or "").strip()
     if direct_text:
         lines.append((direct_text, text_style, baseline_y))

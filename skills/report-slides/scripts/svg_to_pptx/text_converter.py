@@ -8,7 +8,7 @@ from pptx.util import Emu
 from pptx.enum.text import PP_ALIGN
 
 from .style_parser import compute_style
-from .converter import CoordSystem, _local_tag
+from .converter import CoordSystem, _local_tag, _text_xy
 from .shapes import _apply_font, _ALIGN
 
 _ASCENT_FACTOR = 0.75
@@ -49,11 +49,7 @@ def _estimate_text_width(elem: Any, fs: float) -> float:
 
 
 def add_textbox(slide: Any, elem: Any, style: Dict, cs: CoordSystem) -> Any:
-    try:
-        tx = float(elem.get("x", 0))
-        ty = float(elem.get("y", 0))
-    except ValueError:
-        tx, ty = 0.0, 0.0
+    tx, ty = _text_xy(elem)
 
     fs = _font_size_svg(style)
     anchor = style.get("text-anchor", "start")

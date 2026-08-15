@@ -53,6 +53,47 @@ def _local_tag(elem: Any) -> str:
     return tag.split("}")[-1] if "}" in tag else tag
 
 
+def _text_xy(text_elem: Any) -> Tuple[float, float]:
+    """Resolve a ``<text>`` element's anchor point, tolerating SVG that
+    omits ``x``/``y`` on the tag itself and only sets them on the first
+    ``<tspan>``.
+
+    This codebase's own authoring convention requires ``x``/``y`` on the
+    ``<text>`` element itself (matching every renderer in this repo, e.g.
+    ``generate_slides.py``'s ``tlines()`` -- enforced separately by
+    ``validate_native_objects.py``'s SVG-source scan). This fallback exists
+    only as a second line of defense so a violation of that convention
+    degrades gracefully instead of silently attaching/positioning the text
+    at ``(0, 0)``.
+
+    Args:
+        text_elem: An lxml ``<text>`` element.
+
+    Returns:
+        ``(x, y)`` in the SVG's own user units. ``0.0`` for whichever
+        coordinate is present on neither the element nor its first
+        ``<tspan>``.
+    """
+    tx_raw, ty_raw = text_elem.get("x"), text_elem.get("y")
+    if tx_raw is None or ty_raw is None:
+        for child in text_elem:
+            if _local_tag(child) == "tspan":
+                if tx_raw is None:
+                    tx_raw = child.get("x")
+                if ty_raw is None:
+                    ty_raw = child.get("y")
+                break
+    try:
+        tx = float(tx_raw) if tx_raw is not None else 0.0
+    except ValueError:
+        tx = 0.0
+    try:
+        ty = float(ty_raw) if ty_raw is not None else 0.0
+    except ValueError:
+        ty = 0.0
+    return tx, ty
+
+
 class SvgConverter:
     """Converts one SVG file into one PPTX slide."""
 
@@ -162,11 +203,7 @@ class SvgConverter:
         for text_elem in self.root.iter():
             if _local_tag(text_elem) != "text":
                 continue
-            try:
-                tx = float(text_elem.get("x", 0))
-                ty = float(text_elem.get("y", 0))
-            except ValueError:
-                continue
+            tx, ty = _text_xy(text_elem)
             candidates = []
             for shape_elem, sx, sy, sw, sh in shape_bboxes:
                 if sx <= tx <= sx + sw and sy <= ty <= sy + sh:

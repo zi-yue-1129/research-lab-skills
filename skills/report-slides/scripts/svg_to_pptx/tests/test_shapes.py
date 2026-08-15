@@ -60,6 +60,27 @@ def test_rect_with_label_writes_text_in_shape():
     assert shape.text_frame.paragraphs[0].runs[0].text == "Hello"
 
 
+def test_rect_with_tspan_only_label_still_writes_text_in_shape():
+    """Regression: a <text> with coordinates only on its <tspan> (valid SVG,
+    but violates this repo's own x/y-on-<text> authoring convention) must
+    still resolve its position via _text_xy's fallback and embed correctly
+    -- not silently anchor at (0, 0) and miss the shape entirely."""
+    slide, _ = _blank_slide()
+    rect_elem = etree.fromstring('<rect x="40" y="80" width="160" height="70" fill="#3b82f6"/>')
+    text_elem = etree.fromstring(
+        '<text fill="white" text-anchor="middle">'
+        '<tspan x="120" y="108">Multi-Head</tspan>'
+        '<tspan x="120" dy="15">Attention</tspan></text>'
+    )
+    style = compute_style(rect_elem, {})
+    dispatch_shape(slide, rect_elem, style, CS, text_elem)
+    shape = slide.shapes[0]
+    assert shape.has_text_frame
+    paragraphs = shape.text_frame.paragraphs
+    assert paragraphs[0].runs[0].text == "Multi-Head"
+    assert paragraphs[1].runs[0].text == "Attention"
+
+
 def test_attached_labels_use_explicit_svg_text_layout() -> None:
     """Verify attached labels use a frame offset and preserve paragraph layout."""
     slide, _ = _blank_slide()
