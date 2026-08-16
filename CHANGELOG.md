@@ -13,6 +13,7 @@ All notable changes to this project will be documented in this file.
 - **`report-slides`: authoritative converted-PPTX visual review gate** — the rendered PPTX, not the source SVG, is now the ground truth for visual review, catching text-reflow, image-crop, and asset-drift regressions that only surface after PowerPoint conversion.
 - **`report-slides`: diagram asset manifest validation** and a **visual review sheet tool** for tracking which reusable visuals have been reviewed.
 - **`report-slides`: interactive, bilingual mode selection** for the `svg_to_pptx` conversion flow.
+- **`report-slides`: native PPTX table/chart/group construction** — tables and charts render as native, editable PowerPoint objects (not flattened images), with a safety-net validation gate (`validate_native_objects.py`), hard authoring rules for `data-pptx-role` marker placement (including `x`/`y` on `<text>`), and line/pie chart renderers.
 - **`research-log`: Milestone Mode** with token-budget gating (`log_stats.py`) for large research logs.
 - **`research-log`: historical section queries** — discover historical section types and search sections by type/date, with safe batched fetching and budget diagnostics.
 - **Onboarding demo** (`examples/`) walking through a `research-log` + `report-slides` end-to-end workflow.
