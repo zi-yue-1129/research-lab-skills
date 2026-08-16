@@ -26,12 +26,13 @@
     {
       "name": "academic-research-skills",
       "version": "1.1.0",
-      "description": "13-agent deep research, 12-agent paper writing, multi-perspective peer review, and full 10-stage pipeline orchestrator",
+      "description": "Project scoping, 13-agent deep research, 12-agent paper writing, multi-perspective peer review, and full 10-stage pipeline orchestrator",
       "source": "./",
       "strict": false,
       "skills": [
         "./skills/resource-resolver",
         "./skills/agent-state",
+        "./skills/research-project-init",
         "./skills/deep-research",
         "./skills/academic-paper",
         "./skills/academic-paper-reviewer",

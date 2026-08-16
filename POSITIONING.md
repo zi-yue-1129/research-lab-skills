@@ -6,6 +6,8 @@ research-lab-skills is a **source-available academic research copilot framework*
 
 It is licensed under [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/). This is not an open source license — it restricts commercial use by design, to keep the tool free for academic communities.
 
+**Terminology used throughout this document:** "research-lab-skills" refers to this whole repository. "ARS" (Academic Research Skills — `deep-research`, `academic-paper`, `academic-paper-reviewer`, `academic-pipeline`) refers specifically to the upstream research/writing/review framework originally developed by Cheng-I Wu ([`Imbad0202/academic-research-skills`](https://github.com/Imbad0202/academic-research-skills)) and imported into this repository largely as-is. It is not this repository's own work — see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the full attribution. Where a statement below is scoped to ARS specifically, it says "ARS"; where it applies to the whole repository (including the `research-log`/`report-slides`/`research-mode` lab workflow and integration infrastructure built in this repo), it says "research-lab-skills."
+
 ## What this is not
 
 ARS is not an autonomous paper-writing system. It is not a replacement for the researcher. It does not claim authorship, and its outputs are not submission-ready without human review.
@@ -25,14 +27,20 @@ ARS is not an autonomous paper-writing system. It is not a replacement for the r
 
 ## Prohibited uses (per license)
 
-- Commercial SaaS or hosted services built on ARS
-- Consulting or freelance services that package ARS as a paid product
+Both parts of this repository — the original lab workflow/infrastructure and the upstream ARS content — are licensed CC BY-NC 4.0 (see [NOTICE.md](NOTICE.md) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)), so these restrictions apply to research-lab-skills as a whole, not only to ARS:
+
+- Commercial SaaS or hosted services built on research-lab-skills (including its ARS component)
+- Consulting or freelance services that package research-lab-skills as a paid product
 - Enterprise or institutional paid deployments without separate licensing
-- Commercial API wrappers or resale of ARS functionality
+- Commercial API wrappers or resale of research-lab-skills' functionality
 
-These reflect our policy intent. See the [CC BY-NC 4.0 license](https://creativecommons.org/licenses/by-nc/4.0/) for the precise legal terms. For commercial licensing inquiries, contact the maintainer.
+These reflect our policy intent. See the [CC BY-NC 4.0 license](https://creativecommons.org/licenses/by-nc/4.0/) for the precise legal terms.
 
-## Design philosophy
+**On commercial licensing inquiries:** this repository's maintainer (ZI-YUE, CHAO) can only grant commercial permission for the content they own the copyright to — the original lab workflow/infrastructure listed in [NOTICE.md](NOTICE.md) §1 (`research-log`, `report-slides`, `research-mode`, `resource-resolver`, `agent-state`, `research-project-init`, and the packaging/integration layer). The maintainer does **not** hold copyright over the upstream ARS content (`deep-research`, `academic-paper`, `academic-paper-reviewer`, `academic-pipeline`, and their supporting `agents/`/`shared/`/`commands/`/`hooks/`) and cannot grant commercial rights to it. Commercial use of the ARS component requires separate permission from its original rights holder, Cheng-I Wu ([`Imbad0202/academic-research-skills`](https://github.com/Imbad0202/academic-research-skills)).
+
+## Design philosophy (Academic Research Skills / ARS)
+
+The design principles below describe ARS specifically — the upstream research/writing/review framework — not this repository's own infrastructure work.
 
 **Assistive, not deceptive.** ARS helps you write better, not hide that you used AI.
 
@@ -53,8 +61,14 @@ These reflect our policy intent. See the [CC BY-NC 4.0 license](https://creative
 
 ## Citing this tool
 
-If you use ARS in your research, please cite it:
+If you use research-lab-skills as a whole (the integrated environment: lab workflow, session-mode routing, and the ARS integration), please cite:
 
 ```
-CHAO, Z.-Y. (2026). research-lab-skills (Version 1.0.0) [Computer software]. https://github.com/zi-yue-1129/research-lab-skills
+CHAO, Z.-Y. (2026). research-lab-skills (Version 1.1.0) [Computer software]. https://github.com/zi-yue-1129/research-lab-skills
+```
+
+If you specifically want to credit the upstream Academic Research Skills methodology (`deep-research`/`academic-paper`/`academic-paper-reviewer`/`academic-pipeline`), cite the upstream project directly:
+
+```
+Wu, C.-I. (2026). academic-research-skills [Computer software]. https://github.com/Imbad0202/academic-research-skills
 ```

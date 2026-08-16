@@ -12,12 +12,12 @@
 
 ## 这是用来做什么
 
-我建立 research-lab-skills 是一套涵盖完整学术研究周期的 Claude Code 技能包——从每日实验日志、进度幻灯片，到系统性文献回顾、论文撰写与同行评审。整合两套互补工具：
+research-lab-skills 是给 Claude Code 用的**整合研究环境**，结合了两个部分：
 
-- **Lab 技能**（`research-log`、`report-slides`、`research-mode`）—— 实验日志、进度幻灯片、工作模式路由
-- **学术研究技能（ARS）**（`deep-research`、`academic-paper`、`academic-paper-reviewer`、`academic-pipeline`）—— 文献回顾、论文撰写、同行评审、全流程 pipeline
+- **学术研究技能（ARS）**（`deep-research`、`academic-paper`、`academic-paper-reviewer`、`academic-pipeline`）—— 13/12/7/10-agent 的文献回顾、论文撰写、同行评审与全流程 pipeline 框架。这是**吴政宜（Cheng-I Wu）的上游作品**（[`Imbad0202/academic-research-skills`](https://github.com/Imbad0202/academic-research-skills)，CC BY-NC 4.0），本项目将其导入并大致沿用原样。
+- **我开发的 Lab 工作流程与基础设施**（`research-log`、`report-slides`、`research-mode`，以及让两套工具能安装并协同运作的 `resource-resolver`／`agent-state`／`research-project-init` 与整合封装层）—— 实验日志、进度幻灯片生成、工作模式路由，以及两套工具合并前都不存在的共用状态／resolver 基础设施。
 
-各技能的详细说明见下方章节。
+ARS 的 agent pipeline 不是我写的。我做的是围绕它的日常研究层，以及让两者合成一套工具的整合工程。精确到路径层级的归属拆解见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)，各技能的详细说明见下方章节。
 
 ## 为什么需要它
 
@@ -237,7 +237,7 @@ powershell -ExecutionPolicy Bypass -File install.ps1 -Uninstall      # 卸载
 
 本项目采用 [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/) 授权。
 
-- **Lab 技能** — [ZI-YUE,CHAO](https://github.com/zi-yue-1129)（CC BY-NC 4.0）
-- **学术研究技能** — 原作 [Cheng-I Wu（Imbad0202）](https://github.com/Imbad0202)（CC BY-NC 4.0）
+- **Lab 技能与整合基础设施**（`research-log`、`report-slides`、`research-mode`、`resource-resolver`、`agent-state`、`research-project-init`、封装／安装层）— [ZI-YUE,CHAO](https://github.com/zi-yue-1129) 原创（CC BY-NC 4.0）
+- **学术研究技能**（`deep-research`、`academic-paper`、`academic-paper-reviewer`、`academic-pipeline`，及其对应的 `agents/`、`shared/`、`commands/`、`hooks/`）— 上游原作 [Cheng-I Wu（Imbad0202）](https://github.com/Imbad0202)（CC BY-NC 4.0）
 
-详见 [LICENSE](LICENSE) 与 [NOTICE.md](NOTICE.md)。
+详见 [LICENSE](LICENSE)、[NOTICE.md](NOTICE.md)，以及逐路径拆解的 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

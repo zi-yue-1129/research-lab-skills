@@ -12,12 +12,12 @@
 
 ## このツールの目的
 
-私は research-lab-skills を、学術研究の全ライフサイクルをカバーする Claude Code スキルスイートとして開発しました——日々の実験ジャーナルや進捗スライドから、系統的文献レビュー、論文執筆、ピアレビューシミュレーションまで。2つの互いに補完するツールセットを統合しています：
+research-lab-skills は Claude Code 向けの**統合研究環境**で、2 つの要素を組み合わせています：
 
-- **Lab スキル**（`research-log`、`report-slides`、`research-mode`）—— 実験ジャーナル、進捗スライド、セッションモードルーティング
-- **学術研究スキル（ARS）**（`deep-research`、`academic-paper`、`academic-paper-reviewer`、`academic-pipeline`）—— 文献レビュー、論文執筆、ピアレビュー、フルパイプライン
+- **学術研究スキル（ARS）**（`deep-research`、`academic-paper`、`academic-paper-reviewer`、`academic-pipeline`）—— 13/12/7/10 エージェント構成の文献レビュー、論文執筆、ピアレビュー、パイプラインオーケストレーションのフレームワーク。これは**呉政宜（Cheng-I Wu）氏による上流の作品**（[`Imbad0202/academic-research-skills`](https://github.com/Imbad0202/academic-research-skills)、CC BY-NC 4.0）であり、本プロジェクトはこれをほぼそのまま取り込んで使用しています。
+- **私が開発した Lab ワークフローとインフラ**（`research-log`、`report-slides`、`research-mode`、および両方のツールセットをインストール・連携動作させるための `resource-resolver`／`agent-state`／`research-project-init`、パッケージング／インストール層）—— 実験ジャーナル、進捗スライド生成、セッションモードルーティング、そして両ツールセットが統合される前には存在しなかった共有状態／リゾルバー基盤。
 
-各スキルの詳細は下のセクションを参照してください。
+ARS のエージェントパイプラインは私が書いたものではありません。私が作ったのはその周りの日常研究レイヤーと、両者を1つのスイートとして統合するエンジニアリングです。パスレベルでの正確な帰属の内訳は [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) を、各スキルの詳細は以下のセクションを参照してください。
 
 ## なぜ必要なのか
 
@@ -237,9 +237,9 @@ powershell -ExecutionPolicy Bypass -File install.ps1 -Uninstall      # アンイ
 
 本プロジェクトは [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/) の下でライセンスされています。
 
-- **Lab スキル** — [ZI-YUE,CHAO](https://github.com/zi-yue-1129)（CC BY-NC 4.0）
-- **学術研究スキル** — 原作者 [Cheng-I Wu（Imbad0202）](https://github.com/Imbad0202)（CC BY-NC 4.0）
+- **Lab スキルと統合インフラ**（`research-log`、`report-slides`、`research-mode`、`resource-resolver`、`agent-state`、`research-project-init`、パッケージング／インストール層）— [ZI-YUE,CHAO](https://github.com/zi-yue-1129) によるオリジナル作品（CC BY-NC 4.0）
+- **学術研究スキル**（`deep-research`、`academic-paper`、`academic-paper-reviewer`、`academic-pipeline`、および対応する `agents/`、`shared/`、`commands/`、`hooks/`）— 上流のオリジナル作品 [Cheng-I Wu（Imbad0202）](https://github.com/Imbad0202)（CC BY-NC 4.0）
 
-[LICENSE](LICENSE) と [NOTICE.md](NOTICE.md) を参照してください。
+詳細は [LICENSE](LICENSE)、[NOTICE.md](NOTICE.md)、パスごとの内訳は [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) を参照してください。
 
 日本語 README 翻訳：[eltociear](https://github.com/eltociear)（Ikko Eltociear Ashimine）
