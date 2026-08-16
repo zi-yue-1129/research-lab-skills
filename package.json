@@ -31,13 +31,13 @@
     "academic-pipeline"
   ],
   "license": "CC-BY-NC-4.0",
-  "homepage": "https://github.com/starpig1129/research-lab-skills#readme",
+  "homepage": "https://github.com/zi-yue-1129/research-lab-skills#readme",
   "bugs": {
-    "url": "https://github.com/starpig1129/research-lab-skills/issues"
+    "url": "https://github.com/zi-yue-1129/research-lab-skills/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/starpig1129/research-lab-skills.git"
+    "url": "git+https://github.com/zi-yue-1129/research-lab-skills.git"
   },
   "publishConfig": {
     "access": "public"

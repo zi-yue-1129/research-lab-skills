@@ -6,7 +6,7 @@ Thank you for your interest in contributing. This document explains what kinds o
 
 ## How to submit a contribution
 
-This repo uses the standard **fork-and-PR** workflow. Fork the repo on GitHub, clone your fork, create a branch, make your changes, push to your fork, then open a PR against `starpig1129/research-lab-skills`.
+This repo uses the standard **fork-and-PR** workflow. Fork the repo on GitHub, clone your fork, create a branch, make your changes, push to your fork, then open a PR against `zi-yue-1129/research-lab-skills`.
 
 **Important**: You cannot push directly to this repo — you must fork it first and submit a PR from your fork.
 
@@ -72,7 +72,7 @@ Either shape is accepted under the same maintainer-facing conditions:
 
 ### Maintainer
 
-The repo is maintained by [ZI-YUE,CHAO](https://github.com/starpig1129). The maintainer has final say on all merges.
+The repo is maintained by [ZI-YUE,CHAO](https://github.com/zi-yue-1129). The maintainer has final say on all merges.
 
 ### Decision principles
 

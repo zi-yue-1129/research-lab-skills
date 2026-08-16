@@ -15,7 +15,7 @@ If you find a security issue (e.g. prompt injection, credential exposure, uninte
 
 Instead, use GitHub's **private vulnerability reporting**:
 
-1. Go to the [Security Advisories](https://github.com/starpig1129/research-lab-skills/security/advisories) page.
+1. Go to the [Security Advisories](https://github.com/zi-yue-1129/research-lab-skills/security/advisories) page.
 2. Click **"Report a vulnerability"**.
 3. Fill in the details — what you found, how to reproduce it, and the potential impact.
 
@@ -33,4 +33,4 @@ The following are in scope for security reports:
 The following are **out of scope**:
 
 - AI output quality issues (hallucinations, weak arguments) — these are research limitations, not security vulnerabilities
-- Feature requests or general bugs — use [Issues](https://github.com/starpig1129/research-lab-skills/issues) instead
+- Feature requests or general bugs — use [Issues](https://github.com/zi-yue-1129/research-lab-skills/issues) instead

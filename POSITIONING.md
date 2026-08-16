@@ -56,5 +56,5 @@ These reflect our policy intent. See the [CC BY-NC 4.0 license](https://creative
 If you use ARS in your research, please cite it:
 
 ```
-CHAO, Z.-Y. (2026). research-lab-skills (Version 1.0.0) [Computer software]. https://github.com/starpig1129/research-lab-skills
+CHAO, Z.-Y. (2026). research-lab-skills (Version 1.0.0) [Computer software]. https://github.com/zi-yue-1129/research-lab-skills
 ```

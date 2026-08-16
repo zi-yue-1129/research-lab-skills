@@ -1,9 +1,9 @@
 # research-lab-skills
 
 [![npm](https://img.shields.io/npm/v/research-lab-skills)](https://www.npmjs.com/package/research-lab-skills)
-[![Version](https://img.shields.io/badge/version-v1.1.0-blue)](https://github.com/starpig1129/research-lab-skills/releases/tag/v1.1.0)
+[![Version](https://img.shields.io/badge/version-v1.1.0-blue)](https://github.com/zi-yue-1129/research-lab-skills/releases/tag/v1.1.0)
 [![License: CC BY-NC 4.0](https://img.shields.io/badge/license-CC%20BY--NC%204.0-lightgrey)](https://creativecommons.org/licenses/by-nc/4.0/)
-[![GitHub](https://img.shields.io/badge/GitHub-starpig1129-black?logo=github)](https://github.com/starpig1129/research-lab-skills)
+[![GitHub](https://img.shields.io/badge/GitHub-zi--yue--1129-black?logo=github)](https://github.com/zi-yue-1129/research-lab-skills)
 
 [English](README.md) | [简体中文版](README.zh-CN.md) | [繁體中文版](README.zh-TW.md)
 
@@ -103,38 +103,38 @@
 
 ```bash
 # 全スキル（グローバル）
-curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.sh | bash
 
 # プロジェクトローカル
-curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- --local
+curl -fsSL https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.sh | bash -s -- --local
 
 # ARSスキルのみ
-curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- --ars-only
+curl -fsSL https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.sh | bash -s -- --ars-only
 
 # Labスキルのみ
-curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- --lab-only
+curl -fsSL https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.sh | bash -s -- --lab-only
 
 # アンインストール
-curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- uninstall
+curl -fsSL https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.sh | bash -s -- uninstall
 ```
 
 **Windows（PowerShell）** — Git BashやWSLは不要、ネイティブに動作します：
 
 ```powershell
 # 全スキル（グローバル）
-irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.ps1 | iex
 
 # フラグを渡す場合はパイプではなくスクリプト本体を取得してから実行する必要があるため、scriptblockで包みます：
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -Local
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -ArsOnly
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -LabOnly
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -Uninstall
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.ps1))) -Local
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.ps1))) -ArsOnly
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.ps1))) -LabOnly
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.ps1))) -Uninstall
 ```
 
 **Windows（cmd.exe）：**
 
 ```bat
-powershell -Command "irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1 | iex"
+powershell -Command "irm https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.ps1 | iex"
 ```
 
 **上記コマンドがウイルス対策ソフト / EDR にブロックされる場合：** 一部のセキュリティソフトは、内容に関わらず `irm | iex`（ダウンロードして即実行）というコマンドパターン自体を検知してブロックします — 下記の[git clone](#git-clone)方式ならこの問題を完全に回避できます。
@@ -144,7 +144,7 @@ powershell -Command "irm https://raw.githubusercontent.com/starpig1129/research-
 macOS、Linux、Windows で同じ手順が使え、一部のウイルス対策/EDRソフトがブロックする `curl | bash` / `irm | iex`（ダウンロードして即実行）というコマンドパターンも回避できます：
 
 ```bash
-git clone --depth 1 https://github.com/starpig1129/research-lab-skills.git
+git clone --depth 1 https://github.com/zi-yue-1129/research-lab-skills.git
 cd research-lab-skills
 ```
 
@@ -264,7 +264,7 @@ crs uninstall --global     # スキルを削除
 
 本プロジェクトは [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/) の下でライセンスされています。
 
-- **Lab スキル** — [ZI-YUE,CHAO](https://github.com/starpig1129)（CC BY-NC 4.0）
+- **Lab スキル** — [ZI-YUE,CHAO](https://github.com/zi-yue-1129)（CC BY-NC 4.0）
 - **学術研究スキル** — 原作者 [Cheng-I Wu（Imbad0202）](https://github.com/Imbad0202)（CC BY-NC 4.0）
 
 [LICENSE](LICENSE) と [NOTICE.md](NOTICE.md) を参照してください。

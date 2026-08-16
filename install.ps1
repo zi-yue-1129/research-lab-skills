@@ -9,19 +9,19 @@
 
 .EXAMPLE
     # All skills, global install
-    irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1 | iex
+    irm https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.ps1 | iex
 
 .EXAMPLE
     # Flags require the script text, not a piped invocation, so download it
     # into a scriptblock first:
-    & ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -Local
-    & ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -ArsOnly
-    & ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -LabOnly
-    & ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -Uninstall
+    & ([scriptblock]::Create((irm https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.ps1))) -Local
+    & ([scriptblock]::Create((irm https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.ps1))) -ArsOnly
+    & ([scriptblock]::Create((irm https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.ps1))) -LabOnly
+    & ([scriptblock]::Create((irm https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.ps1))) -Uninstall
 
 .EXAMPLE
     # From cmd.exe, wrap the same command with powershell -Command
-    powershell -Command "irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1 | iex"
+    powershell -Command "irm https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.ps1 | iex"
 #>
 
 param(
@@ -33,7 +33,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$Repo = "https://github.com/starpig1129/research-lab-skills.git"
+$Repo = "https://github.com/zi-yue-1129/research-lab-skills.git"
 
 # Shared foundation both lab and ARS skills depend on -- always installed
 $ResolverSkills = @("resource-resolver", "agent-state")

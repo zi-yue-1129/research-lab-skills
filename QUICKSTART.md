@@ -9,13 +9,13 @@ Get from zero to your first AI-assisted research in 3 steps.
 curl -fsSL https://claude.ai/install.sh | bash
 
 # Install all 9 skills globally (macOS / Linux / Git Bash / WSL)
-curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.sh | bash
 ```
 
 Windows (native PowerShell, no Git Bash/WSL needed):
 
 ```powershell
-irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.ps1 | iex
 ```
 
 Restart Claude Code after install. For project-local install or to install only a subset of skills, see [docs/SETUP.md](docs/SETUP.md).

@@ -1,7 +1,7 @@
 # research-lab-skills
 
 [![npm](https://img.shields.io/npm/v/research-lab-skills)](https://www.npmjs.com/package/research-lab-skills)
-[![Version](https://img.shields.io/badge/version-v1.1.0-blue)](https://github.com/starpig1129/research-lab-skills/releases/tag/v1.1.0)
+[![Version](https://img.shields.io/badge/version-v1.1.0-blue)](https://github.com/zi-yue-1129/research-lab-skills/releases/tag/v1.1.0)
 [![License: CC BY-NC 4.0](https://img.shields.io/badge/license-CC%20BY--NC%204.0-lightgrey)](https://creativecommons.org/licenses/by-nc/4.0/)
 
 [简体中文版](README.zh-CN.md) | [繁體中文版](README.zh-TW.md) | [日本語版](README.ja-JP.md)
@@ -10,12 +10,12 @@
 
 ## What this is for
 
-I built research-lab-skills as a Claude Code skill suite covering the full academic research lifecycle — from daily experiment journals and progress presentations to systematic literature review, paper writing, and peer review simulation. It integrates two complementary toolsets:
+research-lab-skills is an **integrated research environment** for Claude Code that combines two things:
 
-- **Lab skills** (`research-log`, `report-slides`, `research-mode`) — experiment journals, progress slides, session mode routing
-- **Academic Research Skills** (`deep-research`, `academic-paper`, `academic-paper-reviewer`, `academic-pipeline`) — literature review, paper writing, peer review, full-pipeline orchestration
+- **Academic Research Skills (ARS)** (`deep-research`, `academic-paper`, `academic-paper-reviewer`, `academic-pipeline`) — a 13/12/7/10-agent literature review, paper writing, peer review, and pipeline-orchestration framework. This is **upstream work by Cheng-I Wu ([`Imbad0202/academic-research-skills`](https://github.com/Imbad0202/academic-research-skills), CC BY-NC 4.0)**, imported into this repo and used largely as-is.
+- **Lab workflow and infrastructure I built** (`research-log`, `report-slides`, `research-mode`, plus `resource-resolver` / `agent-state` / `research-project-init` and the packaging/install layer that lets both toolsets install and run together) — experiment journals, progress-slide generation, session-mode routing, and the shared state/resolver infrastructure the two toolsets didn't have before they were combined here.
 
-See the detailed sections below for each skill.
+I did not write the ARS agent pipeline. What I built is the daily-research layer around it, and the integration that makes the two work as one suite. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the exact, path-by-path breakdown, and the detailed sections below for each skill.
 
 ## Why you need it
 
@@ -100,38 +100,38 @@ The journal's `follows:` field links experiments into a traceable timeline. `ame
 
 ```bash
 # All skills (global)
-curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.sh | bash
 
 # Project-local
-curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- --local
+curl -fsSL https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.sh | bash -s -- --local
 
 # ARS skills only
-curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- --ars-only
+curl -fsSL https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.sh | bash -s -- --ars-only
 
 # Lab skills only
-curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- --lab-only
+curl -fsSL https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.sh | bash -s -- --lab-only
 
 # Uninstall
-curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- uninstall
+curl -fsSL https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.sh | bash -s -- uninstall
 ```
 
 **Windows (PowerShell)** — native, no Git Bash or WSL required:
 
 ```powershell
 # All skills (global)
-irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.ps1 | iex
 
 # Flags require the script body, not a piped invocation — wrap it in a scriptblock:
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -Local
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -ArsOnly
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -LabOnly
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -Uninstall
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.ps1))) -Local
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.ps1))) -ArsOnly
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.ps1))) -LabOnly
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.ps1))) -Uninstall
 ```
 
 **Windows (cmd.exe):**
 
 ```bat
-powershell -Command "irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1 | iex"
+powershell -Command "irm https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.ps1 | iex"
 ```
 
 **If antivirus/EDR blocks the command above:** some security software flags the `irm | iex` pattern (download-and-execute) regardless of content — see [git clone](#git-clone) below, which avoids it entirely.
@@ -141,7 +141,7 @@ powershell -Command "irm https://raw.githubusercontent.com/starpig1129/research-
 Works identically on macOS, Linux, and Windows, and avoids the `curl | bash` / `irm | iex` download-and-execute pattern that some antivirus/EDR software flags outright regardless of content:
 
 ```bash
-git clone --depth 1 https://github.com/starpig1129/research-lab-skills.git
+git clone --depth 1 https://github.com/zi-yue-1129/research-lab-skills.git
 cd research-lab-skills
 ```
 
@@ -186,7 +186,7 @@ npx research-lab-skills init --global
 | `--global` | All 9 skills globally (`~/.claude/skills/`) |
 | `--lab-only` | `research-log`, `report-slides`, `research-mode` (+ `resource-resolver`, `agent-state`) |
 | `--ars-only` | `deep-research`, `academic-paper`, `academic-paper-reviewer`, `academic-pipeline` (+ `resource-resolver`, `agent-state`) |
-| `--ai cursor` | Install for Cursor instead of Claude Code |
+| `--ai cursor` / `--ai windsurf` / `--ai copilot` | Copies skill files into that tool's skills directory instead of Claude Code's. This is file-placement only — it has not been verified that these tools interpret Claude Code's `SKILL.md` format or route `/ars-*`/`/mode` commands the same way Claude Code does. Treat as experimental, not equivalent support. |
 
 ```bash
 crs update --global        # reinstall after npm upgrade
@@ -338,7 +338,7 @@ scripts/
 
 ## Sources
 
-- Lab skills (`research-log`, `report-slides`, `research-mode`) — [`starpig1129/research-lab-skills`](https://github.com/starpig1129/research-lab-skills) (CC BY-NC 4.0)
-- Academic Research Skills (`deep-research`, `academic-paper`, `academic-paper-reviewer`, `academic-pipeline`) — originally [`Imbad0202/academic-research-skills`](https://github.com/Imbad0202/academic-research-skills) (CC BY-NC 4.0)
+- Lab skills and integration infrastructure (`research-log`, `report-slides`, `research-mode`, `resource-resolver`, `agent-state`, `research-project-init`, packaging/install layer) — original work by ZI-YUE, CHAO, this repository, CC BY-NC 4.0
+- Academic Research Skills (`deep-research`, `academic-paper`, `academic-paper-reviewer`, `academic-pipeline`, and their supporting `agents/`, `shared/`, `commands/`, `hooks/`) — upstream [`Imbad0202/academic-research-skills`](https://github.com/Imbad0202/academic-research-skills) by Cheng-I Wu, CC BY-NC 4.0
 
-See [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md) for licensing details.
+See [LICENSE](LICENSE), [NOTICE.md](NOTICE.md), and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) (path-by-path detail, including directories split between the two) for full licensing and attribution detail.

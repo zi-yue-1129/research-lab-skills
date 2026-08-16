@@ -1,9 +1,9 @@
 # research-lab-skills
 
 [![npm](https://img.shields.io/npm/v/research-lab-skills)](https://www.npmjs.com/package/research-lab-skills)
-[![Version](https://img.shields.io/badge/version-v1.1.0-blue)](https://github.com/starpig1129/research-lab-skills/releases/tag/v1.1.0)
+[![Version](https://img.shields.io/badge/version-v1.1.0-blue)](https://github.com/zi-yue-1129/research-lab-skills/releases/tag/v1.1.0)
 [![License: CC BY-NC 4.0](https://img.shields.io/badge/license-CC%20BY--NC%204.0-lightgrey)](https://creativecommons.org/licenses/by-nc/4.0/)
-[![GitHub](https://img.shields.io/badge/GitHub-starpig1129-black?logo=github)](https://github.com/starpig1129/research-lab-skills)
+[![GitHub](https://img.shields.io/badge/GitHub-zi--yue--1129-black?logo=github)](https://github.com/zi-yue-1129/research-lab-skills)
 
 [English](README.md) | [简体中文版](README.zh-CN.md) | [日本語版](README.ja-JP.md)
 
@@ -13,12 +13,12 @@
 
 ## 這是用來做什麼
 
-我建立 research-lab-skills 是一套涵蓋完整學術研究週期的 Claude Code 技能包——從每日實驗日誌、進度簡報，到系統性文獻回顧、論文撰寫與同儕審查。整合兩套互補工具：
+research-lab-skills 是給 Claude Code 用的**整合研究環境**，結合了兩個部分：
 
-- **Lab 技能**（`research-log`、`report-slides`、`research-mode`）—— 實驗日誌、進度簡報、工作模式路由
-- **學術研究技能（ARS）**（`deep-research`、`academic-paper`、`academic-paper-reviewer`、`academic-pipeline`）—— 文獻回顧、論文撰寫、同儕審查、全流程 pipeline
+- **學術研究技能（ARS）**（`deep-research`、`academic-paper`、`academic-paper-reviewer`、`academic-pipeline`）—— 13/12/7/10-agent 的文獻回顧、論文撰寫、同儕審查與全流程 pipeline 框架。這是**吳政宜（Cheng-I Wu）的上游作品**（[`Imbad0202/academic-research-skills`](https://github.com/Imbad0202/academic-research-skills)，CC BY-NC 4.0），本專案將其匯入並大致沿用原樣。
+- **我開發的 Lab 工作流程與基礎設施**（`research-log`、`report-slides`、`research-mode`，以及讓兩套工具能安裝並協同運作的 `resource-resolver`／`agent-state`／`research-project-init` 與整合封裝層）—— 實驗日誌、進度簡報產生、工作模式路由，以及兩套工具合併前都不存在的共用狀態／resolver 基礎設施。
 
-各技能的詳細說明見下方章節。
+ARS 的 agent pipeline 不是我寫的。我做的是圍繞它的日常研究層，以及讓兩者合成一套工具的整合工程。精確到路徑層級的歸屬拆解見 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)，各技能的詳細說明見下方章節。
 
 ## 為什麼需要它
 
@@ -105,38 +105,38 @@
 
 ```bash
 # 全部技能（全域）
-curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.sh | bash
 
 # 專案本機
-curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- --local
+curl -fsSL https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.sh | bash -s -- --local
 
 # 只安裝 ARS 技能
-curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- --ars-only
+curl -fsSL https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.sh | bash -s -- --ars-only
 
 # 只安裝 Lab 技能
-curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- --lab-only
+curl -fsSL https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.sh | bash -s -- --lab-only
 
 # 解除安裝
-curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- uninstall
+curl -fsSL https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.sh | bash -s -- uninstall
 ```
 
 **Windows（PowerShell）**——原生支援，不需要 Git Bash 或 WSL：
 
 ```powershell
 # 全部技能（全域）
-irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.ps1 | iex
 
 # 帶旗標時需要取得腳本內容再執行，不能直接用管線傳給 iex，改用 scriptblock 包裝：
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -Local
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -ArsOnly
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -LabOnly
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -Uninstall
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.ps1))) -Local
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.ps1))) -ArsOnly
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.ps1))) -LabOnly
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.ps1))) -Uninstall
 ```
 
 **Windows（cmd.exe）：**
 
 ```bat
-powershell -Command "irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1 | iex"
+powershell -Command "irm https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.ps1 | iex"
 ```
 
 **如果防毒軟體 / EDR 擋掉上面這行：**有些資安軟體會直接攔截 `irm | iex`（下載後立即執行）這種指令樣式，不論實際內容是什麼——見下方的[git clone](#git-clone)方式，完全避開這個問題。
@@ -146,7 +146,7 @@ powershell -Command "irm https://raw.githubusercontent.com/starpig1129/research-
 在 macOS、Linux、Windows 上做法一致，也能避開部分防毒/EDR 軟體會攔截的 `curl | bash` / `irm | iex`（下載後立即執行）指令樣式：
 
 ```bash
-git clone --depth 1 https://github.com/starpig1129/research-lab-skills.git
+git clone --depth 1 https://github.com/zi-yue-1129/research-lab-skills.git
 cd research-lab-skills
 ```
 
@@ -191,7 +191,7 @@ npx research-lab-skills init --global
 | `--global` | 全部 7 個技能（全域 `~/.claude/skills/`） |
 | `--lab-only` | `research-log`、`report-slides`、`research-mode` |
 | `--ars-only` | `deep-research`、`academic-paper`、`academic-paper-reviewer`、`academic-pipeline` |
-| `--ai cursor` | 安裝給 Cursor 而非 Claude Code |
+| `--ai cursor` / `--ai windsurf` / `--ai copilot` | 把 skill 檔案複製到該工具自己的 skills 目錄，而非 Claude Code 的。這僅止於「檔案放置」——尚未驗證這些工具是否會用與 Claude Code 相同的方式解讀 `SKILL.md` 格式、或路由 `/ars-*`／`/mode` 指令。請視為實驗性支援，不等同於原生支援。 |
 
 ```bash
 crs update --global        # npm 升級後重新安裝
@@ -372,10 +372,10 @@ scripts/
 
 本專案採用 [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/) 授權。
 
-- **Lab 技能**（`research-log`、`report-slides`、`research-mode`）— [ZI-YUE,CHAO](https://github.com/starpig1129)（CC BY-NC 4.0）
-- **學術研究技能**（`deep-research`、`academic-paper`、`academic-paper-reviewer`、`academic-pipeline`）— 原作 [Cheng-I Wu（Imbad0202）](https://github.com/Imbad0202)（CC BY-NC 4.0）
+- **Lab 技能與整合基礎設施**（`research-log`、`report-slides`、`research-mode`、`resource-resolver`、`agent-state`、`research-project-init`、封裝／安裝層）— [ZI-YUE,CHAO](https://github.com/zi-yue-1129) 原創（CC BY-NC 4.0）
+- **學術研究技能**（`deep-research`、`academic-paper`、`academic-paper-reviewer`、`academic-pipeline`，及其對應的 `agents/`、`shared/`、`commands/`、`hooks/`）— 上游原作 [Cheng-I Wu（Imbad0202）](https://github.com/Imbad0202)（CC BY-NC 4.0）
 
-詳見 [LICENSE](LICENSE) 與 [NOTICE.md](NOTICE.md)。
+詳見 [LICENSE](LICENSE)、[NOTICE.md](NOTICE.md)，以及逐路徑拆解的 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)（含 `scripts/`、`examples/`、`docs/`、`evals/` 等混合目錄的精確歸屬）。
 
 ## 貢獻者
 

@@ -1,9 +1,9 @@
 # research-lab-skills
 
 [![npm](https://img.shields.io/npm/v/research-lab-skills)](https://www.npmjs.com/package/research-lab-skills)
-[![Version](https://img.shields.io/badge/version-v1.1.0-blue)](https://github.com/starpig1129/research-lab-skills/releases/tag/v1.1.0)
+[![Version](https://img.shields.io/badge/version-v1.1.0-blue)](https://github.com/zi-yue-1129/research-lab-skills/releases/tag/v1.1.0)
 [![License: CC BY-NC 4.0](https://img.shields.io/badge/license-CC%20BY--NC%204.0-lightgrey)](https://creativecommons.org/licenses/by-nc/4.0/)
-[![GitHub](https://img.shields.io/badge/GitHub-starpig1129-black?logo=github)](https://github.com/starpig1129/research-lab-skills)
+[![GitHub](https://img.shields.io/badge/GitHub-zi--yue--1129-black?logo=github)](https://github.com/zi-yue-1129/research-lab-skills)
 
 [English](README.md) | [繁體中文版](README.zh-TW.md) | [日本語版](README.ja-JP.md)
 
@@ -103,38 +103,38 @@
 
 ```bash
 # 全部技能（全局）
-curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.sh | bash
 
 # 项目本地
-curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- --local
+curl -fsSL https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.sh | bash -s -- --local
 
 # 只安装 ARS 技能
-curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- --ars-only
+curl -fsSL https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.sh | bash -s -- --ars-only
 
 # 只安装 Lab 技能
-curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- --lab-only
+curl -fsSL https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.sh | bash -s -- --lab-only
 
 # 卸载
-curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- uninstall
+curl -fsSL https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.sh | bash -s -- uninstall
 ```
 
 **Windows（PowerShell）**——原生支持，不需要 Git Bash 或 WSL：
 
 ```powershell
 # 全部技能（全局）
-irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.ps1 | iex
 
 # 带标志时需要取得脚本内容再执行，不能直接用管道传给 iex，改用 scriptblock 包装：
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -Local
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -ArsOnly
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -LabOnly
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1))) -Uninstall
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.ps1))) -Local
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.ps1))) -ArsOnly
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.ps1))) -LabOnly
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.ps1))) -Uninstall
 ```
 
 **Windows（cmd.exe）：**
 
 ```bat
-powershell -Command "irm https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.ps1 | iex"
+powershell -Command "irm https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.ps1 | iex"
 ```
 
 **如果杀毒软件 / EDR 拦截了上面这行：**有些安全软件会直接拦截 `irm | iex`（下载后立即执行）这种命令样式，不论实际内容是什么——见下方的[git clone](#git-clone)方式，完全避开这个问题。
@@ -144,7 +144,7 @@ powershell -Command "irm https://raw.githubusercontent.com/starpig1129/research-
 在 macOS、Linux、Windows 上做法一致，也能避开部分杀毒/EDR 软件会拦截的 `curl | bash` / `irm | iex`（下载后立即执行）命令样式：
 
 ```bash
-git clone --depth 1 https://github.com/starpig1129/research-lab-skills.git
+git clone --depth 1 https://github.com/zi-yue-1129/research-lab-skills.git
 cd research-lab-skills
 ```
 
@@ -264,7 +264,7 @@ crs uninstall --global     # 移除技能
 
 本项目采用 [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/) 授权。
 
-- **Lab 技能** — [ZI-YUE,CHAO](https://github.com/starpig1129)（CC BY-NC 4.0）
+- **Lab 技能** — [ZI-YUE,CHAO](https://github.com/zi-yue-1129)（CC BY-NC 4.0）
 - **学术研究技能** — 原作 [Cheng-I Wu（Imbad0202）](https://github.com/Imbad0202)（CC BY-NC 4.0）
 
 详见 [LICENSE](LICENSE) 与 [NOTICE.md](NOTICE.md)。

@@ -193,7 +193,7 @@ Claude 會在 `<install-root>/<skill-name>/SKILL.md` 尋找 skills。這個 repo
 如果你用的是 Claude Code CLI、VS Code extension 或 JetBrains extension，可以一行指令安裝 ARS：
 
 ```text
-/plugin marketplace add starpig1129/research-lab-skills
+/plugin marketplace add zi-yue-1129/research-lab-skills
 /plugin install academic-research-skills
 ```
 
@@ -204,7 +204,7 @@ Claude 會在 `<install-root>/<skill-name>/SKILL.md` 尋找 skills。這個 repo
 **Plugin 平台支援範圍：**
 - ✅ Claude Code CLI / VS Code extension / JetBrains extension — 完整支援
 - ❌ claude.ai 網頁版 / Claude for Work / Anthropic API 直呼 — 不支援 plugin，請改用方法一 / 二 / 三
-- ➡️ Codex CLI — 改裝姊妹版 [`starpig1129/research-lab-skills`](https://github.com/starpig1129/research-lab-skills-codex)（同一套 workflow 內容、Codex 原生包裝）
+- ❔ Codex CLI — 目前沒有針對 Codex 的 plugin/marketplace 發行版（先前文件提到的「Codex 原生姊妹版」從未實際發布，此處已移除該連結）。仍可透過下方方法一手動複製 skill 檔案，但 Codex 對 Claude Code 的 `SKILL.md` 格式與 slash-command 路由的相容程度未經驗證，不應視為與 Claude Code 原生支援等級相同。
 
 ### 方法一：作為專案 Skills（推薦）
 
@@ -213,7 +213,7 @@ Claude 會在 `<install-root>/<skill-name>/SKILL.md` 尋找 skills。這個 repo
 先將 repo clone 到穩定的本機路徑，再把每個 skill 資料夾複製到專案的 `.claude/skills/` 目錄：
 
 ```bash
-git clone https://github.com/starpig1129/research-lab-skills.git ~/research-lab-skills
+git clone https://github.com/zi-yue-1129/research-lab-skills.git ~/research-lab-skills
 
 cd /path/to/your/project
 mkdir -p .claude/skills
@@ -237,7 +237,7 @@ cp -R ~/research-lab-skills/skills/academic-pipeline .claude/skills/academic-pip
 > **全域 Claude Code 安裝：** 若希望所有 Claude Code 專案都能使用這些 skills，請改安裝四個資料夾到 `~/.claude/skills/`：
 >
 > ```bash
-> git clone https://github.com/starpig1129/research-lab-skills.git ~/research-lab-skills
+> git clone https://github.com/zi-yue-1129/research-lab-skills.git ~/research-lab-skills
 >
 > mkdir -p ~/.claude/skills
 > cp -R ~/research-lab-skills/skills/deep-research ~/.claude/skills/deep-research
@@ -251,7 +251,7 @@ cp -R ~/research-lab-skills/skills/academic-pipeline .claude/skills/academic-pip
 當你想直接在 ARS repository 內工作時，請用此方式。
 
 ```bash
-git clone https://github.com/starpig1129/research-lab-skills.git
+git clone https://github.com/zi-yue-1129/research-lab-skills.git
 cd research-lab-skills
 claude
 ```
@@ -259,7 +259,7 @@ claude
 <details>
 <summary><strong>沒有安裝 Git？</strong>改下載 ZIP</summary>
 
-1. 前往 <https://github.com/starpig1129/research-lab-skills>
+1. 前往 <https://github.com/zi-yue-1129/research-lab-skills>
 2. 點擊綠色 **Code** 按鈕 → **Download ZIP**
 3. 解壓縮 ZIP 到你想要的位置
 4. 方法一：將解壓後的四個 skill 資料夾（`deep-research`、`academic-paper`、`academic-paper-reviewer`、`academic-pipeline`）複製到你專案內的 `.claude/skills/`
@@ -287,7 +287,7 @@ claude
 clone repo 後，把四個 skill 資料夾各自打包成 zip，讓每個 zip 的頂層都是它自己的 `SKILL.md`（不要多包一層資料夾）。`-x "*.DS_Store"` 用來排除 macOS metadata。
 
 ```bash
-git clone https://github.com/starpig1129/research-lab-skills.git
+git clone https://github.com/zi-yue-1129/research-lab-skills.git
 cd research-lab-skills
 
 for s in deep-research academic-paper academic-paper-reviewer academic-pipeline; do
@@ -342,7 +342,7 @@ claude.ai Projects 會把內容當成靜態知識提供給 Claude 檢索與引�
 
 1. 登入 [claude.ai](https://claude.ai)。
 2. 建立新 Project：**Projects** → **Create Project**。
-3. 從 GitHub 匯入：在 Project 中，點擊 **Files** → **+** → **GitHub** → 選擇 `starpig1129/research-lab-skills`。
+3. 從 GitHub 匯入：在 Project 中，點擊 **Files** → **+** → **GitHub** → 選擇 `zi-yue-1129/research-lab-skills`。
 4. 選取以下資料夾與檔案。
 
    | 選取 | 目錄 / 檔案 | 原因 |
@@ -379,7 +379,7 @@ Anthropic 目前的 [Project file limits](https://support.claude.com/en/articles
 如果你看完上述限制後仍想試方法 4a，每個 zip 都必須把 skill 資料夾放在最上層，所以 zip 內容應包含 `<skill-name>/SKILL.md`，而不是 `<skill-name>/<skill-name>/SKILL.md`（多包一層會把 discovery 檔案藏到下一層）。下面的 `zip -r` 指令會產出正確的 zip 結構：
 
 ```bash
-git clone https://github.com/starpig1129/research-lab-skills.git
+git clone https://github.com/zi-yue-1129/research-lab-skills.git
 cd research-lab-skills
 
 zip -r deep-research.zip skills/deep-research

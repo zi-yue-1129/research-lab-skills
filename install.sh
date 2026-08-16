@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # research-lab-skills installer
 # Usage (Windows: run from Git Bash or WSL, not PowerShell/cmd.exe):
-#   curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash
-#   curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- --local
-#   curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- uninstall
-#   curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- --ars-only
-#   curl -fsSL https://raw.githubusercontent.com/starpig1129/research-lab-skills/main/install.sh | bash -s -- --lab-only
+#   curl -fsSL https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.sh | bash -s -- --local
+#   curl -fsSL https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.sh | bash -s -- uninstall
+#   curl -fsSL https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.sh | bash -s -- --ars-only
+#   curl -fsSL https://raw.githubusercontent.com/zi-yue-1129/research-lab-skills/main/install.sh | bash -s -- --lab-only
 set -e
 
-REPO="https://github.com/starpig1129/research-lab-skills.git"
+REPO="https://github.com/zi-yue-1129/research-lab-skills.git"
 
 # Shared foundation both lab and ARS skills depend on -- always installed
 RESOLVER_SKILLS=("resource-resolver" "agent-state")
