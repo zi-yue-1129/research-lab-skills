@@ -6,50 +6,65 @@
 
 [English](README.md) | [简体中文版](README.zh-CN.md) | [日本語版](README.ja-JP.md)
 
-> 從每日實驗筆記到學術論文發表——一套完整的 Claude Code 研究歷程技能套件。
+> **研究不該每開一次 AI 對話就歸零。**
 
 ---
 
-## 這是用來做什麼
+## 這是什麼
 
-research-lab-skills 是給 Claude Code 用的**整合研究環境**，結合了兩個部分：
+每次開新的 AI 對話，它都不知道你上週試過什麼、什麼失敗了、為什麼改變方向、還有什麼沒解決。research-lab-skills 是狀態化的研究工作流基礎設施，把你的實驗、失敗、決策、證據跨工作階段連接起來，再把累積下來的歷程轉成進度／lab meeting 簡報、結構化的研究狀態，以及正式文獻／寫作／審查流程真的能接手的 context——而不是每次都從空白提示詞重新開始。
 
-- **學術研究技能（ARS）**（`deep-research`、`academic-paper`、`academic-paper-reviewer`、`academic-pipeline`）—— 13/12/7/10-agent 的文獻回顧、論文撰寫、同儕審查與全流程 pipeline 框架。這是**吳政宜（Cheng-I Wu）的上游作品**（[`Imbad0202/academic-research-skills`](https://github.com/Imbad0202/academic-research-skills)，CC BY-NC 4.0），本專案將其匯入並大致沿用原樣。
-- **我開發的 Lab 工作流程與基礎設施**（`research-log`、`report-slides`、`research-mode`，以及讓兩套工具能安裝並協同運作的 `resource-resolver`／`agent-state`／`research-project-init` 與整合封裝層）—— 實驗日誌、進度簡報產生、工作模式路由，以及兩套工具合併前都不存在的共用狀態／resolver 基礎設施。
+以 [Agent Skills](https://agentskills.io/specification) 格式建構。Claude Code 是目前已驗證的參考用戶端——詳見下方[平台狀態](#平台狀態)。
 
-ARS 的 agent pipeline 不是我寫的。我做的是圍繞它的日常研究層，以及讓兩者合成一套工具的整合工程。精確到路徑層級的歸屬拆解見 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)，各技能的詳細說明見下方章節。
-
-## 為什麼需要它
-
-研究室每週要花大量時間製作報告投影片。問題不在於投影片好不好看——大多數簡報工具都能做出漂亮的版面。問題是它們完全不知道**這週的投影片應該放什麼**。你最後對著空白的簡報，努力回想自己這週到底做了什麼。
-
-這就是我先開發研究日誌機制的原因。當你用結構化格式記錄實驗，AI 就已經知道這週跑了什麼、失敗了什麼、數字長什麼樣、有哪些需要溝通的內容。投影片是那份記錄的自然輸出，而不是研究之外另一件要做的事。
-
-同樣的問題在更深的地方也存在。研究的日常過程——失敗的實驗、架構調整、兩次跑結果之間的決定——往往在論文完成之前就消失了。等到要寫方法論的時候，你已經在靠記憶重建自己當初做了什麼、為什麼這樣做。正式的學術產出流程又往往從頭開始，與那幾個月實際產生洞察的過程完全脫節。
-
-這套工具讓那條線不斷。你的日誌記錄每個決策背後的「為什麼」；lab meeting 的投影片從那份日誌來；論文的方法論章節也從那份日誌來。工作模式（`exp` → `explore` → `publish`）追蹤你在研究週期的哪個階段，自動引導你到正確的工具。
-
-從實驗台到參考文獻，每一步都有跡可循。
+它結合兩個部分：本專案自行開發的研究基礎設施，以及一套上游的學術研究 pipeline——**Academic Research Skills（ARS），作者吳政宜（Cheng-I Wu）**（[`Imbad0202/academic-research-skills`](https://github.com/Imbad0202/academic-research-skills)，CC BY-NC 4.0）。詳見下方[上游歸屬](#上游歸屬)，以及逐路徑拆解的 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 ---
 
-## 技能總覽
+## 為什麼不一樣
 
-| 技能 | 指令 | 功能 |
-|------|------|------|
-| `research-log` | `/research-log` | 結構化實驗日誌（新增、修訂、索引） |
-| `report-slides` | `/report-slides` | 從日誌自動生成 SVG + PPTX 進度簡報 |
-| `research-mode` | `/mode` | 工作模式路由（exp / daily / explore / report / publish） |
-| `deep-research` | `/ars-full`, `/ars-lit-review`, … | 13 個 Agent 研究團隊，Socratic / PRISMA / fact-check |
-| `academic-paper` | `/ars-plan`, `/ars-outline`, … | 12 個 Agent 論文撰寫，含引用驗證 |
-| `academic-paper-reviewer` | `/ars-review`, `/ars-re-review` | 多視角同儕審查（主編 + 3 位審查者 + DA） |
-| `academic-pipeline` | `/ars-pipeline` | 完整 10 階段 pipeline 協調器 |
+### 持久的研究記憶
+
+實驗不會消失在對話紀錄裡。每次跑的東西都有結構化記錄——Goal、Setup、Results、Failures、Analysis——用 `follows:` 明確連到前一篇記錄，用 `amended:` 記錄事後修正，還會連到由它生成的簡報。這是**專案層級的研究記憶**，不是對話記憶：它以檔案形式活在 `docs/research_log/` 裡，不是活在會被清空的 context window 裡。
+
+### 狀態化的研究模型
+
+日誌之上還有真正的狀態，不只是一堆 Markdown 檔案：`research-project-init` 把一個初步想法收斂成專案章程（問題陳述、範圍、限制、里程碑、成功／停止條件），並註冊進 `agent-state`——追蹤 Project、Research Question、去重過的 Source，以及帶著來源可追溯性的 Evidence 記錄。`resource-resolver` 讓每個技能都有一致的方式找到專案素材的位置。這些狀態不會在工作階段之間消失。
+
+### 研究歷程 → 可編輯的進度簡報
+
+這不是「貼論文、生簡報」那種工具。`/report-slides` 讀取數週的日誌歷程，自己判斷出什麼變了、什麼失敗了、目前的數字、做了什麼決策、接下來要做什麼——然後把它渲染成投影片：每張都有 SVG 原始檔、原生可編輯的 PPTX 物件（表格與圖表在 PowerPoint 裡還是可編輯的，不是被壓平的圖片），生成後還有視覺審查／驗證流程。
+
+### 日常研究 → 學術銜接
+
+要寫論文的時候，正式流程不是從空白提示詞開始——而是從已經記錄下來的研究狀態與歷程開始。這個銜接點，正是本專案原創工作的終點，以及上游 **Academic Research Skills** pipeline（深度研究、論文撰寫、同儕審查、全流程協調——作者吳政宜）接手的起點。
+
+|  | 一般研究型 Agent | research-lab-skills |
+|---|---|---|
+| Context | 當前工作階段／上傳的檔案 | 持久的專案研究狀態 |
+| 實驗 | 通常在外部、臨時記錄 | 一等公民、被完整追蹤的歷程 |
+| 失敗的實驗 | 不會被保留 | 明確保留（`Failures`、`amended:`） |
+| 決策 | 埋在對話紀錄裡 | 可追溯、可修訂 |
+| 簡報 | 提示詞／文件 → 簡報 | 研究歷程 → 進度簡報 |
+| 論文階段 | 從提示詞或檔案開始 | 接收累積的研究狀態 |
+| 產出 | 一份最終報告或答案 | 持續累積的研究素材 |
 
 ---
 
-## 完整研究歷程
+## 各環節如何串接
 
-這套工具的設計核心，是讓每個技能在研究的某個階段發揮作用，並自然銜接到下一個階段。
+```mermaid
+flowchart TD
+    A["專案初始化<br/>(research-project-init)"] --> B["研究問題／狀態<br/>(agent-state)"]
+    B --> C["實驗"]
+    C --> D["研究日誌<br/>持久記憶"]
+    D --> E["進度簡報<br/>(report-slides)"]
+    D --> F["證據／來源追溯<br/>累積的 context"]
+    E --> G["學術流程<br/>(上游 ARS)"]
+    F --> G
+    G --> H["文獻回顧 → 撰寫 → 審查 → 修訂"]
+```
+
+重點是狀態的連續性，不是 agent 數量：前一階段累積的狀態，正是下一階段真正會讀取的東西——沒有任何一步是從空白提示詞開始的。
 
 **第一階段 — 每日實驗期**（`/mode exp`）
 
@@ -66,7 +81,7 @@ ARS 的 agent pipeline 不是我寫的。我做的是圍繞它的日常研究層
 
 ```bash
 /mode explore
-/ars-lit-review "你的主題"       # 13 個 Agent 文獻回顧，含 PRISMA 支援
+/ars-lit-review "你的主題"       # 文獻回顧，含 PRISMA 支援（上游 ARS）
 /ars-socratic                    # 蘇格拉底對話，澄清研究問題
 /mode end                        # 整理探索記錄，提取 RQ 與關鍵發現
 ```
@@ -75,11 +90,11 @@ ARS 的 agent pipeline 不是我寫的。我做的是圍繞它的日常研究層
 
 ```bash
 /mode publish
-/ars-plan                        # 蘇格拉底引導規劃章節結構
-/ars-full                        # 12 個 Agent 撰寫完整論文 + 引用驗證
-/ars-review                      # 多視角同儕審查
-/ars-re-review                   # 修訂後驗收
-/ars-pipeline                    # 完整 10 階段 pipeline（含誠信查驗）
+/ars-plan                        # 蘇格拉底引導規劃章節結構（上游 ARS）
+/ars-full                        # 撰寫完整論文 + 引用驗證（上游 ARS）
+/ars-review                      # 多視角同儕審查（上游 ARS）
+/ars-re-review                   # 修訂後驗收（上游 ARS）
+/ars-pipeline                    # 完整 pipeline（含誠信查驗，上游 ARS）
 ```
 
 **日誌如何連接到論文**
@@ -93,6 +108,25 @@ ARS 的 agent pipeline 不是我寫的。我做的是圍繞它的日常研究層
 | `follows:` 時間鏈 | 研究設計演進說明 |
 
 → 查看 **[examples/](examples/)** 完整範例：三篇涵蓋整個實驗週期的日誌、7 張 SVG 進度簡報（附可編輯 PPTX），展示從日常記錄到報告呈現的完整流程。
+
+---
+
+## 上游歸屬
+
+**上游 ARS**（[`Imbad0202/academic-research-skills`](https://github.com/Imbad0202/academic-research-skills)，作者吳政宜（Cheng-I Wu），CC BY-NC 4.0）提供：
+
+- 深度研究（`deep-research`）— 文獻搜尋、蘇格拉底式問題收斂、系統性回顧
+- 學術論文撰寫（`academic-paper`）— 草擬、引用驗證、修訂輔導
+- 同儕審查（`academic-paper-reviewer`）— 多視角審查模擬
+- Pipeline 協調（`academic-pipeline`）— 把以上串接起來，含誠信查驗閘門
+
+本專案自己的貢獻——在此獨立開發，不屬於上游專案：
+
+- `research-log`、`report-slides`、`research-mode` — 每日研究日誌、進度簡報生成、工作階段模式路由
+- `research-project-init`、`agent-state`、`resource-resolver` — 專案範疇界定，以及讓 Project、Question、Source、Evidence 跨工作階段保持連結的持久狀態層
+- 讓兩套工具能一起安裝、並讓研究狀態能從日常層流向上游 pipeline 的整合封裝層
+
+上游 ARS 的 agent pipeline 本身不是在本專案開發的。精確到路徑層級的拆解見 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)，完整授權條款見 [NOTICE.md](NOTICE.md) / [LICENSE](LICENSE)。
 
 ---
 
@@ -172,6 +206,21 @@ powershell -ExecutionPolicy Bypass -File install.ps1 -Uninstall      # 解除安
 安裝後重啟 Claude Code。詳細說明見 [docs/SETUP.zh-TW.md](docs/SETUP.zh-TW.md)。
 
 > **附註：** 本專案先前曾提供 npm 套件（`crs` CLI）。目前未維護 npm 作為支援的安裝方式，請改用上方的 curl／PowerShell／git clone。CLI 原始碼仍保留在 repo 的 `bin/crs.js`，僅供參考。
+
+---
+
+## 技能總覽
+
+| 技能 | 指令 | 功能 |
+|------|------|------|
+| `research-log` | `/research-log` | 結構化實驗日誌（新增、修訂、索引） |
+| `report-slides` | `/report-slides` | 從日誌自動生成 SVG + PPTX 進度簡報 |
+| `research-mode` | `/mode` | 工作模式路由（exp / daily / explore / report / publish） |
+| `research-project-init` | `/research-init` | 把初步想法收斂成專案章程 + 可追蹤的研究問題 |
+| `deep-research`*（上游 ARS）* | `/ars-full`, `/ars-lit-review`, … | 13 個 Agent 研究團隊，Socratic / PRISMA / fact-check |
+| `academic-paper`*（上游 ARS）* | `/ars-plan`, `/ars-outline`, … | 12 個 Agent 論文撰寫，含引用驗證 |
+| `academic-paper-reviewer`*（上游 ARS）* | `/ars-review`, `/ars-re-review` | 多視角同儕審查（主編 + 3 位審查者 + DA） |
+| `academic-pipeline`*（上游 ARS）* | `/ars-pipeline` | 完整 10 階段 pipeline 協調器 |
 
 ---
 
@@ -255,7 +304,7 @@ npm install -g @mermaid-js/mermaid-cli   # 選用，Mermaid 圖表
 
 ---
 
-## 學術研究技能（ARS）
+## 學術研究技能（ARS）*（上游）*
 
 > **AI 是你的副駕駛，不是機長。** 這工具不會幫你寫論文。它處理苦工——搜文獻、排格式、驗數據、查邏輯一致性——讓你專注在真正需要你腦子的事：定義問題、選方法、詮釋數據的意義、寫出「我認為」後面那句話。
 
@@ -341,6 +390,13 @@ scripts/
 
 ---
 
+## 平台狀態
+
+- **Claude Code** — 已驗證的參考用戶端。上面提到的每個技能、指令、工作流程都是針對它開發與實際跑過的。
+- **其他 Agent Skills 用戶端**（Codex、Cursor、Windsurf、Copilot 等）— 相容性尚未驗證。這些技能都是用標準的 [Agent Skills](https://agentskills.io/specification) `SKILL.md` 格式撰寫，設計上希望能跨用戶端移植，但在沒有實測證據之前，我們不會宣稱與任何其他用戶端行為對等。`docs/SETUP.zh-TW.md` 記錄了目前唯一確認的落差（Codex 的 imported-skills 機制無法重現 `/report-slides` 的圖表生成行為——見 [Issue #8](https://github.com/zi-yue-1129/research-lab-skills/issues/8)）。
+
+---
+
 ## 授權與來源
 
 本專案採用 [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/) 授權。
@@ -352,8 +408,8 @@ scripts/
 
 ## 貢獻者
 
-**ZI-YUE,CHAO** — Lab 技能作者與本專案維護者
+**ZI-YUE,CHAO** — Lab 技能與整合基礎設施作者、本專案維護者
 
-**吳政宜 (Cheng-I Wu)** — ARS 原作者
+**吳政宜 (Cheng-I Wu)** — 上游 ARS 原作者
 
 **[aspi6246](https://github.com/aspi6246)**、**[mchesbro1](https://github.com/mchesbro1)**、**[cloudenochcsis](https://github.com/cloudenochcsis)**、**[eltociear](https://github.com/eltociear)**（日文翻譯）、**[xpfo-go](https://github.com/xpfo-go)**（簡中翻譯）— ARS 貢獻者

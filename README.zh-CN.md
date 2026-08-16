@@ -6,13 +6,13 @@
 
 [English](README.md) | [繁體中文版](README.zh-TW.md) | [日本語版](README.ja-JP.md)
 
-> 从每日实验笔记到学术论文发表——一套完整的 Claude Code 研究历程技能套件。
+> **研究不该每开一次 AI 对话就归零。**
 
 ---
 
 ## 这是用来做什么
 
-research-lab-skills 是给 Claude Code 用的**整合研究环境**，结合了两个部分：
+research-lab-skills 是**状态化的研究工作流基础设施**，把实验、失败、决策、证据跨工作阶段连接起来。以 [Agent Skills](https://agentskills.io/specification) 格式构建；Claude Code 是目前已验证的参考客户端，其他 Agent Skills 客户端的兼容性尚未验证。它结合了两个部分：
 
 - **学术研究技能（ARS）**（`deep-research`、`academic-paper`、`academic-paper-reviewer`、`academic-pipeline`）—— 13/12/7/10-agent 的文献回顾、论文撰写、同行评审与全流程 pipeline 框架。这是**吴政宜（Cheng-I Wu）的上游作品**（[`Imbad0202/academic-research-skills`](https://github.com/Imbad0202/academic-research-skills)，CC BY-NC 4.0），本项目将其导入并大致沿用原样。
 - **我开发的 Lab 工作流程与基础设施**（`research-log`、`report-slides`、`research-mode`，以及让两套工具能安装并协同运作的 `resource-resolver`／`agent-state`／`research-project-init` 与整合封装层）—— 实验日志、进度幻灯片生成、工作模式路由，以及两套工具合并前都不存在的共用状态／resolver 基础设施。

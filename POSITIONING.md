@@ -2,7 +2,7 @@
 
 ## What this is
 
-research-lab-skills is a **source-available academic research copilot framework** for noncommercial scholarly use. The reference distribution is a unified suite of Claude Code skills that assists human researchers through the full research-to-publication pipeline — from daily experiment logs and progress slides to full academic paper pipelines. Community ports to other agent platforms are accepted; see [CONTRIBUTING.md § Platform ports](CONTRIBUTING.md#platform-ports-community-maintained-only).
+research-lab-skills is **stateful research workflow infrastructure**, source-available for noncommercial scholarly use: it keeps experiments, decisions, and evidence connected across AI sessions instead of resetting every time, from daily experiment logs and progress slides to full academic paper pipelines. It is built as [Agent Skills](https://agentskills.io/specification); Claude Code is currently the verified reference client (see [README.md § Platform status](README.md#platform-status)). Community ports to other agent platforms are accepted; see [CONTRIBUTING.md § Platform ports](CONTRIBUTING.md#platform-ports-community-maintained-only).
 
 It is licensed under [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/). This is not an open source license — it restricts commercial use by design, to keep the tool free for academic communities.
 

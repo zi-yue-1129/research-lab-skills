@@ -6,13 +6,13 @@
 
 [English](README.md) | [简体中文版](README.zh-CN.md) | [繁體中文版](README.zh-TW.md)
 
-> 日々の実験ノートから学術論文の発表まで——研究プロセス全体をサポートする Claude Code スキル統合スイートです。
+> **研究は、AI セッションのたびにゼロに戻るべきではありません。**
 
 ---
 
 ## このツールの目的
 
-research-lab-skills は Claude Code 向けの**統合研究環境**で、2 つの要素を組み合わせています：
+research-lab-skills は、実験・失敗・意思決定・エビデンスをセッションをまたいで接続する**状態化された研究ワークフロー基盤**です。[Agent Skills](https://agentskills.io/specification) 形式で構築されており、Claude Code が現時点での検証済みリファレンスクライアントです。他の Agent Skills クライアントとの互換性はまだ検証されていません。2 つの要素を組み合わせています：
 
 - **学術研究スキル（ARS）**（`deep-research`、`academic-paper`、`academic-paper-reviewer`、`academic-pipeline`）—— 13/12/7/10 エージェント構成の文献レビュー、論文執筆、ピアレビュー、パイプラインオーケストレーションのフレームワーク。これは**呉政宜（Cheng-I Wu）氏による上流の作品**（[`Imbad0202/academic-research-skills`](https://github.com/Imbad0202/academic-research-skills)、CC BY-NC 4.0）であり、本プロジェクトはこれをほぼそのまま取り込んで使用しています。
 - **私が開発した Lab ワークフローとインフラ**（`research-log`、`report-slides`、`research-mode`、および両方のツールセットをインストール・連携動作させるための `resource-resolver`／`agent-state`／`research-project-init`、パッケージング／インストール層）—— 実験ジャーナル、進捗スライド生成、セッションモードルーティング、そして両ツールセットが統合される前には存在しなかった共有状態／リゾルバー基盤。

@@ -5,46 +5,65 @@
 
 [简体中文版](README.zh-CN.md) | [繁體中文版](README.zh-TW.md) | [日本語版](README.ja-JP.md)
 
----
-
-## What this is for
-
-research-lab-skills is an **integrated research environment** for Claude Code that combines two things:
-
-- **Academic Research Skills (ARS)** (`deep-research`, `academic-paper`, `academic-paper-reviewer`, `academic-pipeline`) — a 13/12/7/10-agent literature review, paper writing, peer review, and pipeline-orchestration framework. This is **upstream work by Cheng-I Wu ([`Imbad0202/academic-research-skills`](https://github.com/Imbad0202/academic-research-skills), CC BY-NC 4.0)**, imported into this repo and used largely as-is.
-- **Lab workflow and infrastructure I built** (`research-log`, `report-slides`, `research-mode`, plus `resource-resolver` / `agent-state` / `research-project-init` and the packaging/install layer that lets both toolsets install and run together) — experiment journals, progress-slide generation, session-mode routing, and the shared state/resolver infrastructure the two toolsets didn't have before they were combined here.
-
-I did not write the ARS agent pipeline. What I built is the daily-research layer around it, and the integration that makes the two work as one suite. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the exact, path-by-path breakdown, and the detailed sections below for each skill.
-
-## Why you need it
-
-Research labs spend enormous amounts of time making slides for weekly meetings. The problem isn't slide design — most presentation tools handle that fine. The problem is they have no idea **what belongs in this week's slides**. You end up staring at a blank deck, trying to remember what you actually did.
-
-That's why I built the research journal mechanism first. When you log your experiments in a structured format, the AI already knows what ran this week, what failed, what the numbers look like, and what needs to be communicated. The slides are a natural output of that record — not a separate task on top of your research.
-
-The same problem runs deeper. The daily process of research — the experiments that didn't pan out, the architectural pivots, the decisions made between runs — vanishes long before the paper gets written. By the time you're writing the methodology section, you're reconstructing from memory what you actually did and why. The formal output pipeline often starts from scratch, disconnected from the months of work that produced the insight.
-
-This suite keeps the thread intact. Your journal records the *why* behind every decision; the lab-meeting slides come from those logs; the methodology section comes from those logs too. The session modes (`exp` → `explore` → `publish`) track which phase of research you're in and route you to the right tools automatically.
-
-Nothing gets lost between the bench and the bibliography.
+> **Research shouldn't reset every AI session.**
 
 ---
 
-| Skill | Command | Purpose |
-|-------|---------|---------|
-| `research-log` | `/research-log` | Structured experiment journal (daily logs, amendments, index) |
-| `report-slides` | `/report-slides` | SVG + PPTX progress presentations from journal entries |
-| `research-mode` | `/mode` | Session mode routing (exp / daily / explore / report / publish) |
-| `deep-research` | `/ars-full`, `/ars-lit-review`, … | 13-agent research team with Socratic mode, PRISMA, fact-check |
-| `academic-paper` | `/ars-plan`, `/ars-outline`, … | 12-agent paper writing with citation verification |
-| `academic-paper-reviewer` | `/ars-review`, `/ars-re-review` | Multi-perspective peer review (EIC + 3 reviewers + DA) |
-| `academic-pipeline` | `/ars-pipeline` | Full 10-stage pipeline orchestrator |
+## What this is
+
+Every new AI chat starts from zero — it doesn't know what you tried last week, what failed, why you changed direction, or what's still open. research-lab-skills is stateful research workflow infrastructure that fixes that: it keeps your experiments, failures, decisions, and evidence connected across sessions, then turns that accumulated history into progress/lab-meeting slides, structured research state, and context the formal literature/writing/review workflow can actually pick up from — instead of starting over from a blank prompt.
+
+Built as [Agent Skills](https://agentskills.io/specification). Claude Code is currently the verified reference client — see [Platform status](#platform-status).
+
+It combines two things: research infrastructure developed in this repository, and an upstream academic research pipeline — **Academic Research Skills (ARS) by Cheng-I Wu** ([`Imbad0202/academic-research-skills`](https://github.com/Imbad0202/academic-research-skills), CC BY-NC 4.0). See [Upstream attribution](#upstream-attribution) below and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the exact, path-by-path breakdown.
 
 ---
 
-## The integrated research lifecycle
+## Why this is different
 
-These skills are not a feature list — they're a workflow. Each one was designed for a specific phase of research and hands off naturally to the next.
+### Persistent research memory
+
+Experiments don't disappear into chat history. Every run gets a structured record — Goal, Setup, Results, Failures, Analysis — with explicit `follows:` links to prior entries and `amended:` records for post-hoc corrections, plus references to the slide decks generated from it. This is **project-level research memory**, not conversation memory: it lives in `docs/research_log/` as files, not in a context window that gets cleared.
+
+### Stateful research model
+
+Above the journal sits actual state, not just a folder of Markdown: `research-project-init` scopes a project into a charter (problem statement, scope, constraints, milestones, success/stop conditions) and registers it in `agent-state`, which tracks Projects, Research Questions, deduplicated Sources, and stance-tagged Evidence records with provenance back to where each claim came from. `resource-resolver` gives every skill a consistent way to find where a project's artifacts live. None of this resets between sessions.
+
+### Research history → editable progress slides
+
+This isn't a "paste your paper, get slides" generator. `/report-slides` reads weeks of journal history and works out what changed, what failed, current metrics, decisions made, and what's next — then renders that as a deck: SVG source per slide, native/editable PPTX objects (tables and charts stay editable in PowerPoint, not flattened images), and a visual review/validation pass before you trust the output.
+
+### Daily research → academic handoff
+
+When it's time to write, the formal pipeline doesn't start from a blank prompt — it starts from the research state and history already on record. That handoff point is where this repository's original work ends and the upstream **Academic Research Skills** pipeline (deep research, paper writing, peer review, full orchestration — by Cheng-I Wu) takes over.
+
+|  | Typical research agent | research-lab-skills |
+|---|---|---|
+| Context | Current session / uploaded files | Persistent project research state |
+| Experiments | Usually external, ad hoc | First-class tracked history |
+| Failed experiments | Not retained | Explicitly retained (`Failures`, `amended:`) |
+| Decisions | Buried in chat | Traceable and amendable |
+| Slides | Prompt/docs → slides | Research history → progress deck |
+| Paper stage | Starts from a prompt or files | Receives accumulated research state |
+| Output | A final report or answer | Continuing research artifacts |
+
+---
+
+## How the pieces connect
+
+```mermaid
+flowchart TD
+    A["Project initialization<br/>(research-project-init)"] --> B["Research questions / state<br/>(agent-state)"]
+    B --> C["Experiments"]
+    C --> D["Research log<br/>persistent memory"]
+    D --> E["Progress slides<br/>(report-slides)"]
+    D --> F["Evidence / provenance<br/>accumulated context"]
+    E --> G["Academic workflow<br/>(upstream ARS)"]
+    F --> G
+    G --> H["Literature → Writing → Review → Revision"]
+```
+
+The emphasis is continuity, not agent counts: state accumulated in one phase is what the next phase actually reads from — nothing here is a fresh prompt.
 
 **Phase 1 — Daily experiment work** (`/mode exp`)
 
@@ -61,7 +80,7 @@ The journal's `follows:` field links experiments into a traceable timeline. `ame
 
 ```bash
 /mode explore
-/ars-lit-review "your topic"    # 13-agent literature review with PRISMA support
+/ars-lit-review "your topic"    # literature review with PRISMA support (upstream ARS)
 /ars-socratic                   # Socratic dialogue to sharpen your research question
 /mode end                       # extract RQ + key findings into the log
 ```
@@ -70,11 +89,11 @@ The journal's `follows:` field links experiments into a traceable timeline. `ame
 
 ```bash
 /mode publish
-/ars-plan                       # Socratic-guided chapter planning
-/ars-full                       # 12-agent paper writing + citation verification
-/ars-review                     # multi-perspective peer review (EIC + 3 reviewers + DA)
-/ars-re-review                  # post-revision acceptance check
-/ars-pipeline                   # full 10-stage orchestrated pipeline with integrity gates
+/ars-plan                       # Socratic-guided chapter planning (upstream ARS)
+/ars-full                       # paper writing + citation verification (upstream ARS)
+/ars-review                     # multi-perspective peer review (upstream ARS)
+/ars-re-review                  # post-revision acceptance check (upstream ARS)
+/ars-pipeline                   # full orchestrated pipeline with integrity gates (upstream ARS)
 ```
 
 **How the journal connects to the paper**
@@ -88,6 +107,25 @@ The journal's `follows:` field links experiments into a traceable timeline. `ame
 | `follows:` timeline | Research design narrative |
 
 → See **[examples/](examples/)** for a complete worked example: three journal entries showing the messy week-by-week process (failures, `amended:` corrections, unresolved problems), a 7-slide lab-meeting progress deck generated from those logs, and the JSON data file that drove the charts. The SVG slides also ship as a `deck.pptx` — every element editable in PowerPoint or Keynote.
+
+---
+
+## Upstream attribution
+
+**Upstream ARS** ([`Imbad0202/academic-research-skills`](https://github.com/Imbad0202/academic-research-skills) by Cheng-I Wu, CC BY-NC 4.0) provides:
+
+- Deep research (`deep-research`) — literature search, Socratic question-sharpening, systematic review
+- Academic paper writing (`academic-paper`) — drafting, citation verification, revision coaching
+- Peer review (`academic-paper-reviewer`) — multi-perspective review simulation
+- Pipeline orchestration (`academic-pipeline`) — chaining the above with integrity gates
+
+This repository's own contribution — independently developed here, not part of the upstream project:
+
+- `research-log`, `report-slides`, `research-mode` — the daily research journal, progress-slide generation, and session-mode routing
+- `research-project-init`, `agent-state`, `resource-resolver` — project scoping and the persistent state layer that keeps Projects, Questions, Sources, and Evidence connected across sessions
+- The integration and packaging layer that installs both toolsets together and lets research state flow from the daily layer into the upstream pipeline
+
+The upstream ARS agent pipeline itself was not developed in this repository. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the exact, path-by-path split, and [NOTICE.md](NOTICE.md) / [LICENSE](LICENSE) for the full licensing terms.
 
 ---
 
@@ -175,6 +213,21 @@ Academic skills: `/ars-plan`, `/ars-full`, `/ars-lit-review`, `/ars-review`, and
 
 ---
 
+## Skills at a glance
+
+| Skill | Command | Purpose |
+|-------|---------|---------|
+| `research-log` | `/research-log` | Structured experiment journal (daily logs, amendments, index) |
+| `report-slides` | `/report-slides` | SVG + PPTX progress presentations from journal entries |
+| `research-mode` | `/mode` | Session mode routing (exp / daily / explore / report / publish) |
+| `research-project-init` | `/research-init` | Scope a preliminary idea into a project charter + tracked research questions |
+| `deep-research` *(upstream ARS)* | `/ars-full`, `/ars-lit-review`, … | 13-agent research team with Socratic mode, PRISMA, fact-check |
+| `academic-paper` *(upstream ARS)* | `/ars-plan`, `/ars-outline`, … | 12-agent paper writing with citation verification |
+| `academic-paper-reviewer` *(upstream ARS)* | `/ars-review`, `/ars-re-review` | Multi-perspective peer review (EIC + 3 reviewers + DA) |
+| `academic-pipeline` *(upstream ARS)* | `/ars-pipeline` | Full 10-stage pipeline orchestrator |
+
+---
+
 ## Lab Skills
 
 ### `/research-log` — Experiment Journal
@@ -245,7 +298,7 @@ End a session with `/mode end` to get a pre-filled journal entry draft.
 
 ---
 
-## Academic Research Skills
+## Academic Research Skills *(upstream ARS)*
 
 > **AI is your copilot, not the pilot.** This tool won't write your paper for you. It handles the grunt work — hunting down references, formatting citations, verifying data, checking logical consistency — so you can focus on the parts that actually require your brain.
 
@@ -309,6 +362,13 @@ scripts/
   generate_slides.py                    ← copied from skill on first use
   to_pptx.py
 ```
+
+---
+
+## Platform status
+
+- **Claude Code** — verified reference client. Every skill, command, and workflow above has been built and run against it.
+- **Other Agent Skills clients** (Codex, Cursor, Windsurf, Copilot, etc.) — compatibility not yet verified. The skills are built in the standard [Agent Skills](https://agentskills.io/specification) `SKILL.md` format and are designed to remain client-portable, but we don't claim behavioral parity with any other client without test evidence. `docs/SETUP.md` documents the one confirmed gap (Codex's imported-skills mechanism does not reproduce `/report-slides`' diagram generation — [Issue #8](https://github.com/zi-yue-1129/research-lab-skills/issues/8)).
 
 ---
 
