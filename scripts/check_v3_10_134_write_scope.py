@@ -13,9 +13,10 @@ drift before it can happen, mirroring check_v3_9_2_phase_boundary.py's 23/16 spl
 
 Three invariants:
 
-  I1 — Roster size. The Bucket A roster is exactly 23 agents (16 B/C/D exempt = 39
-       records / 38 unique names per the classification table; the manifest covers the
-       23 Bucket A names only).
+  I1 — Roster size. The Bucket A roster is exactly 23 agents (27 B/C/D exempt: the
+       classification table's 16 + the 11 skills/report-slides/agents/*.md agents, which
+       postdate the table and are phase-orthogonal — see the BUCKET_BCD_AGENT_FILES
+       report-slides block below; the manifest covers the 23 Bucket A names only).
 
   I2 — Three-way name set equality. The set of:
          (a) Bucket A agent file paths (the classification-table roster, single-sourced
@@ -24,7 +25,7 @@ Three invariants:
          (c) on-disk frontmatter `name` fields read from each (a) file,
        must be IDENTICAL. Any element in one but not the others is a fail-open risk.
 
-  I3 — Bucket B/C/D exclusion. None of the 16 exempt agents' frontmatter `name` may
+  I3 — Bucket B/C/D exclusion. None of the 27 exempt agents' frontmatter `name` may
        appear as a manifest key (a Bucket B/C/D agent in the manifest would impose a
        single-phase fence on a legitimately multi-phase agent).
 
@@ -75,7 +76,8 @@ BUCKET_A_AGENT_FILES = [
     "skills/academic-paper-reviewer/agents/editorial_synthesizer_agent.md",
 ]
 
-# The 16 Bucket B/C/D agents that MUST NOT appear in the manifest.
+# The 16 classification-table Bucket B/C/D agents, plus 11 skills/report-slides/agents/*.md
+# agents (below) that MUST NOT appear in the manifest — 27 total.
 BUCKET_BCD_AGENT_FILES = [
     "skills/deep-research/agents/devils_advocate_agent.md",
     "skills/deep-research/agents/report_compiler_agent.md",
@@ -93,6 +95,22 @@ BUCKET_BCD_AGENT_FILES = [
     "skills/academic-pipeline/agents/pipeline_orchestrator_agent.md",
     "skills/academic-pipeline/agents/state_tracker_agent.md",
     "skills/academic-paper-reviewer/agents/field_analyst_agent.md",
+    # skills/report-slides/agents/ (11) — Bucket C (phase-orthogonal): report-slides is a
+    # standalone slide/deck-generation skill, not a stage of the ARS research→write→review
+    # pipeline the classification table (2026-05-18) covers, so none of its agents fit the
+    # table's numbered-phase Bucket A definition. Added post-table; not part of the original
+    # 38-agent count. Exempt from the write-scope manifest like the other C/D entries above.
+    "skills/report-slides/agents/annotation_worker_agent.md",
+    "skills/report-slides/agents/architecture_diagram_worker_agent.md",
+    "skills/report-slides/agents/complex_visual_decomposer_agent.md",
+    "skills/report-slides/agents/conceptual_illustration_worker_agent.md",
+    "skills/report-slides/agents/content_reviewer_agent.md",
+    "skills/report-slides/agents/data_visualization_worker_agent.md",
+    "skills/report-slides/agents/research_narrative_planner_agent.md",
+    "skills/report-slides/agents/scientific_visual_reviewer_agent.md",
+    "skills/report-slides/agents/slide_architect_agent.md",
+    "skills/report-slides/agents/visual_integration_agent.md",
+    "skills/report-slides/agents/visual_quality_reviewer_agent.md",
 ]
 
 _NAME_RE = re.compile(r"^name:\s*(.+?)\s*$", re.MULTILINE)
@@ -143,9 +161,10 @@ def run_checks() -> list[str]:
             f"I1: BUCKET_A_AGENT_FILES has {len(BUCKET_A_AGENT_FILES)} entries, expected 23 "
             "(classification doc: A=23). Update in lockstep with check_v3_9_2_phase_boundary.py."
         )
-    if len(BUCKET_BCD_AGENT_FILES) != 16:
+    if len(BUCKET_BCD_AGENT_FILES) != 27:
         errors.append(
-            f"I1: BUCKET_BCD_AGENT_FILES has {len(BUCKET_BCD_AGENT_FILES)} entries, expected 16."
+            f"I1: BUCKET_BCD_AGENT_FILES has {len(BUCKET_BCD_AGENT_FILES)} entries, expected 27 "
+            "(16 classification-table B/C/D + 11 report-slides)."
         )
 
     # I5 — roster exhaustiveness (NON-VACUOUS guard). Glob the actual filesystem for every
