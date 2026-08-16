@@ -4,15 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-08-16
+
 ### Added
 
 - **`research-project-init`: new skill** — turns a preliminary research idea into a scoped project charter (problem statement, scope, exclusions, contributions, constraints, resources, milestones, success/stop conditions, risks, ethics) and registers a Project plus its Initial Research Questions in `agent-state`. Sits upstream of `deep-research`.
 - **`agent-state`: Source/Evidence entities** — structured, deduplicated literature sources (dedup by DOI, then normalized URL, then a title+author+year hint) and stance-tagged Evidence Statements, registered automatically by `deep-research`'s `bibliography_agent`/`source_verification_agent`/`synthesis_agent` alongside the Markdown reports they already produce. `record_claim` can now point at a specific Evidence record via `--evidence-id`.
-
-## [1.1.0] - 2026-08-04
-
-### Added
-
 - **`report-slides`: authoritative converted-PPTX visual review gate** — the rendered PPTX, not the source SVG, is now the ground truth for visual review, catching text-reflow, image-crop, and asset-drift regressions that only surface after PowerPoint conversion.
 - **`report-slides`: diagram asset manifest validation** and a **visual review sheet tool** for tracking which reusable visuals have been reviewed.
 - **`report-slides`: interactive, bilingual mode selection** for the `svg_to_pptx` conversion flow.
@@ -21,6 +18,12 @@ All notable changes to this project will be documented in this file.
 - **Onboarding demo** (`examples/`) walking through a `research-log` + `report-slides` end-to-end workflow.
 - **npm package**: dual bin alias (`crs` and `research-lab-skills`) with improved install docs.
 - **Native PowerShell installer** (`install.ps1`) — mirrors `install.sh` (`-Local`, `-ArsOnly`, `-LabOnly`, `-Uninstall`) so Windows users can install directly from PowerShell or cmd.exe without Git Bash or WSL.
+- **`THIRD_PARTY_NOTICES.md`** — path-by-path attribution splitting upstream Academic Research Skills content from original lab-workflow/infrastructure work added in this repository.
+
+### Changed
+
+- **Installation docs no longer recommend npm.** `npm install -g research-lab-skills` / `npx` instructions and the npm badge have been removed from the README variants and `QUICKSTART.md`; `curl`/PowerShell/`git clone` (`install.sh` / `install.ps1`) are the supported install paths going forward. The `crs` CLI source (`bin/crs.js`) remains in the repository but is no longer documented as a primary install method, and its `--ai cursor/windsurf/copilot` flags — which had no verified runtime-compatibility evidence — are no longer advertised.
+- **Attribution corrected.** `NOTICE.md` and the new `THIRD_PARTY_NOTICES.md` replace the previous blanket per-directory attribution with a path-level breakdown; `skills/resource-resolver`, `skills/agent-state`, and `skills/research-project-init` are now attributed (previously unattributed anywhere).
 
 ### Fixed
 
@@ -29,6 +32,7 @@ All notable changes to this project will be documented in this file.
 - **`research-log`**: historical section queries now require type discovery before searching, surface query errors instead of failing silently, and require exact custom section names.
 - **Repo layout**: path fixes across policy-anchor, skill-lint discovery, and CI spec/version consistency checks after the `skills/` subdirectory restructuring.
 - **Installation**: the documented `bash <(curl -fsSL ...)` command used process substitution, which fails in PowerShell/cmd.exe and is unreliable even in Git Bash; replaced with `curl -fsSL ... | bash` across all docs.
+- **Identity/URL consistency**: canonicalized operational repository URLs from the renamed `starpig1129` GitHub account to `zi-yue-1129` across install scripts, all README locales, and other docs; removed a dead `research-lab-skills-codex` link from `docs/SETUP.md`/`docs/SETUP.zh-TW.md`.
 
 ## [1.0.0] - 2026-06-12
 

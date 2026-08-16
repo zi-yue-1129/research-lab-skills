@@ -1,6 +1,5 @@
 # research-lab-skills
 
-[![npm](https://img.shields.io/npm/v/research-lab-skills)](https://www.npmjs.com/package/research-lab-skills)
 [![Version](https://img.shields.io/badge/version-v1.1.0-blue)](https://github.com/zi-yue-1129/research-lab-skills/releases/tag/v1.1.0)
 [![License: CC BY-NC 4.0](https://img.shields.io/badge/license-CC%20BY--NC%204.0-lightgrey)](https://creativecommons.org/licenses/by-nc/4.0/)
 [![GitHub](https://img.shields.io/badge/GitHub-zi--yue--1129-black?logo=github)](https://github.com/zi-yue-1129/research-lab-skills)
@@ -168,35 +167,9 @@ powershell -ExecutionPolicy Bypass -File install.ps1 -LabOnly        # 只安装
 powershell -ExecutionPolicy Bypass -File install.ps1 -Uninstall      # 卸载
 ```
 
-### npm
-
-```bash
-npm install -g research-lab-skills
-crs init --global          # 全局安装全部 7 个技能
-```
-
-或用 npx 一次性执行（无需永久安装）：
-
-```bash
-npx research-lab-skills init --global
-```
-
-**安装选项：**
-
-| 标志 | 安装内容 |
-|------|---------|
-| （无）| 全部 7 个技能（项目本地 `.claude/skills/`） |
-| `--global` | 全部 7 个技能（全局 `~/.claude/skills/`） |
-| `--lab-only` | `research-log`、`report-slides`、`research-mode` |
-| `--ars-only` | `deep-research`、`academic-paper`、`academic-paper-reviewer`、`academic-pipeline` |
-| `--ai cursor` | 安装给 Cursor 而非 Claude Code |
-
-```bash
-crs update --global        # npm 升级后重新安装
-crs uninstall --global     # 移除技能
-```
-
 安装后重启 Claude Code。详细说明见 [docs/SETUP.md](docs/SETUP.md)。
+
+> **说明：** 本项目此前曾提供 npm 包（`crs` CLI）。目前未将 npm 作为受支持的安装方式维护，请改用上方的 curl／PowerShell／git clone。CLI 源码仍保留在仓库的 `bin/crs.js`，仅供参考。
 
 ---
 

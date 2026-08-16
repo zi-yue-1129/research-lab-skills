@@ -1,6 +1,5 @@
 # research-lab-skills
 
-[![npm](https://img.shields.io/npm/v/research-lab-skills)](https://www.npmjs.com/package/research-lab-skills)
 [![Version](https://img.shields.io/badge/version-v1.1.0-blue)](https://github.com/zi-yue-1129/research-lab-skills/releases/tag/v1.1.0)
 [![License: CC BY-NC 4.0](https://img.shields.io/badge/license-CC%20BY--NC%204.0-lightgrey)](https://creativecommons.org/licenses/by-nc/4.0/)
 [![GitHub](https://img.shields.io/badge/GitHub-zi--yue--1129-black?logo=github)](https://github.com/zi-yue-1129/research-lab-skills)
@@ -168,35 +167,9 @@ powershell -ExecutionPolicy Bypass -File install.ps1 -LabOnly        # Labスキ
 powershell -ExecutionPolicy Bypass -File install.ps1 -Uninstall      # アンインストール
 ```
 
-### npm
-
-```bash
-npm install -g research-lab-skills
-crs init --global          # 全7スキルをグローバルインストール
-```
-
-npxで一回限りの実行（npmグローバルインストール不要）：
-
-```bash
-npx research-lab-skills init --global
-```
-
-**オプション：**
-
-| フラグ | インストール内容 |
-|--------|----------------|
-| （なし）| 全7スキル（プロジェクトローカル `.claude/skills/`） |
-| `--global` | 全7スキル（グローバル `~/.claude/skills/`） |
-| `--lab-only` | `research-log`、`report-slides`、`research-mode` |
-| `--ars-only` | `deep-research`、`academic-paper`、`academic-paper-reviewer`、`academic-pipeline` |
-| `--ai cursor` | Claude CodeではなくCursorにインストール |
-
-```bash
-crs update --global        # npmアップグレード後に再インストール
-crs uninstall --global     # スキルを削除
-```
-
 インストール後に Claude Code を再起動してください。詳細は [docs/SETUP.md](docs/SETUP.md) を参照してください。
+
+> **注記：** 本プロジェクトは以前 npm パッケージ（`crs` CLI）を提供していました。現在 npm はサポートされたインストール方法として維持されていません。上記の curl／PowerShell／git clone をご利用ください。CLI ソースはリポジトリの `bin/crs.js` に参考として残されています。
 
 ---
 

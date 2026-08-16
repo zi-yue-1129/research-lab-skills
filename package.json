@@ -1,6 +1,6 @@
 {
   "name": "research-lab-skills",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "ZI-YUE,CHAO <james911129@gmail.com>",
   "description": "Unified suite of Claude Code skills for academic research: experiment logging, presentations, deep research, paper writing, peer review, and full pipeline orchestration.",
   "bin": {

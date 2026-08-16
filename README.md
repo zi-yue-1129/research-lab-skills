@@ -1,6 +1,5 @@
 # research-lab-skills
 
-[![npm](https://img.shields.io/npm/v/research-lab-skills)](https://www.npmjs.com/package/research-lab-skills)
 [![Version](https://img.shields.io/badge/version-v1.1.0-blue)](https://github.com/zi-yue-1129/research-lab-skills/releases/tag/v1.1.0)
 [![License: CC BY-NC 4.0](https://img.shields.io/badge/license-CC%20BY--NC%204.0-lightgrey)](https://creativecommons.org/licenses/by-nc/4.0/)
 
@@ -165,37 +164,14 @@ powershell -ExecutionPolicy Bypass -File install.ps1 -LabOnly        # Lab skill
 powershell -ExecutionPolicy Bypass -File install.ps1 -Uninstall      # uninstall
 ```
 
-### npm
-
-```bash
-npm install -g research-lab-skills
-crs init --global          # install all 9 skills globally
-```
-
-Or one-shot with npx (no permanent npm install):
-
-```bash
-npx research-lab-skills init --global
-```
-
-**Options:**
-
-| Flag | What installs |
-|------|---------------|
-| _(none)_ | All 9 skills (project-local `.claude/skills/`) |
-| `--global` | All 9 skills globally (`~/.claude/skills/`) |
-| `--lab-only` | `research-log`, `report-slides`, `research-mode` (+ `resource-resolver`, `agent-state`) |
-| `--ars-only` | `deep-research`, `academic-paper`, `academic-paper-reviewer`, `academic-pipeline` (+ `resource-resolver`, `agent-state`) |
-| `--ai cursor` / `--ai windsurf` / `--ai copilot` | Copies skill files into that tool's skills directory instead of Claude Code's. This is file-placement only — it has not been verified that these tools interpret Claude Code's `SKILL.md` format or route `/ars-*`/`/mode` commands the same way Claude Code does. Treat as experimental, not equivalent support. |
-
-```bash
-crs update --global        # reinstall after npm upgrade
-crs uninstall --global     # remove skills
-```
-
 Restart Claude Code after install.
 Lab skills: `/research-log`, `/report-slides`, `/mode`
 Academic skills: `/ars-plan`, `/ars-full`, `/ars-lit-review`, `/ars-review`, and more.
+
+> **Note:** an npm package (`crs` CLI) previously shipped alongside this repo.
+> It is not currently maintained as a supported install path — use `curl`/
+> PowerShell/`git clone` above instead. The CLI source is still in the repo
+> at `bin/crs.js` for reference.
 
 ---
 
