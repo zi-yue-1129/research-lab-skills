@@ -2,19 +2,25 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional, Tuple
 
 from pptx.util import Emu
 from pptx.enum.text import PP_ALIGN
 
+from fonts import parse_font_stack, resolve_font_stack, text_width
 from .style_parser import compute_style
 from .converter import CoordSystem, _local_tag, _text_xy
 from .shapes import _apply_font, _ALIGN
 
 _ASCENT_FACTOR = 0.75
-_CHAR_W_FACTOR = 0.65   # approx char width as fraction of font-size for Helvetica/Arial
+# Only reached by an SVG that names no font family anywhere: nothing states
+# which face such a document would be rendered in, so there is nothing to
+# measure. Every deck this skill produces declares one.
+_CHAR_W_FACTOR = 0.65
 _MIN_TB_W_SVG = 30.0
 _PAD_SVG = 24.0         # horizontal padding in SVG units
+_EMPTY_LABEL_CHARS = 6
+_WEIGHT_KEYWORDS = {"normal": 400, "bold": 700}
 
 
 def _font_size_svg(style: Dict) -> float:
@@ -32,20 +38,92 @@ def _tspan_dy(ts: Any) -> float:
         return 0.0
 
 
-def _estimate_text_width(elem: Any, fs: float) -> float:
-    """Estimate textbox width in SVG units based on longest text line."""
-    max_chars = 0
-    dt = (elem.text or "").strip()
-    if dt:
-        max_chars = max(max_chars, len(dt))
+def _weight_number(style: Dict) -> int:
+    """Return a CSS font-weight as a number.
+
+    Args:
+        style: A resolved style dict.
+
+    Returns:
+        The numeric weight, defaulting to 400. A bold face is materially wider
+        than its regular sibling, so measuring one with the other is how a
+        heading silently overflows.
+    """
+    raw = str(style.get("font-weight", "normal")).strip()
+    if raw in _WEIGHT_KEYWORDS:
+        return _WEIGHT_KEYWORDS[raw]
+    try:
+        return int(float(raw))
+    except ValueError:
+        return 400
+
+
+def _text_lines(elem: Any, style: Dict) -> List[Tuple[str, Dict]]:
+    """Return each rendered line of a `<text>` element with its own style.
+
+    Args:
+        elem: The `<text>` element.
+        style: Its resolved style, which the tspans inherit.
+
+    Returns:
+        One `(text, style)` pair per non-empty line.
+    """
+    lines: List[Tuple[str, Dict]] = []
+    direct = (elem.text or "").strip()
+    if direct:
+        lines.append((direct, style))
     for ts in elem:
-        if _local_tag(ts) == "tspan":
-            t = (ts.text or "").strip()
-            if t:
-                max_chars = max(max_chars, len(t))
-    if max_chars == 0:
-        max_chars = 6
-    return max(max_chars * fs * _CHAR_W_FACTOR + _PAD_SVG, _MIN_TB_W_SVG)
+        if _local_tag(ts) != "tspan":
+            continue
+        ts_text = (ts.text or "").strip()
+        if ts_text:
+            lines.append((ts_text, compute_style(ts, style)))
+    return lines
+
+
+def _measured_line_width(line: str, style: Dict) -> Optional[float]:
+    """Measure one line in the face it will actually be set in.
+
+    Args:
+        line: The line's text.
+        style: The line's resolved style.
+
+    Returns:
+        The advance width in SVG units, or None when the style names no font
+        family and there is therefore nothing to measure.
+    """
+    family_css = style.get("font-family", "")
+    if not family_css or not parse_font_stack(family_css):
+        return None
+    return text_width(line, resolve_font_stack(family_css),
+                      _font_size_svg(style), _weight_number(style))
+
+
+def _text_box_width(elem: Any, style: Dict, fs: float) -> float:
+    """Return the textbox width in SVG units, measured from the glyphs.
+
+    The width was the longest line's character count times 0.65 em. No font
+    has a uniform advance, so the box could come out narrower than the text in
+    it, and with wrapping off the run was then laid out against a box that
+    disagreed with the SVG the deck was reviewed in.
+
+    Args:
+        elem: The `<text>` element.
+        style: Its resolved style.
+        fs: Its font size in SVG units, used to size an empty label.
+
+    Returns:
+        The width in SVG units, never below `_MIN_TB_W_SVG`.
+    """
+    widths = []
+    for line, line_style in _text_lines(elem, style):
+        measured = _measured_line_width(line, line_style)
+        if measured is None:
+            measured = len(line) * _font_size_svg(line_style) * _CHAR_W_FACTOR
+        widths.append(measured)
+    if not widths:
+        widths.append(_EMPTY_LABEL_CHARS * fs * _CHAR_W_FACTOR)
+    return max(max(widths) + _PAD_SVG, _MIN_TB_W_SVG)
 
 
 def add_textbox(slide: Any, elem: Any, style: Dict, cs: CoordSystem) -> Any:
@@ -57,7 +135,7 @@ def add_textbox(slide: Any, elem: Any, style: Dict, cs: CoordSystem) -> Any:
     # SVG y is text baseline; PPTX textbox is positioned from top
     ty_top = ty - fs * _ASCENT_FACTOR
 
-    tw = _estimate_text_width(elem, fs)
+    tw = _text_box_width(elem, style, fs)
     if anchor == "middle":
         tx_left = tx - tw / 2
     elif anchor == "end":
