@@ -1,0 +1,214 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://claude-research-skills/report-slides/design-tokens/v1",
+  "title": "report-slides design tokens",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "name", "canvas", "typography", "spacing",
+               "surfaces", "connectors", "color", "chart", "icons", "density"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "name": {"type": "string", "minLength": 1},
+    "description": {"type": "string"},
+    "canvas": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["width", "height", "safe_area", "grid"],
+      "properties": {
+        "width": {"const": 1200},
+        "height": {"const": 675},
+        "grid": {"type": "integer", "minimum": 4, "maximum": 16},
+        "safe_area": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["left", "right", "top", "bottom"],
+          "properties": {
+            "left": {"type": "integer", "minimum": 24},
+            "right": {"type": "integer", "minimum": 24},
+            "top": {"type": "integer", "minimum": 24},
+            "bottom": {"type": "integer", "minimum": 24}
+          }
+        }
+      }
+    },
+    "typography": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["family", "roles", "max_sizes_per_slide"],
+      "properties": {
+        "family": {
+          "type": "object",
+          "additionalProperties": {"type": "string", "minLength": 1},
+          "required": ["sans", "mono"]
+        },
+        "max_sizes_per_slide": {"type": "integer", "minimum": 2, "maximum": 6},
+        "roles": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["deck_title", "slide_title", "takeaway", "body",
+                       "node_label", "axis", "caption", "footnote"],
+          "properties": {
+            "deck_title":  {"$ref": "#/$defs/typeRole36"},
+            "slide_title": {"$ref": "#/$defs/typeRole30"},
+            "takeaway":    {"$ref": "#/$defs/typeRole24"},
+            "body":        {"$ref": "#/$defs/typeRole20"},
+            "node_label":  {"$ref": "#/$defs/typeRole18"},
+            "axis":        {"$ref": "#/$defs/typeRole16"},
+            "caption":     {"$ref": "#/$defs/typeRole16"},
+            "footnote":    {"$ref": "#/$defs/typeRole12"}
+          }
+        }
+      }
+    },
+    "spacing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scale", "node_padding", "node_gap_min", "connector_clearance_min"],
+      "properties": {
+        "scale": {"type": "array", "minItems": 4,
+                  "items": {"type": "integer", "minimum": 2}},
+        "node_padding": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["x", "y"],
+          "properties": {"x": {"type": "integer", "minimum": 16},
+                         "y": {"type": "integer", "minimum": 12}}
+        },
+        "node_gap_min": {"type": "integer", "minimum": 24},
+        "connector_clearance_min": {"type": "integer", "minimum": 12}
+      }
+    },
+    "surfaces": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {"$ref": "#/$defs/surface"}
+    },
+    "connectors": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stroke_width", "arrowhead", "dash_patterns"],
+      "properties": {
+        "stroke_width": {"type": "number", "minimum": 1},
+        "arrowhead": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["style", "size"],
+          "properties": {
+            "style": {"enum": ["triangle", "stealth", "arrow", "oval",
+                               "diamond", "none"]},
+            "size": {"enum": ["small", "medium", "large"]}
+          }
+        },
+        "dash_patterns": {
+          "type": "object",
+          "additionalProperties": {"type": "string"},
+          "required": ["solid", "dashed", "dotted"]
+        }
+      }
+    },
+    "color": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["roles", "decorative_roles", "contrast"],
+      "properties": {
+        "roles": {
+          "type": "object",
+          "minProperties": 5,
+          "additionalProperties": {"$ref": "#/$defs/hex"}
+        },
+        "decorative_roles": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Roles exempt from the graphic contrast floor: dividers, gridlines, surface fills."
+        },
+        "contrast": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["text_min", "large_text_min", "graphic_min"],
+          "properties": {
+            "text_min": {"type": "number", "minimum": 4.5},
+            "large_text_min": {"type": "number", "minimum": 3.0},
+            "graphic_min": {"type": "number", "minimum": 3.0}
+          }
+        }
+      }
+    },
+    "chart": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["palette"],
+      "properties": {
+        "palette": {"type": "array", "minItems": 3,
+                    "items": {"$ref": "#/$defs/hex"}}
+      }
+    },
+    "icons": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["family", "stroke_width", "optical_size", "forbidden_when"],
+      "properties": {
+        "family": {"type": ["string", "null"]},
+        "stroke_width": {"type": "number", "minimum": 1},
+        "optical_size": {"type": "integer", "minimum": 16},
+        "forbidden_when": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "density": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["occupancy_min", "occupancy_max", "max_bullets"],
+      "properties": {
+        "occupancy_min": {"type": "number", "minimum": 0, "maximum": 1},
+        "occupancy_max": {"type": "number", "minimum": 0, "maximum": 1},
+        "max_bullets": {"type": "integer", "minimum": 1, "maximum": 10}
+      }
+    }
+  },
+  "$defs": {
+    "hex": {"type": "string", "pattern": "^#[0-9a-fA-F]{6}$"},
+    "typeRoleBase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["size", "weight", "line_height", "max_lines", "family"],
+      "properties": {
+        "size": {"type": "number"},
+        "weight": {"type": "integer", "minimum": 100, "maximum": 900},
+        "line_height": {"type": "number", "minimum": 1.0, "maximum": 2.0},
+        "max_lines": {"type": "integer", "minimum": 1, "maximum": 12},
+        "family": {"type": "string", "minLength": 1}
+      }
+    },
+    "typeRole36": {"allOf": [{"$ref": "#/$defs/typeRoleBase"},
+                             {"properties": {"size": {"minimum": 36}}}]},
+    "typeRole30": {"allOf": [{"$ref": "#/$defs/typeRoleBase"},
+                             {"properties": {"size": {"minimum": 30}}}]},
+    "typeRole24": {"allOf": [{"$ref": "#/$defs/typeRoleBase"},
+                             {"properties": {"size": {"minimum": 24}}}]},
+    "typeRole20": {"allOf": [{"$ref": "#/$defs/typeRoleBase"},
+                             {"properties": {"size": {"minimum": 20}}}]},
+    "typeRole18": {"allOf": [{"$ref": "#/$defs/typeRoleBase"},
+                             {"properties": {"size": {"minimum": 18}}}]},
+    "typeRole16": {"allOf": [{"$ref": "#/$defs/typeRoleBase"},
+                             {"properties": {"size": {"minimum": 16}}}]},
+    "typeRole12": {"allOf": [{"$ref": "#/$defs/typeRoleBase"},
+                             {"properties": {"size": {"minimum": 12}}}]},
+    "surface": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["radius", "border_width", "fill", "border", "padding"],
+      "properties": {
+        "radius": {"type": "integer", "minimum": 0, "maximum": 32},
+        "border_width": {"type": "number", "minimum": 0},
+        "fill": {"type": "string", "minLength": 1},
+        "border": {"type": "string", "minLength": 1},
+        "padding": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["x", "y"],
+          "properties": {"x": {"type": "integer", "minimum": 0},
+                         "y": {"type": "integer", "minimum": 0}}
+        }
+      }
+    }
+  }
+}

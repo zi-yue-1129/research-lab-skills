@@ -1,0 +1,80 @@
+schema_version: 1
+name: default
+description: >-
+  Academic blue on white, typeset for projection. Machine contract for the
+  report-slides visual system; references/styles/STYLES.md is prose guidance only.
+
+canvas:
+  width: 1200
+  height: 675
+  grid: 8
+  safe_area: {left: 48, right: 48, top: 36, bottom: 36}
+
+typography:
+  family:
+    sans: "Inter, 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif"
+    mono: "'DejaVu Sans Mono', 'Liberation Mono', 'Courier New', monospace"
+  max_sizes_per_slide: 4
+  roles:
+    deck_title:  {size: 44, weight: 700, line_height: 1.15, max_lines: 3, family: sans}
+    slide_title: {size: 32, weight: 700, line_height: 1.20, max_lines: 2, family: sans}
+    takeaway:    {size: 26, weight: 600, line_height: 1.35, max_lines: 3, family: sans}
+    body:        {size: 21, weight: 400, line_height: 1.45, max_lines: 8, family: sans}
+    node_label:  {size: 18, weight: 600, line_height: 1.25, max_lines: 3, family: sans}
+    axis:        {size: 16, weight: 400, line_height: 1.20, max_lines: 2, family: sans}
+    caption:     {size: 16, weight: 400, line_height: 1.35, max_lines: 3, family: sans}
+    footnote:    {size: 12, weight: 400, line_height: 1.30, max_lines: 2, family: sans}
+
+spacing:
+  scale: [4, 8, 12, 16, 24, 32, 48, 64]
+  node_padding: {x: 16, y: 12}
+  node_gap_min: 24
+  connector_clearance_min: 12
+
+surfaces:
+  node:    {radius: 8,  border_width: 1.5, fill: card, border: line,    padding: {x: 16, y: 12}}
+  card:    {radius: 12, border_width: 1.0, fill: card, border: divider, padding: {x: 24, y: 16}}
+  callout: {radius: 8,  border_width: 1.5, fill: bg,   border: primary, padding: {x: 16, y: 12}}
+
+connectors:
+  stroke_width: 2
+  arrowhead: {style: triangle, size: medium}
+  dash_patterns:
+    solid: ""
+    dashed: "8 4"
+    dotted: "2 4"
+
+color:
+  roles:
+    primary:  "#1e3a5f"
+    bg:       "#ffffff"
+    body:     "#374151"
+    muted:    "#64748b"
+    line:     "#475569"
+    divider:  "#e2e8f0"
+    card:     "#f8fafc"
+    positive: "#047857"
+    warn:     "#b45309"
+    danger:   "#b91c1c"
+  decorative_roles: [divider, card, bg]
+  contrast:
+    text_min: 4.5
+    large_text_min: 3.0
+    graphic_min: 3.0
+
+chart:
+  palette: ["#1e3a5f", "#0f766e", "#b45309", "#7c3aed", "#b91c1c", "#4d7c0f"]
+
+icons:
+  family: null
+  stroke_width: 1.5
+  optical_size: 24
+  forbidden_when:
+    - "the icon repeats identically across every node and carries no distinction"
+    - "the icon is decorative garnish rather than a domain symbol"
+    - "no icon family is configured"
+
+density:
+  occupancy_min: 0.30
+  occupancy_max: 0.78
+  max_bullets: 6
