@@ -652,9 +652,15 @@ class SvgConverter:
 
         Prefers an explicit ``data-pptx-style`` JSON attribute (the SVG
         producer's already-resolved style values, so custom project styles
-        carry through); falls back to generate_slides.py's built-in defaults
-        when the attribute is absent, which is the normal case for
-        hand-authored Path C markup.
+        carry through); falls back to the shipped design tokens when the
+        attribute is absent, which is the normal case for hand-authored
+        Path C markup.
+
+        The fallback used to be a private set of literals. Two of them had
+        drifted from the contract -- `good` was `#059669` against `#047857`,
+        `danger` `#dc2626` against `#b91c1c` -- and the font was
+        `'Helvetica Neue'`, installed on neither Linux nor the token stack,
+        so a hand-authored table asked for a face nothing could render.
 
         Raises:
             NativeObjectMarkerError: If the attribute is present but is not a
@@ -662,10 +668,18 @@ class SvgConverter:
                 silently discard the producer's intended styling.
         """
         import json
+        from design_tokens import default_tokens
+
+        tokens = default_tokens()
         defaults = {
-            "accent": "#1e3a5f", "white": "#ffffff", "card": "#f8fafc",
-            "bg": "#ffffff", "body": "#374151", "good": "#059669",
-            "danger": "#dc2626", "font": "'Helvetica Neue', Arial, sans-serif",
+            "accent": tokens.color("primary"),
+            "white": tokens.color("bg"),
+            "card": tokens.color("card"),
+            "bg": tokens.color("bg"),
+            "body": tokens.color("body"),
+            "good": tokens.color("positive"),
+            "danger": tokens.color("danger"),
+            "font": tokens.font_stack("sans"),
         }
         raw = elem.get("data-pptx-style")
         if raw is None:

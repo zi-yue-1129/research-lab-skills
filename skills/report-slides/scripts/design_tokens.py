@@ -6,6 +6,7 @@ frontmatter remains human documentation and is never read by renderers.
 from __future__ import annotations
 
 import copy
+import functools
 import hashlib
 import json
 from dataclasses import dataclass
@@ -244,6 +245,23 @@ class DesignTokens:
             )
         return str(families[family_key])
 
+    def chart_palette(self) -> List[str]:
+        """Return the ordered series colours for charts.
+
+        Returns:
+            The `chart.palette` list, as `#rrggbb` strings.
+
+        Raises:
+            TokenError: If the palette is missing, which the schema forbids.
+        """
+        palette = self._data.get("chart", {}).get("palette")
+        if not palette:
+            raise TokenError(
+                f"{self._path}: chart.palette is missing or empty; a chart "
+                f"cannot colour its series without it"
+            )
+        return [str(color) for color in palette]
+
     def color(self, role: str) -> str:
         """Return the hex value for a colour role.
 
@@ -293,6 +311,24 @@ class DesignTokens:
                 f"undefined surface {name!r}; defined surfaces: {sorted(surfaces)}"
             )
         return surfaces[name]
+
+
+@functools.lru_cache(maxsize=1)
+def default_tokens() -> DesignTokens:
+    """Return the token set shipped with the skill.
+
+    Renderers that are handed no token file still have to agree with the ones
+    that are: the native PPTX table and chart route had its own colour
+    literals, its own type sizes, and its own series palette, so a deck's
+    tokens stopped at the edge of its tables.
+
+    Returns:
+        The validated default token set, loaded once.
+
+    Raises:
+        TokenError: If the shipped file is missing or invalid.
+    """
+    return DesignTokens.load(DEFAULT_TOKENS_PATH)
 
 
 def semantic_errors(data: Mapping[str, Any]) -> List[str]:

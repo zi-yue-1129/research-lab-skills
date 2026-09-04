@@ -13,7 +13,7 @@ import json
 import argparse
 import os
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from design_tokens import DEFAULT_TOKENS_PATH, DesignTokens, TokenError, TypeRole
 from fonts import resolve_font_stack, text_width, vertical_metrics
@@ -908,11 +908,19 @@ def render_pie_chart(sl: dict, meta: dict) -> str:
 
 
 def _wrap_pptx_role(role: str, slide_index: int, inner_parts: list,
-                    bbox: tuple, style_keys: tuple, node_id: str = "") -> str:
+                    bbox: tuple, style_keys: tuple, node_id: str = "",
+                    extra_style: Optional[Dict[str, Any]] = None) -> str:
     """Wrap hand-drawn preview markup in the data-pptx-role marker so
     svg_to_pptx/converter.py materializes a real native PPTX object instead
-    of flattening these shapes. bbox is (x, y, w, h) in SVG user units."""
-    style_json = esc(json.dumps({k: S[k] for k in style_keys if k in S}))
+    of flattening these shapes. bbox is (x, y, w, h) in SVG user units.
+
+    `extra_style` carries resolved values that are not colour roles -- the
+    table's type sizes -- so the native object is typeset at the same scale as
+    the preview beside it rather than at a size of its own.
+    """
+    resolved = {k: S[k] for k in style_keys if k in S}
+    resolved.update(extra_style or {})
+    style_json = esc(json.dumps(resolved))
     bx, by, bw, bh = bbox
     attrs = [
         f'data-pptx-role="{role}"',
@@ -1003,6 +1011,8 @@ def render_table(sl: dict, meta: dict) -> str:
         "table", slide_index, table_parts,
         bbox=(tl, top_y, tw, table_h),
         style_keys=("accent", "white", "card", "bg", "body", "good", "danger", "font"),
+        extra_style={"header_size": t_size("node_label"),
+                     "body_size": t_size("body")},
     ))
 
     return svg("\n  ".join(parts))

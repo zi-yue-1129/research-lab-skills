@@ -15,7 +15,39 @@ from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION
 from pptx.enum.text import PP_ALIGN
 from pptx.util import Emu, Pt
 
-_DEFAULT_SERIES_COLORS = ("#3b82f6", "#059669", "#d97706", "#dc2626", "#8a2be2")
+# The type roles the SVG table renderer sets its cells in. Both routes have to
+# agree: the native one used a flat 13pt, a size the token scale does not
+# contain, so the same table was typeset two different ways.
+_HEADER_ROLE = "node_label"
+_BODY_ROLE = "body"
+
+
+def _series_colors() -> List[str]:
+    """Return the contract's chart palette.
+
+    A five-entry tuple private to this module used to stand in for it, so a
+    deck that defined its own palette never saw it used.
+
+    Returns:
+        The ordered `chart.palette` colours.
+    """
+    from design_tokens import default_tokens
+
+    return default_tokens().chart_palette()
+
+
+def _role_size(role: str) -> float:
+    """Return a type role's size in points.
+
+    Args:
+        role: A token typography role key.
+
+    Returns:
+        The role's size, which maps 1:1 to PowerPoint points.
+    """
+    from design_tokens import default_tokens
+
+    return default_tokens().type_role(role).size
 
 
 def _rgb(hex_value: Optional[str], fallback: str = "#000000") -> RGBColor:
@@ -79,7 +111,8 @@ def add_native_table(
         columns: List of column header names
         rows: List of row data (each row is a list of values)
         bbox: Bounding box as (left, top, width, height) in EMU units
-        style: Style dictionary with color and font keys
+        style: Style dictionary with color and font keys, and optional
+            `header_size`/`body_size` overrides in points
         highlight_col: Optional column index to apply +/- coloring to
 
     Returns:
@@ -103,10 +136,13 @@ def add_native_table(
     good_text = _rgb(style.get("good"), "#059669")
     danger_text = _rgb(style.get("danger"), "#dc2626")
     font_name = _font_family(style.get("font", "Calibri"))
+    header_size = float(style.get("header_size") or _role_size(_HEADER_ROLE))
+    body_size = float(style.get("body_size") or _role_size(_BODY_ROLE))
 
     for col_index, column_title in enumerate(columns):
         _set_cell_text(table.cell(0, col_index), str(column_title),
-                       header_fill, header_text, font_name, bold=True)
+                       header_fill, header_text, font_name, header_size,
+                       bold=True)
 
     for row_index, row in enumerate(rows):
         fill = card_fill if row_index % 2 == 0 else bg_fill
@@ -119,13 +155,13 @@ def add_native_table(
                 elif "-" in cell_text:
                     text_color = danger_text
             _set_cell_text(table.cell(row_index + 1, col_index), cell_text,
-                           fill, text_color, font_name)
+                           fill, text_color, font_name, body_size)
 
     return graphic_frame
 
 
 def _set_cell_text(cell: Any, text: str, fill: RGBColor, text_color: RGBColor,
-                   font_name: str, bold: bool = False) -> None:
+                   font_name: str, size_pt: float, bold: bool = False) -> None:
     """Set text and styling for a table cell.
 
     Args:
@@ -134,6 +170,7 @@ def _set_cell_text(cell: Any, text: str, fill: RGBColor, text_color: RGBColor,
         fill: Background color
         text_color: Text color
         font_name: Font family name
+        size_pt: Type size in points, from the token scale
         bold: Whether text should be bold
     """
     cell.fill.solid()
@@ -144,7 +181,7 @@ def _set_cell_text(cell: Any, text: str, fill: RGBColor, text_color: RGBColor,
     paragraph.alignment = PP_ALIGN.CENTER
     run = paragraph.add_run()
     run.text = text
-    run.font.size = Pt(13)
+    run.font.size = Pt(size_pt)
     run.font.bold = bold
     run.font.color.rgb = text_color
     if font_name:
@@ -212,19 +249,17 @@ def add_native_chart(
         chart.legend.position = XL_LEGEND_POSITION.BOTTOM
         chart.legend.include_in_layout = False
 
+    palette = _series_colors()
     if chart_type == "pie":
         point_colors = colors or [
-            _DEFAULT_SERIES_COLORS[i % len(_DEFAULT_SERIES_COLORS)]
-            for i in range(len(categories))
+            palette[i % len(palette)] for i in range(len(categories))
         ]
         for point_index, point in enumerate(chart.series[0].points):
             point.format.fill.solid()
             point.format.fill.fore_color.rgb = _rgb(point_colors[point_index])
     else:
         for series_index, (entry, chart_series) in enumerate(zip(series, chart.series)):
-            color = entry.get("color") or _DEFAULT_SERIES_COLORS[
-                series_index % len(_DEFAULT_SERIES_COLORS)
-            ]
+            color = entry.get("color") or palette[series_index % len(palette)]
             if chart_type == "bar":
                 chart_series.format.fill.solid()
                 chart_series.format.fill.fore_color.rgb = _rgb(color)
