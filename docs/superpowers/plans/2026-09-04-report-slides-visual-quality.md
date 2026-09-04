@@ -2019,7 +2019,7 @@ is the "generated deck" signature. `apply_style` (line 69) additionally returns
 silently when frontmatter parses empty, so a typo in a style file is
 indistinguishable from success — spec §2.15.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `skills/report-slides/scripts/tests/test_generate_slides_typography.py`:
 
@@ -2122,12 +2122,12 @@ def test_apply_style_raises_on_unparsable_frontmatter(tmp_path: Path) -> None:
     assert "broken.md" in str(excinfo.value)
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_generate_slides_typography.py -v`
 Expected: FAIL — `AttributeError: module 'generate_slides' has no attribute 'apply_tokens'`.
 
-- [ ] **Step 3: Add token plumbing**
+- [x] **Step 3: Add token plumbing**
 
 In `skills/report-slides/scripts/generate_slides.py`, immediately after the `S`
 dict (line 40), add:
@@ -2220,7 +2220,7 @@ from design_tokens import DEFAULT_TOKENS_PATH, DesignTokens, TokenError, TypeRol
 from fonts import resolve_font_stack, vertical_metrics
 ```
 
-- [ ] **Step 4: Make `apply_style` fail loudly**
+- [x] **Step 4: Make `apply_style` fail loudly**
 
 Replace the early return in `apply_style` (line 72) so an unusable style file is
 an error. Keep the rest of the function, and map `primary` onto both `primary` and
@@ -2272,7 +2272,7 @@ Note that `top_bar_h` is deliberately no longer read from style frontmatter: the
 top accent bar is removed in Step 5. Delete the `if "top_bar_h" in fm:` block
 (lines 89–93).
 
-- [ ] **Step 5: Rebuild `frame()` from tokens**
+- [x] **Step 5: Rebuild `frame()` from tokens**
 
 Replace `frame()` (lines 133–146) with:
 
@@ -2366,7 +2366,7 @@ def svg(body: str) -> str:
             f'  {body}\n</svg>\n')
 ```
 
-- [ ] **Step 6: Add the `--tokens` flag and call `apply_tokens` first**
+- [x] **Step 6: Add the `--tokens` flag and call `apply_tokens` first**
 
 In the argparse block, after the `--style` argument (line 855), add:
 
@@ -2388,12 +2388,12 @@ with:
 `apply_tokens` must run first: it establishes sizes, spacing, and the resolved
 font, and `apply_style` then overrides colours only.
 
-- [ ] **Step 7: Run test to verify it passes**
+- [x] **Step 7: Run test to verify it passes**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_generate_slides_typography.py -v`
 Expected: PASS — 10 passed.
 
-- [ ] **Step 8: Run the existing suite**
+- [x] **Step 8: Run the existing suite**
 
 Run: `timeout 900 python3 -m pytest skills/report-slides/scripts/tests/ -q`
 
@@ -2403,7 +2403,7 @@ accent bar, or `top_bar_h`. Those expectations are now wrong by design — spec
 the commit message which expectations changed and why. Do not reintroduce the top
 bar or the 20pt title to keep a test green.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add skills/report-slides/scripts/generate_slides.py \

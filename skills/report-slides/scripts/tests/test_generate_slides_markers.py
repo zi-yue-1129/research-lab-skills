@@ -3,14 +3,30 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import pytest
 from lxml import etree
 
+from design_tokens import DEFAULT_TOKENS_PATH
 from generate_slides import (
+    apply_tokens,
     render_table, render_bar_chart, render_line_chart, render_pie_chart,
     render_timeline, RENDERERS,
 )
 
 META = {"footer": ""}
+
+
+@pytest.fixture(autouse=True)
+def _tokens_applied() -> None:
+    """Load the token contract before rendering.
+
+    The renderers used to carry their own built-in sizes and spacing, so they
+    produced markup with no contract loaded. They now read the token contract,
+    and a renderer that silently drew with built-in defaults instead is the
+    failure mode the contract exists to remove -- so rendering without one
+    raises rather than guessing.
+    """
+    apply_tokens(DEFAULT_TOKENS_PATH)
 
 
 def _find_role(svg_text: str, role: str):

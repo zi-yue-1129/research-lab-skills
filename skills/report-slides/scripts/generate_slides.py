@@ -13,8 +13,10 @@ import json
 import argparse
 import os
 from pathlib import Path
-from typing import Sequence
+from typing import Dict, Optional, Sequence
 
+from design_tokens import DEFAULT_TOKENS_PATH, DesignTokens, TokenError, TypeRole
+from fonts import resolve_font_stack, vertical_metrics
 from presentation_gates import ProductionGateError, assert_production_allowed
 from presentation_state import find_project_root
 
@@ -38,6 +40,105 @@ S = {
     "font":   "'Helvetica Neue', Arial, sans-serif",
     "top_bar_h": 6,
 }
+
+TYPE: Dict[str, TypeRole] = {}
+_TOKENS: Optional[DesignTokens] = None
+
+
+def apply_tokens(tokens_path: Optional[Path]) -> None:
+    """Load a design-token file into the module-level style state.
+
+    Args:
+        tokens_path: Path to a `.tokens.yaml` file, or None for the shipped
+            default contract.
+
+    Raises:
+        TokenError: If the token file is missing or schema-invalid.
+        FontError: If no family in the token font stack is installed.
+    """
+    global _TOKENS
+    _TOKENS = DesignTokens.load(tokens_path or DEFAULT_TOKENS_PATH)
+    TYPE.clear()
+    for role in _TOKENS.raw["typography"]["roles"]:
+        TYPE[role] = _TOKENS.type_role(role)
+    S["w"] = _TOKENS.raw["canvas"]["width"]
+    S["h"] = _TOKENS.raw["canvas"]["height"]
+    S["grid"] = _TOKENS.raw["canvas"]["grid"]
+    S["safe"] = dict(_TOKENS.raw["canvas"]["safe_area"])
+    for role in ("bg", "body", "muted", "card", "primary",
+                 "positive", "warn", "danger", "line", "divider"):
+        S[role] = _TOKENS.color(role)
+    # Legacy key names still referenced by the renderers.
+    S["accent"] = _TOKENS.color("primary")
+    S["good"] = _TOKENS.color("positive")
+    S["border"] = _TOKENS.color("divider")
+    S["blue"] = _TOKENS.raw["chart"]["palette"][0]
+    S["white"] = "#ffffff"
+    S["font"] = _TOKENS.font_stack("sans")
+    S["font_resolved"] = resolve_font_stack(S["font"])
+    S["top_bar_h"] = 0
+
+
+def _role(role: str) -> TypeRole:
+    """Return one resolved type role.
+
+    Args:
+        role: Role key such as `body`.
+
+    Returns:
+        The resolved `TypeRole`.
+
+    Raises:
+        RuntimeError: If `apply_tokens` has not been called.
+        TokenError: If the role is undefined.
+    """
+    if not TYPE:
+        raise RuntimeError(
+            "apply_tokens() must be called before rendering; "
+            "type roles are not loaded"
+        )
+    if role not in TYPE:
+        raise TokenError(
+            f"undefined type role {role!r}; defined roles: {sorted(TYPE)}"
+        )
+    return TYPE[role]
+
+
+def t_size(role: str) -> float:
+    """Return the font size for a type role.
+
+    Args:
+        role: Role key such as `body`.
+
+    Returns:
+        The role's font size in SVG units.
+    """
+    return _role(role).size
+
+
+def t_weight(role: str) -> int:
+    """Return the numeric font weight for a type role.
+
+    Args:
+        role: Role key such as `body`.
+
+    Returns:
+        The role's CSS numeric font weight.
+    """
+    return _role(role).weight
+
+
+def t_lh(role: str) -> float:
+    """Return the line-height multiplier for a type role.
+
+    Args:
+        role: Role key such as `body`.
+
+    Returns:
+        The role's line-height multiplier.
+    """
+    return _role(role).line_height
+
 
 # ── Style loading ─────────────────────────────────────────────────────────────
 
@@ -67,10 +168,24 @@ def _parse_frontmatter(path: str) -> dict:
 
 
 def apply_style(style_path: str) -> None:
-    """Load a style .md file and override the global S dict."""
+    """Load a style .md file and override colour keys in the global S dict.
+
+    Style Markdown remains a colour override for backwards compatibility; sizes
+    and spacing come from the token contract. An unparsable or empty style file
+    raises: a silently ignored style is indistinguishable from an applied one.
+
+    Args:
+        style_path: Path to a style `.md` file with YAML frontmatter.
+
+    Raises:
+        ValueError: If the file has no usable frontmatter keys.
+    """
     fm = _parse_frontmatter(style_path)
     if not fm:
-        return
+        raise ValueError(
+            f"style file {style_path} has no usable YAML frontmatter; "
+            f"expected keys such as primary/bg/body (see references/styles/STYLES.md)"
+        )
     key_map = {
         "primary":  "accent",
         "bg":       "bg",
@@ -86,11 +201,12 @@ def apply_style(style_path: str) -> None:
     for style_key, s_key in key_map.items():
         if style_key in fm:
             S[s_key] = fm[style_key]
-    if "top_bar_h" in fm:
-        try:
-            S["top_bar_h"] = int(fm["top_bar_h"])
-        except ValueError:
-            pass
+    if "primary" in fm:
+        S["primary"] = fm["primary"]
+    if "font" in fm:
+        S["font_resolved"] = resolve_font_stack(fm["font"])
+    # `top_bar_h` is deliberately no longer read: the top accent bar is gone,
+    # so honouring the key would silently do nothing.
     print(f"  [style] Applied: {style_path}")
 
 
@@ -132,24 +248,88 @@ def tlines(lines: list, x, y, size, color,
 
 # ── Common slide frame ────────────────────────────────────────────────────────
 
-def frame(title: str, footer: str = "") -> str:
-    h = S["top_bar_h"]
+_FRAME_VARIANTS = ("left", "centered")
+
+
+def frame(title: str, footer: str = "", *, variant: str = "left") -> str:
+    """Render the shared slide frame: title, rule, and footer.
+
+    The former 6px top accent bar and centred 20pt title are gone. The title now
+    uses the `slide_title` role inside the token safe area, and the rule sits
+    under the title's baseline rather than at a fixed y=54.
+
+    Args:
+        title: Slide title text.
+        footer: Optional footer text, rendered at the `footnote` role.
+        variant: `left` for the standard left-aligned title, `centered` for
+            section dividers.
+
+    Returns:
+        SVG markup for the frame elements.
+
+    Raises:
+        ValueError: If `variant` is not a known frame variant.
+    """
+    if variant not in _FRAME_VARIANTS:
+        raise ValueError(
+            f"unknown frame variant {variant!r}; expected one of {_FRAME_VARIANTS}"
+        )
+    safe = S["safe"]
+    size = t_size("slide_title")
+    # `size` is used here, not the measured ascent, because three later tasks
+    # place their content against `rule_y = safe.top + slide_title + 16`. It is
+    # a conservative proxy: DejaVu Sans reports ascent 30 at size 32, so the
+    # title's em box starts 2 units *inside* the safe area. Task 6's test pins
+    # that, so a font whose ascent exceeds its em size fails loudly rather than
+    # clipping silently.
+    baseline = safe["top"] + size
+    rule_y = baseline + 16
+    x = S["w"] / 2 if variant == "centered" else safe["left"]
+    anchor = "middle" if variant == "centered" else "start"
+
     parts = [
-        f'<rect width="{S["w"]}" height="{S["h"]}" fill="{S["bg"]}"/>',
-        f'<rect x="0" y="0" width="{S["w"]}" height="{h}" fill="{S["accent"]}"/>',
-        f'<text x="600" y="44" font-size="20" font-weight="700" fill="{S["accent"]}" '
-        f'text-anchor="middle">{esc(title)}</text>',
-        f'<line x1="40" y1="54" x2="1160" y2="54" stroke="{S["border"]}" stroke-width="1.5"/>',
+        f'<rect width="{S["w"]}" height="{S["h"]}" fill="{S["bg"]}" '
+        f'data-bleed="true"/>',
+        f'<text x="{x:g}" y="{baseline:g}" font-size="{size:g}" '
+        f'font-weight="{t_weight("slide_title")}" fill="{S["accent"]}" '
+        f'data-style-role="slide_title" '
+        f'text-anchor="{anchor}">{esc(title)}</text>',
+        f'<line x1="{safe["left"]}" y1="{rule_y:g}" '
+        f'x2="{S["w"] - safe["right"]}" y2="{rule_y:g}" '
+        f'stroke="{S["divider"]}" stroke-width="1.5" '
+        f'data-bleed="true" data-style-role="divider"/>',
     ]
     if footer:
-        parts.append(f'<text x="1160" y="660" font-size="10" fill="{S["muted"]}" '
-                     f'text-anchor="end">{esc(footer)}</text>')
+        fs = t_size("footnote")
+        # The baseline is lifted by the measured descent so the footer's
+        # descenders end *on* the safe-area boundary rather than three units
+        # past it. Placing the baseline on the boundary is the obvious-looking
+        # choice and is wrong: plan 2's `safe-area` rule reports it on every
+        # slide that carries a footer.
+        _, descent = vertical_metrics(
+            S["font_resolved"], fs, t_weight("footnote"))
+        baseline_y = S["h"] - safe["bottom"] - descent
+        parts.append(
+            f'<text x="{S["w"] - safe["right"]}" y="{baseline_y:g}" '
+            f'font-size="{fs:g}" fill="{S["muted"]}" '
+            f'data-style-role="footnote" '
+            f'text-anchor="end">{esc(footer)}</text>'
+        )
     return "\n  ".join(parts)
 
 
 def svg(body: str) -> str:
+    """Wrap slide body markup in the root SVG element.
+
+    Args:
+        body: Slide content markup.
+
+    Returns:
+        A complete SVG document string.
+    """
     return (f'<svg xmlns="http://www.w3.org/2000/svg" '
-            f'viewBox="0 0 {S["w"]} {S["h"]}" font-family="{S["font"]}">\n'
+            f'viewBox="0 0 {S["w"]} {S["h"]}" '
+            f'font-family="{S["font_resolved"]}">\n'
             f'  {body}\n</svg>\n')
 
 
@@ -853,6 +1033,9 @@ def main(arguments: Sequence[str] | None = None) -> int:
     ap.add_argument("--slide",    type=int, default=None, help="Render only slide N")
     ap.add_argument("--style",    metavar="FILE",      default=None,
                     help="Style .md file to override colors/fonts (see references/styles/STYLES.md in skill bundle)")
+    ap.add_argument("--tokens", metavar="FILE", type=Path, default=None,
+                    help="Design-token .tokens.yaml file "
+                         "(default: references/tokens/default.tokens.yaml)")
     ap.add_argument("--to-pptx",  metavar="SVG_DIR",
                     help="Convert all slide*.svg in SVG_DIR to PPTX (skips SVG generation)")
     ap.add_argument("--pptx-out", metavar="FILE", default=None,
@@ -874,6 +1057,9 @@ def main(arguments: Sequence[str] | None = None) -> int:
     if not args.data or not args.out:
         ap.error("--data and --out are required when not using --to-pptx")
 
+    # `apply_tokens` runs first: it establishes sizes, spacing, and the
+    # resolved font, and `apply_style` then overrides colours only.
+    apply_tokens(args.tokens)
     if args.style:
         apply_style(args.style)
 
