@@ -67,6 +67,18 @@ def _local_tag(elem: Any) -> str:
     return tag.split("}")[-1] if "}" in tag else tag
 
 
+# Roles a slide's own furniture is set in. `data-style-role` names a type
+# role rather than a place, so these also cover badge digits and pill labels;
+# `_CHROME_HOST_HEIGHT_RATIO` is what tells the two apart.
+_SLIDE_CHROME_ROLES = frozenset({"deck_title", "slide_title", "footnote"})
+
+# A badge, pill, or node is drawn around its label and is a shape or two
+# taller than the type in it. A panel that merely encloses a footer's anchor
+# is tens of times taller. Chrome type is attached only to a host of the
+# first kind.
+_CHROME_HOST_HEIGHT_RATIO = 3.0
+
+
 def _text_xy(text_elem: Any) -> Tuple[float, float]:
     """Resolve a ``<text>`` element's anchor point, tolerating SVG that
     omits ``x``/``y`` on the tag itself and only sets them on the first
@@ -205,8 +217,19 @@ class SvgConverter:
         semantic attachment pass so labels outside smaller shapes stay editable
         standalone textboxes. Positions are still conservatively based on the
         SVG ``x``/``y`` attributes; transformed text is not inferred here.
+
+        Slide furniture is excluded from it. A deck footer sits inside
+        whatever panel reaches the bottom of the canvas, and a slide title
+        inside a full-width header band, so a purely geometric rule hands them
+        to that shape: the panel then renders the footer as its first line and
+        takes its own first-paragraph offset from the footer's baseline, which
+        put the panel heading roughly 400 units below where the SVG drew it.
+        Role alone does not identify furniture -- a numbered-bullet badge
+        carries `footnote` because it is set in 12/700 type -- so the shape
+        must also be too tall to be that text's host.
         """
-        from .shapes import _geometry
+        from .shapes import _font_size_svg, _geometry
+        from .style_parser import compute_style
         shape_bboxes: List[Tuple[Any, float, float, float, float]] = []
         for elem in self.root.iter():
             tag = _local_tag(elem)
@@ -241,11 +264,15 @@ class SvgConverter:
             candidates = []
             for shape_elem, sx, sy, sw, sh in shape_bboxes:
                 if sx <= tx <= sx + sw and sy <= ty <= sy + sh:
-                    candidates.append((sw * sh, shape_elem))
+                    candidates.append((sw * sh, shape_elem, sh))
             if not candidates:
                 continue
             candidates.sort(key=lambda c: c[0])
-            best_shape = candidates[0][1]
+            _, best_shape, host_height = candidates[0]
+            if text_elem.get("data-style-role") in _SLIDE_CHROME_ROLES:
+                font_size = _font_size_svg(compute_style(text_elem, {}))
+                if host_height > font_size * _CHROME_HOST_HEIGHT_RATIO:
+                    continue
             self._shape_labels.setdefault(id(best_shape), []).append(text_elem)
             self._text_to_shape[id(text_elem)] = best_shape
 

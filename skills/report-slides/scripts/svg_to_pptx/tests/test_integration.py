@@ -302,3 +302,100 @@ def test_the_whole_deck_route_still_exports(tmp_path) -> None:
     convert_file(str(slides_dir), str(out))
     assert out.exists()
     assert len(Presentation(str(out)).slides) == 1
+
+
+_CARD_WITH_FOOTER_SVG = """\
+<svg viewBox="0 0 1200 675" xmlns="http://www.w3.org/2000/svg">
+  <rect x="0" y="0" width="1200" height="675" fill="#ffffff"/>
+  <text x="1152" y="636" font-size="12" data-style-role="footnote"
+        text-anchor="end" fill="#64748b">deck footer</text>
+  <rect x="612" y="108" width="540" height="531" fill="#f8fafc"/>
+  <text x="636" y="150" font-size="26" data-style-role="takeaway"
+        text-anchor="start" fill="#1e3a5f">After</text>
+  <text x="636" y="199" font-size="21" data-style-role="body"
+        text-anchor="start" fill="#374151">Every size resolves.</text>
+</svg>"""
+
+
+def _card_shape(slide):
+    """Return the card rect, identified by the heading it carries.
+
+    Args:
+        slide: The converted slide.
+
+    Returns:
+        The shape whose text frame holds the panel heading.
+    """
+    for shape in slide.shapes:
+        if shape.has_text_frame and "After" in shape.text_frame.text:
+            return shape
+    raise AssertionError("no shape carries the panel heading")
+
+
+def test_slide_chrome_is_not_absorbed_by_a_card():
+    """The deck footer is not any shape's label.
+
+    The footer's anchor falls inside a full-height panel, so the attachment
+    pass claimed it. Because labels are collected in document order and the
+    footer is emitted before the panels, its baseline then set the shape's
+    first-paragraph margin: the panel heading exported roughly 400 units below
+    where the SVG drew it, and the footer lost its own position entirely.
+    """
+    slide, _ = _conv(_CARD_WITH_FOOTER_SVG)
+    card = _card_shape(slide)
+    assert "deck footer" not in card.text_frame.text
+    assert "Every size resolves." in card.text_frame.text
+
+
+def test_absorbed_chrome_no_longer_drives_the_frame_margin():
+    """The card's first-paragraph margin comes from its own heading.
+
+    This is the assertion that pins the visible defect rather than its cause:
+    26.5 units is the heading's own offset inside the card, and the footer's
+    baseline would have produced roughly 523.
+    """
+    slide, _ = _conv(_CARD_WITH_FOOTER_SVG)
+    card = _card_shape(slide)
+    cs = CoordSystem(svg_w=1200.0, svg_h=675.0)
+    assert card.text_frame.margin_top == Emu(cs.y(150 - 108 - 26 * 0.75 + 4.0))
+
+
+def test_slide_chrome_keeps_its_own_position():
+    """The footer stays a standalone textbox at its own baseline."""
+    slide, _ = _conv(_CARD_WITH_FOOTER_SVG)
+    footers = [s for s in slide.shapes
+               if s.has_text_frame and s.text_frame.text == "deck footer"]
+    assert len(footers) == 1
+    cs = CoordSystem(svg_w=1200.0, svg_h=675.0)
+    assert footers[0].top == Emu(cs.y(636.0 - 12.0 * 0.75))
+
+
+_BADGE_SVG = """\
+<svg viewBox="0 0 1200 675" xmlns="http://www.w3.org/2000/svg">
+  <rect x="0" y="0" width="1200" height="675" fill="#ffffff"/>
+  <text x="1152" y="636" font-size="12" data-style-role="footnote"
+        text-anchor="end" fill="#64748b">deck footer</text>
+  <rect x="612" y="108" width="540" height="531" fill="#f8fafc"/>
+  <circle cx="652" cy="210.28" r="10.2" fill="#047857"/>
+  <text x="652" y="215.89" font-size="12" font-weight="700"
+        data-style-role="footnote" text-anchor="middle" fill="#ffffff">1</text>
+  <text x="678.2" y="217" font-size="21" data-style-role="body"
+        text-anchor="start" fill="#374151">Bind the linter.</text>
+</svg>"""
+
+
+def test_a_badge_digit_stays_on_its_badge():
+    """A chrome-sized role inside a badge is still that badge's label.
+
+    `data-style-role` names a type role, not a place: the numbered-bullet
+    badge on the conclusion layout carries `footnote` because it is set in
+    12/700 type. Excluding the role outright detached the digit from its
+    circle and left it floating as its own textbox.
+    """
+    slide, _ = _conv(_BADGE_SVG)
+    badges = [s for s in slide.shapes
+              if s.has_text_frame and s.text_frame.text == "1"]
+    assert len(badges) == 1
+    cs = CoordSystem(svg_w=1200.0, svg_h=675.0)
+    assert badges[0].left == Emu(cs.x(652 - 10.2))
+    assert badges[0].width == Emu(cs.x(20.4))

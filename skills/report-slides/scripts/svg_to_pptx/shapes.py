@@ -15,6 +15,12 @@ from .converter import CoordSystem, SvgSourceError, _local_tag, _text_xy
 _ALIGN = {"start": PP_ALIGN.LEFT, "middle": PP_ALIGN.CENTER, "end": PP_ALIGN.RIGHT}
 _ATTACHED_LABEL_TOP_PADDING_SVG = 4.0
 
+# SVG's initial `text-anchor` is `start`, and `text_converter` already
+# defaults to it. Attached labels defaulted to `middle`, so the same
+# unanchored heading was left-aligned by every SVG renderer and centred
+# by the export.
+_DEFAULT_ANCHOR = "start"
+
 
 def dispatch_shape(slide: Any, elem: Any, style: Dict,
                    cs: CoordSystem, label_elem: Optional[Any]) -> Optional[Any]:
@@ -187,6 +193,31 @@ def _add_image(slide: Any, elem: Any, style: Dict, cs: CoordSystem) -> Optional[
         return None
 
 
+def _apply_paragraph_indent(para: Any, line_x: float, cs: CoordSystem,
+                            shape_bbox: Tuple[float, float, float, float]) -> None:
+    """Indent one left-aligned paragraph to the x the SVG drew it at.
+
+    A text frame carries a single left margin for every paragraph in it, so it
+    can only reproduce one label's x. The conclusion layout needs two: its
+    heading sits at the card's 24 units of padding and its bullet copy at
+    53.88, clear of a dot drawn at cx=80. DrawingML's per-paragraph `marL`
+    reproduces both.
+
+    Args:
+        para: The paragraph to indent.
+        line_x: The line's SVG x coordinate.
+        cs: The SVG-to-EMU coordinate system.
+        shape_bbox: The shape's SVG `(x, y, width, height)`.
+    """
+    offset = line_x - shape_bbox[0]
+    if offset <= 0.0 or offset >= shape_bbox[2]:
+        # The label is anchored outside its own shape. `_compute_text_attachments`
+        # never produces that, but `dispatch_shape` is also called directly, and
+        # an indent wider than the shape would leave an empty box.
+        return
+    para._p.get_or_add_pPr().set("marL", str(cs.x(offset)))
+
+
 def _write_label(shape: Any, text_elem: Any, parent_style: Dict,
                  cs: CoordSystem, shape_bbox: Tuple[float, float, float, float]) -> None:
     """Write attached SVG labels into a deterministic native shape text frame.
@@ -200,7 +231,8 @@ def _write_label(shape: Any, text_elem: Any, parent_style: Dict,
     vertical placement and text-anchor alignment without turning labels into
     non-editable overlays; labels that overlap in SVG remain separate
     paragraphs and cannot be made pixel-perfect in every PowerPoint-compatible
-    renderer.
+    renderer. Horizontal placement is per paragraph: a left-aligned line is
+    indented to its own SVG x, which a single frame margin cannot express.
     """
     tf = shape.text_frame
     tf.word_wrap = False
@@ -221,7 +253,7 @@ def _write_label(shape: Any, text_elem: Any, parent_style: Dict,
     previous_baseline: Optional[float] = None
     previous_line_height = 0.0
     content_height = 0.0
-    for _, line_style, baseline_y in all_lines:
+    for _, line_style, baseline_y, _ in all_lines:
         font_size = _font_size_svg(line_style)
         line_height = max(font_size * 1.2, 1.0)
         if previous_baseline is None:
@@ -248,10 +280,13 @@ def _write_label(shape: Any, text_elem: Any, parent_style: Dict,
     )
     tf.margin_top = Emu(cs.y(first_paragraph_margin))
 
-    for i, (text, line_style, _) in enumerate(all_lines):
+    for i, (text, line_style, _, line_x) in enumerate(all_lines):
         para = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
-        anchor = line_style.get("text-anchor", parent_style.get("text-anchor", "middle"))
-        para.alignment = _ALIGN.get(anchor, PP_ALIGN.CENTER)
+        anchor = line_style.get(
+            "text-anchor", parent_style.get("text-anchor", _DEFAULT_ANCHOR))
+        para.alignment = _ALIGN.get(anchor, _ALIGN[_DEFAULT_ANCHOR])
+        if anchor == "start":
+            _apply_paragraph_indent(para, line_x, cs, shape_bbox)
         space_before = base_space_befores[i]
         if i == 0:
             space_before = 0.0
@@ -263,17 +298,30 @@ def _write_label(shape: Any, text_elem: Any, parent_style: Dict,
         _apply_font(run, line_style, parent_style)
 
 
-def _collect_text_lines(text_elem: Any, parent_style: Dict) -> List[Tuple[str, Dict, float]]:
-    """Collect attached text content with its SVG baseline coordinates."""
-    lines: List[Tuple[str, Dict, float]] = []
+def _collect_text_lines(
+        text_elem: Any,
+        parent_style: Dict) -> List[Tuple[str, Dict, float, float]]:
+    """Collect attached text content with its SVG baseline coordinates.
+
+    Args:
+        text_elem: An attached `<text>` element.
+        parent_style: The enclosing shape's style, for inheritance.
+
+    Returns:
+        One `(text, style, baseline_y, x)` tuple per line. The x travels with
+        the line because a tspan may restate it, and the exported paragraph is
+        indented to it.
+    """
+    lines: List[Tuple[str, Dict, float, float]] = []
     # Compute the text element's own style first so tspan children inherit correctly
     # (not from the enclosing shape's style, which is the parent_style here)
     text_style = compute_style(text_elem, parent_style)
-    _, baseline_y = _text_xy(text_elem)
+    base_x, baseline_y = _text_xy(text_elem)
     direct_text = (text_elem.text or "").strip()
     if direct_text:
-        lines.append((direct_text, text_style, baseline_y))
+        lines.append((direct_text, text_style, baseline_y, base_x))
     current_baseline = baseline_y
+    current_x = base_x
     for tspan in text_elem:
         if _local_tag(tspan) == "tspan":
             ts = compute_style(tspan, text_style)
@@ -281,11 +329,15 @@ def _collect_text_lines(text_elem: Any, parent_style: Dict) -> List[Tuple[str, D
                 current_baseline = float(tspan.get("y"))
             else:
                 current_baseline += float(tspan.get("dy", 0) or 0)
+            if tspan.get("x") is not None:
+                current_x = float(tspan.get("x"))
+            else:
+                current_x += float(tspan.get("dx", 0) or 0)
             t = (tspan.text or "").strip()
             if t:
-                lines.append((t, ts, current_baseline))
+                lines.append((t, ts, current_baseline, current_x))
     if not lines:
-        lines.append(("", text_style, baseline_y))
+        lines.append(("", text_style, baseline_y, base_x))
     return lines
 
 

@@ -440,3 +440,152 @@ def test_medium_text_is_not_made_bold():
     assert _label_bold(
         '<text x="100" y="100" font-size="21" font-weight="500">Body</text>'
     ) is not True
+
+
+def _para_indent(paragraph: object) -> int:
+    """Return a paragraph's left indent in EMU.
+
+    Args:
+        paragraph: A python-pptx paragraph.
+
+    Returns:
+        The `a:pPr/@marL` value, or 0 when the paragraph has no indent.
+    """
+    pPr = paragraph._p.find(
+        "{http://schemas.openxmlformats.org/drawingml/2006/main}pPr")
+    if pPr is None:
+        return 0
+    return int(pPr.get("marL") or 0)
+
+
+def test_start_anchored_label_keeps_its_horizontal_inset() -> None:
+    """A label anchored at `start` inside a card keeps its padding.
+
+    Nothing carried the label's x, so a left-aligned label rendered flush
+    against the shape's border instead of at the x the SVG gave it: on a card
+    with 24 units of padding the body copy sat on the border.
+    """
+    slide, _ = _blank_slide()
+    rect_elem = etree.fromstring(
+        '<rect x="612" y="108" width="540" height="531" fill="#f8fafc"/>'
+    )
+    label = etree.fromstring(
+        '<text x="636" y="150" font-size="26" text-anchor="start" '
+        'fill="#1e3a5f">After</text>'
+    )
+    style = compute_style(rect_elem, {})
+    dispatch_shape(slide, rect_elem, style, CS, [label])
+
+    frame = slide.shapes[0].text_frame
+    assert _para_indent(frame.paragraphs[0]) == CS.x(24.0)
+    # The indent belongs to the paragraph; the frame margin stays uniform.
+    assert frame.margin_left == Emu(0)
+
+
+def test_each_label_keeps_its_own_indent() -> None:
+    """Labels at different x values indent independently.
+
+    The conclusion layout draws a bullet dot at cx=80 and starts its copy at
+    101.88 to clear it, while the panel heading starts at 72. One margin for
+    the whole frame can only honour one of those, and honouring the heading's
+    put the copy on top of the dot.
+    """
+    slide, _ = _blank_slide()
+    rect_elem = etree.fromstring(
+        '<rect x="48" y="108" width="540" height="531" fill="#f8fafc"/>'
+    )
+    heading = etree.fromstring(
+        '<text x="72" y="158" font-size="26" fill="#1e3a5f">Conclusions</text>'
+    )
+    body = etree.fromstring(
+        '<text x="101.88" y="217" font-size="21" text-anchor="start" '
+        'fill="#374151">One token set now describes each deck.</text>'
+    )
+    style = compute_style(rect_elem, {})
+    dispatch_shape(slide, rect_elem, style, CS, [heading, body])
+
+    paragraphs = slide.shapes[0].text_frame.paragraphs
+    assert _para_indent(paragraphs[0]) == CS.x(24.0)
+    assert _para_indent(paragraphs[1]) == CS.x(53.88)
+
+
+def test_a_tspan_keeps_its_own_indent() -> None:
+    """A tspan that restates x indents from that x, not from its parent."""
+    slide, _ = _blank_slide()
+    rect_elem = etree.fromstring(
+        '<rect x="48" y="108" width="540" height="531" fill="#f8fafc"/>'
+    )
+    label = etree.fromstring(
+        '<text x="72" y="199" font-size="21" text-anchor="start" '
+        'fill="#374151"><tspan x="72" dy="0">first</tspan>'
+        '<tspan x="120" dy="30.4">second</tspan></text>'
+    )
+    style = compute_style(rect_elem, {})
+    dispatch_shape(slide, rect_elem, style, CS, [label])
+
+    paragraphs = slide.shapes[0].text_frame.paragraphs
+    assert _para_indent(paragraphs[0]) == CS.x(24.0)
+    assert _para_indent(paragraphs[1]) == CS.x(72.0)
+
+
+def test_centred_label_takes_no_horizontal_inset() -> None:
+    """A `middle`-anchored label is centred by alignment, not by an indent.
+
+    Indenting a centred label would shift it off the shape's centre, which is
+    where every diagram node label belongs.
+    """
+    slide, _ = _blank_slide()
+    rect_elem = etree.fromstring(
+        '<rect x="40" y="80" width="160" height="70" fill="#3b82f6"/>'
+    )
+    label = etree.fromstring(
+        '<text x="120" y="112" font-size="14" text-anchor="middle" '
+        'fill="white">Node</text>'
+    )
+    style = compute_style(rect_elem, {})
+    dispatch_shape(slide, rect_elem, style, CS, [label])
+
+    assert _para_indent(slide.shapes[0].text_frame.paragraphs[0]) == 0
+
+
+def test_a_start_anchored_inset_cannot_exceed_the_shape() -> None:
+    """A label anchored outside its own shape does not push text off it.
+
+    `_compute_text_attachments` only attaches a label whose anchor is inside
+    the shape, but `dispatch_shape` is also called directly, and an indent
+    wider than the shape would leave an empty box.
+    """
+    slide, _ = _blank_slide()
+    rect_elem = etree.fromstring(
+        '<rect x="40" y="80" width="100" height="70" fill="#3b82f6"/>'
+    )
+    label = etree.fromstring(
+        '<text x="900" y="112" font-size="14" text-anchor="start" '
+        'fill="white">Node</text>'
+    )
+    style = compute_style(rect_elem, {})
+    dispatch_shape(slide, rect_elem, style, CS, [label])
+
+    assert _para_indent(slide.shapes[0].text_frame.paragraphs[0]) == 0
+
+
+def test_an_unanchored_label_is_left_aligned_like_the_svg() -> None:
+    """SVG's default `text-anchor` is `start`, so PPTX must left-align too.
+
+    The default here was `middle`, so a panel heading the SVG draws from its
+    x rendered centred in the exported deck. The two renderings of the same
+    slide disagreed, which is exactly what the export is supposed to rule out.
+    """
+    slide, _ = _blank_slide()
+    rect_elem = etree.fromstring(
+        '<rect x="612" y="108" width="540" height="531" fill="#f8fafc"/>'
+    )
+    label = etree.fromstring(
+        '<text x="636" y="150" font-size="26" fill="#1e3a5f">After</text>'
+    )
+    style = compute_style(rect_elem, {})
+    dispatch_shape(slide, rect_elem, style, CS, [label])
+
+    paragraph = slide.shapes[0].text_frame.paragraphs[0]
+    assert paragraph.alignment == PP_ALIGN.LEFT
+    assert _para_indent(paragraph) == CS.x(24.0)
