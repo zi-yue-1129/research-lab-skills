@@ -4448,7 +4448,7 @@ mapping is by pattern shape relative to stroke width:
 With the token defaults (`stroke_width: 2`, `dashed: "8 4"`, `dotted: "2 4"`),
 `dashed` maps to `dash` and `dotted` maps to `sysDot`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `skills/report-slides/scripts/svg_to_pptx/tests/test_style_parser.py`:
 
@@ -4548,12 +4548,12 @@ def test_apply_alpha_rejects_out_of_range_opacity():
 Add `_blank_slide` to this test file if it is not already defined, matching the
 helper in `test_shapes.py`, plus imports for `pytest` and `Emu`.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/svg_to_pptx/tests/test_style_parser.py -v -k "dash or alpha"`
 Expected: FAIL — `ImportError: cannot import name 'dash_style_for'`.
 
-- [ ] **Step 3: Add the dash and alpha helpers**
+- [x] **Step 3: Add the dash and alpha helpers**
 
 Append to `skills/report-slides/scripts/svg_to_pptx/style_parser.py`:
 
@@ -4703,7 +4703,7 @@ def apply_alpha(shape: Any, style: Dict[str, str]) -> None:
 Add `Optional` to the `typing` import at the top of the file if it is not already
 imported.
 
-- [ ] **Step 4: Call the helpers from every shape path**
+- [x] **Step 4: Call the helpers from every shape path**
 
 In `skills/report-slides/scripts/svg_to_pptx/shapes.py`, extend the import from
 `.style_parser` with `apply_alpha` and `apply_dash`, and call them after
@@ -4735,12 +4735,12 @@ In `skills/report-slides/scripts/svg_to_pptx/path_to_pptx.py`, apply the same tw
 calls wherever the module currently calls `apply_fill`/`apply_stroke`; read the
 file to locate those sites.
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/svg_to_pptx/tests/ -v`
 Expected: PASS — all tests green.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add skills/report-slides/scripts/svg_to_pptx/style_parser.py \

@@ -7,7 +7,8 @@ from lxml import etree
 from pptx.util import Emu, Pt
 from pptx.oxml.ns import qn
 
-from .style_parser import apply_line_ends, resolve_color
+from .style_parser import (apply_alpha, apply_dash, apply_line_ends,
+                           resolve_color)
 from .converter import CoordSystem, _local_tag
 
 _ANCHOR_RECT = [
@@ -75,6 +76,8 @@ def _add_line(slide: Any, x1: int, y1: int, x2: int, y2: int,
         conn.line.width = Pt(float(width_raw))
     except ValueError:
         conn.line.width = Pt(1.5)
+    apply_dash(conn, style)
+    apply_alpha(conn, style)
     return conn
 
 

@@ -8,7 +8,7 @@ from lxml import etree
 from pptx.util import Emu
 
 from .converter import CoordSystem
-from .style_parser import apply_fill, apply_stroke
+from .style_parser import apply_alpha, apply_dash, apply_fill, apply_stroke
 
 _A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
 
@@ -32,6 +32,8 @@ def add_path_shape(slide: Any, commands: List[Tuple],
         return None
     apply_fill(shape, style.get("fill", "none"))
     apply_stroke(shape, style)
+    apply_dash(shape, style)
+    apply_alpha(shape, style)
     return shape
 
 

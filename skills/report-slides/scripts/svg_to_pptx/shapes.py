@@ -8,7 +8,8 @@ from pptx.util import Emu, Pt
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 
 from fonts import parse_font_stack, resolve_font_stack
-from .style_parser import apply_fill, apply_stroke, resolve_color, compute_style
+from .style_parser import (apply_alpha, apply_dash, apply_fill,
+                           apply_stroke, compute_style, resolve_color)
 from .converter import CoordSystem, _local_tag, _text_xy
 
 _ALIGN = {"start": PP_ALIGN.LEFT, "middle": PP_ALIGN.CENTER, "end": PP_ALIGN.RIGHT}
@@ -105,6 +106,8 @@ def _add_rect(slide: Any, elem: Any, style: Dict,
 
     apply_fill(shape, style.get("fill", "black"))
     apply_stroke(shape, style)
+    apply_dash(shape, style)
+    apply_alpha(shape, style)
     if label_elem is not None:
         _write_label(shape, label_elem, style, cs,
                      (svg_x, svg_y, svg_w, svg_h))
@@ -132,6 +135,8 @@ def _add_oval(slide: Any, elem: Any, style: Dict,
     shape = slide.shapes.add_shape(9, Emu(ex), Emu(ey), Emu(ew), Emu(eh))
     apply_fill(shape, style.get("fill", "black"))
     apply_stroke(shape, style)
+    apply_dash(shape, style)
+    apply_alpha(shape, style)
     if label_elem is not None:
         _write_label(shape, label_elem, style, cs, (x, y, w, h))
     return shape

@@ -372,3 +372,145 @@ def apply_line_ends(
         element.set("type", end_type)
         element.set("w", ooxml_size)
         element.set("len", ooxml_size)
+
+
+PRST_DASH_VALUES = frozenset({
+    "solid", "dot", "dash", "lgDash", "dashDot", "lgDashDot",
+    "lgDashDotDot", "sysDash", "sysDot", "sysDashDot", "sysDashDotDot",
+})
+
+
+def dash_style_for(dasharray: str, stroke_width: float) -> Optional[str]:
+    """Map an SVG stroke-dasharray to an OOXML preset dash name.
+
+    OOXML carries a preset enum rather than arbitrary dash arrays, so the
+    pattern is classified by its first dash length relative to the stroke
+    width, and by how many values the array has.
+
+    Args:
+        dasharray: The raw `stroke-dasharray` value.
+        stroke_width: Stroke width in SVG units; used as the scale reference.
+
+    Returns:
+        A `prstDash` value, or None when the stroke is solid.
+
+    Raises:
+        ValueError: If the array contains a non-numeric entry.
+    """
+    raw = (dasharray or "").strip()
+    if not raw or raw.lower() == "none":
+        return None
+    parts = [token for token in re.split(r"[,\s]+", raw) if token]
+    try:
+        values = [float(token) for token in parts]
+    except ValueError as exc:
+        raise ValueError(
+            f"malformed stroke-dasharray {dasharray!r}: {exc}"
+        ) from exc
+    if not values:
+        return None
+    if len(values) >= 6:
+        return "lgDashDotDot"
+    if len(values) >= 4:
+        return "dashDot"
+    scale = stroke_width if stroke_width > 0 else 1.0
+    ratio = values[0] / scale
+    if ratio <= 2:
+        return "sysDot"
+    if ratio <= 6:
+        return "dash"
+    return "lgDash"
+
+
+def apply_dash(shape: Any, style: Dict[str, str]) -> None:
+    """Apply an SVG stroke-dasharray to a shape's line properties.
+
+    Args:
+        shape: A PPTX shape or connector.
+        style: Computed style mapping for the SVG element.
+
+    Raises:
+        ValueError: If the dasharray is malformed.
+    """
+    width_raw = style.get("stroke-width", "1")
+    try:
+        stroke_width = float(re.sub(r"[^0-9.]", "", str(width_raw)) or "1")
+    except ValueError:
+        stroke_width = 1.0
+    dash = dash_style_for(style.get("stroke-dasharray", ""), stroke_width)
+    if dash is None:
+        return
+    ln = shape.line._get_or_add_ln()
+    ensure_ln_child(ln, "a:prstDash").set("val", dash)
+
+
+def _opacity_factor(style: Dict[str, str], specific_key: str) -> float:
+    """Compute the effective opacity for a fill or stroke.
+
+    Args:
+        style: Computed style mapping for the SVG element.
+        specific_key: Either `fill-opacity` or `stroke-opacity`.
+
+    Returns:
+        The product of `opacity` and the specific opacity, in 0..1.
+
+    Raises:
+        ValueError: If either value is non-numeric or outside 0..1.
+    """
+    factor = 1.0
+    for key in ("opacity", specific_key):
+        raw = style.get(key)
+        if raw is None or str(raw).strip() == "":
+            continue
+        try:
+            value = float(str(raw).strip())
+        except ValueError as exc:
+            raise ValueError(f"malformed {key}={raw!r}: {exc}") from exc
+        if not 0.0 <= value <= 1.0:
+            raise ValueError(f"{key}={raw!r} is outside the range 0..1")
+        factor *= value
+    return factor
+
+
+def _set_alpha(color_elem: Any, factor: float) -> None:
+    """Set an `a:alpha` child on a DrawingML colour element.
+
+    Args:
+        color_elem: An `a:srgbClr` element.
+        factor: Opacity in 0..1.
+    """
+    qualified = _qn_a("a:alpha")
+    existing = color_elem.find(qualified)
+    if existing is not None:
+        color_elem.remove(existing)
+    alpha = etree.SubElement(color_elem, qualified)
+    alpha.set("val", str(int(round(factor * 100000))))
+
+
+def apply_alpha(shape: Any, style: Dict[str, str]) -> None:
+    """Apply SVG opacity to a shape's fill and stroke colours.
+
+    `opacity` composes multiplicatively with `fill-opacity` and
+    `stroke-opacity`, matching SVG semantics. A fully opaque element is left
+    untouched so the XML stays minimal.
+
+    Args:
+        shape: A PPTX shape or connector.
+        style: Computed style mapping for the SVG element.
+
+    Raises:
+        ValueError: If an opacity value is malformed or out of range.
+    """
+    fill_factor = _opacity_factor(style, "fill-opacity")
+    stroke_factor = _opacity_factor(style, "stroke-opacity")
+    element = shape._element
+    if fill_factor < 1.0:
+        fill_color = element.find(
+            f".//{{{_A_NS}}}solidFill/{{{_A_NS}}}srgbClr")
+        if fill_color is not None:
+            _set_alpha(fill_color, fill_factor)
+    if stroke_factor < 1.0:
+        line_color = element.find(
+            f".//{{{_A_NS}}}ln/{{{_A_NS}}}solidFill/{{{_A_NS}}}srgbClr")
+        if line_color is not None:
+            _set_alpha(line_color, stroke_factor)
