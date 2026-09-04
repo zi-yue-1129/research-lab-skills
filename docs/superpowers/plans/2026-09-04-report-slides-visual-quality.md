@@ -4009,7 +4009,7 @@ by the *dispatcher*, which knows which segment is first and which is last, and
 not inside `_add_line`, which sees one segment and cannot tell. Calling it per
 segment puts an arrowhead in the middle of every elbow connector on the slide.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `skills/report-slides/scripts/svg_to_pptx/tests/test_connector.py`:
 
@@ -4172,13 +4172,13 @@ def test_ensure_ln_child_keeps_schema_order():
 Ensure the test file imports `pytest`, `Emu`, and `dispatch_connector`; add any
 missing import at the top.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/svg_to_pptx/tests/test_connector.py -v -k "arrowhead or marker or ln_child"`
 Expected: FAIL — `ImportError: cannot import name 'ensure_ln_child'`, and the
 marker tests fail because no `tailEnd` is produced.
 
-- [ ] **Step 3: Collect the marker attributes**
+- [x] **Step 3: Collect the marker attributes**
 
 In `skills/report-slides/scripts/svg_to_pptx/style_parser.py`, extend
 `_STYLE_ATTRS` (line 66) with the marker and arrowhead attributes:
@@ -4194,7 +4194,7 @@ _STYLE_ATTRS = (
 )
 ```
 
-- [ ] **Step 4: Add the line-end helpers**
+- [x] **Step 4: Add the line-end helpers**
 
 Append to `skills/report-slides/scripts/svg_to_pptx/style_parser.py`:
 
@@ -4355,7 +4355,7 @@ def apply_line_ends(
         element.set("len", ooxml_size)
 ```
 
-- [ ] **Step 5: Call it from the connector dispatcher, not from `_add_line`**
+- [x] **Step 5: Call it from the connector dispatcher, not from `_add_line`**
 
 In `skills/report-slides/scripts/svg_to_pptx/connector.py`, add
 `apply_line_ends` to the existing import from `.style_parser`. Call it from
@@ -4392,17 +4392,17 @@ connector, which is most connectors in an architecture diagram.
     return conn
 ```
 
-- [ ] **Step 6: Run test to verify it passes**
+- [x] **Step 6: Run test to verify it passes**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/svg_to_pptx/tests/test_connector.py -v`
 Expected: PASS — all tests green.
 
-- [ ] **Step 7: Run the converter suite**
+- [x] **Step 7: Run the converter suite**
 
 Run: `timeout 900 python3 -m pytest skills/report-slides/scripts/svg_to_pptx/tests/ -q`
 Expected: PASS.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add skills/report-slides/scripts/svg_to_pptx/style_parser.py \

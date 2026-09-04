@@ -7,7 +7,7 @@ from lxml import etree
 from pptx.util import Emu, Pt
 from pptx.oxml.ns import qn
 
-from .style_parser import resolve_color
+from .style_parser import apply_line_ends, resolve_color
 from .converter import CoordSystem, _local_tag
 
 _ANCHOR_RECT = [
@@ -37,7 +37,9 @@ def dispatch_connector(slide: Any, elem: Any, style: Dict,
         y1 = float(elem.get("y1", 0))
         x2 = float(elem.get("x2", 0))
         y2 = float(elem.get("y2", 0))
-        return [_add_line(slide, cs.x(x1), cs.y(y1), cs.x(x2), cs.y(y2), style)]
+        conn = _add_line(slide, cs.x(x1), cs.y(y1), cs.x(x2), cs.y(y2), style)
+        apply_line_ends(conn, style)
+        return [conn]
     elif tag in ("polyline", "polygon"):
         pts = _parse_points(elem.get("points", ""))
         closed = tag == "polygon"
@@ -50,6 +52,13 @@ def dispatch_connector(slide: Any, elem: Any, style: Dict,
             x1, y1 = pts[-1]
             x2, y2 = pts[0]
             connectors.append(_add_line(slide, cs.x(x1), cs.y(y1), cs.x(x2), cs.y(y2), style))
+        if connectors and not closed:
+            # A polyline is one connector drawn as many segments; only its two
+            # ends carry arrowheads. Applying them inside `_add_line` would put
+            # one at every bend of every elbow connector on the slide. A closed
+            # polygon has no ends at all, so a marker on it declares nothing.
+            apply_line_ends(connectors[0], style, head=True, tail=False)
+            apply_line_ends(connectors[-1], style, head=False, tail=True)
         return connectors
     return []
 

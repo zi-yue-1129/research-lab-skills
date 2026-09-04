@@ -69,6 +69,9 @@ _STYLE_ATTRS = (
     "fill", "stroke", "stroke-width", "stroke-dasharray", "opacity",
     "font-size", "font-weight", "font-style", "font-family", "text-anchor", "transform",
     "fill-opacity", "stroke-opacity",
+    "marker-start", "marker-end",
+    "data-pptx-arrowhead", "data-pptx-arrowhead-size",
+    "data-pptx-arrowhead-start", "data-pptx-arrowhead-end",
 )
 
 
@@ -209,3 +212,163 @@ def apply_gradient_fill(shape: Any, stops: List[Tuple[str, str]],
     ang_ooxml = int(round(angle_deg * 60000)) % 21600000
     lin.set("ang", str(ang_ooxml))
     lin.set("scaled", "0")
+
+
+_A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
+
+# DrawingML CT_LineProperties fixes this child order. Inserting out of order
+# yields a file PowerPoint often tolerates but LibreOffice may reject.
+_LN_CHILD_ORDER = (
+    "a:noFill", "a:solidFill", "a:gradFill", "a:pattFill",
+    "a:prstDash", "a:custDash",
+    "a:round", "a:bevel", "a:miter",
+    "a:headEnd", "a:tailEnd",
+)
+
+LINE_END_TYPES = frozenset(
+    {"none", "triangle", "stealth", "arrow", "oval", "diamond"}
+)
+LINE_END_SIZES = {"small": "sm", "medium": "med", "large": "lg"}
+
+
+def _qn_a(tag: str) -> str:
+    """Return the namespaced form of an `a:`-prefixed DrawingML tag name.
+
+    Args:
+        tag: A tag name such as `a:tailEnd`.
+
+    Returns:
+        The `{namespace}local` form.
+
+    Raises:
+        ValueError: If the tag is not `a:`-prefixed.
+    """
+    if not tag.startswith("a:"):
+        raise ValueError(f"expected an 'a:'-prefixed tag, got {tag!r}")
+    return f"{{{_A_NS}}}{tag[2:]}"
+
+
+def ensure_ln_child(ln: Any, tag: str) -> Any:
+    """Get or insert a child of `a:ln`, preserving DrawingML schema order.
+
+    Args:
+        ln: The `a:ln` element.
+        tag: An `a:`-prefixed child tag name from `_LN_CHILD_ORDER`.
+
+    Returns:
+        The existing or newly inserted child element.
+
+    Raises:
+        ValueError: If the tag is not a known line-property child.
+    """
+    if tag not in _LN_CHILD_ORDER:
+        raise ValueError(
+            f"unknown line-property child {tag!r}; "
+            f"expected one of {_LN_CHILD_ORDER}"
+        )
+    qualified = _qn_a(tag)
+    existing = ln.find(qualified)
+    if existing is not None:
+        return existing
+    rank = _LN_CHILD_ORDER.index(tag)
+    element = etree.Element(qualified)
+    for position, child in enumerate(ln):
+        child_tag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
+        prefixed = f"a:{child_tag}"
+        if prefixed in _LN_CHILD_ORDER and _LN_CHILD_ORDER.index(prefixed) > rank:
+            ln.insert(position, element)
+            return element
+    ln.append(element)
+    return element
+
+
+def _requested_line_end(marker_value: str) -> bool:
+    """Return whether a marker attribute value asks for an arrowhead.
+
+    Args:
+        marker_value: The raw `marker-start` or `marker-end` value.
+
+    Returns:
+        True for a `url(#id)` reference, False for absent or `none`.
+    """
+    value = (marker_value or "").strip().lower()
+    return bool(value) and value != "none"
+
+
+def _end_type(style: Dict[str, str], which: str) -> str:
+    """Resolve one end's arrowhead type.
+
+    Args:
+        style: Computed style mapping for the SVG connector element.
+        which: `start` or `end`.
+
+    Returns:
+        A validated OOXML line-end type name.
+
+    Raises:
+        ValueError: If the declared type is unrecognised.
+    """
+    declared = (
+        style.get(f"data-pptx-arrowhead-{which}")
+        or style.get("data-pptx-arrowhead")
+        or "triangle"
+    )
+    end_type = declared.strip().lower()
+    if end_type not in LINE_END_TYPES:
+        raise ValueError(
+            f"unknown arrowhead type {end_type!r}; "
+            f"expected one of {sorted(LINE_END_TYPES)}"
+        )
+    return end_type
+
+
+def apply_line_ends(
+    shape: Any, style: Dict[str, str], *, head: bool = True, tail: bool = True
+) -> None:
+    """Apply SVG marker attributes to one connector as OOXML arrowheads.
+
+    An SVG `<marker>` element's geometry cannot be introspected reliably, so any
+    `url(#id)` reference produces an arrowhead. Its type is declared on the
+    connector element -- `data-pptx-arrowhead-start`, `data-pptx-arrowhead-end`,
+    or `data-pptx-arrowhead` for both -- and defaults to `triangle`. Declaring
+    it there rather than on the `<marker>` is deliberate: one marker in
+    `<defs>` is typically shared by every connector on the slide, so an
+    attribute there cannot say that this connector ends in a stealth arrow and
+    that one does not.
+
+    Args:
+        shape: A PPTX connector or shape with line properties.
+        style: Computed style mapping for the SVG element.
+        head: Whether this shape carries the connector's start. False for every
+            segment of a polyline except the first.
+        tail: Whether this shape carries the connector's end. False for every
+            segment of a polyline except the last.
+
+    Raises:
+        ValueError: If an explicit arrowhead type or size is unrecognised.
+    """
+    wants_head = head and _requested_line_end(style.get("marker-start", ""))
+    wants_tail = tail and _requested_line_end(style.get("marker-end", ""))
+    if not (wants_head or wants_tail):
+        return
+
+    size_name = (style.get("data-pptx-arrowhead-size") or "medium").strip().lower()
+    if size_name not in LINE_END_SIZES:
+        raise ValueError(
+            f"unknown arrowhead size {size_name!r}; "
+            f"expected one of {sorted(LINE_END_SIZES)}"
+        )
+    ooxml_size = LINE_END_SIZES[size_name]
+
+    ln = shape.line._get_or_add_ln()
+    for wanted, which, tag in ((wants_head, "start", "a:headEnd"),
+                               (wants_tail, "end", "a:tailEnd")):
+        if not wanted:
+            continue
+        end_type = _end_type(style, which)
+        if end_type == "none":
+            continue
+        element = ensure_ln_child(ln, tag)
+        element.set("type", end_type)
+        element.set("w", ooxml_size)
+        element.set("len", ooxml_size)
