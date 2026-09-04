@@ -27,8 +27,61 @@ def dispatch_shape(slide: Any, elem: Any, style: Dict,
     return None
 
 
+_MSO_RECTANGLE = 1
+_MSO_ROUNDED_RECTANGLE = 5
+_MAX_CORNER_ADJUSTMENT = 0.5
+
+
+def _corner_radius(elem: Any) -> float:
+    """Return the SVG corner radius of a rect element.
+
+    SVG permits `rx` alone, `ry` alone, or both; a single value mirrors to the
+    other axis. PowerPoint's roundRect has one symmetric radius, so the larger
+    of the two is used.
+
+    Args:
+        elem: The `<rect>` element.
+
+    Returns:
+        The corner radius in SVG units; 0 when the rect is sharp.
+
+    Raises:
+        ValueError: If a radius attribute is present but not a number.
+    """
+    values = []
+    for attr in ("rx", "ry"):
+        raw = elem.get(attr)
+        if raw is None:
+            continue
+        try:
+            values.append(abs(float(raw)))
+        except ValueError:
+            # A malformed radius must not silently become a sharp corner.
+            raise ValueError(
+                f"rect has non-numeric {attr}={raw!r}; fix the SVG source"
+            )
+    return max(values) if values else 0.0
+
+
 def _add_rect(slide: Any, elem: Any, style: Dict,
               cs: CoordSystem, label_elem: Optional[Any]) -> Any:
+    """Add one SVG rect to the slide as a native PPTX shape.
+
+    A rect carrying `rx` or `ry` becomes a roundRect whose corner adjustment
+    reproduces the authored radius, so token surface radii survive export. The
+    former unconditional `add_shape(1, ...)` never read either attribute, so
+    every rounded card in the preview arrived as a sharp box.
+
+    Args:
+        slide: Target PPTX slide.
+        elem: The `<rect>` element.
+        style: Computed style mapping for the element.
+        cs: Coordinate system mapping SVG units to EMU.
+        label_elem: Optional `<text>` element to write into the shape.
+
+    Returns:
+        The created PPTX shape.
+    """
     svg_x = float(elem.get("x", 0))
     svg_y = float(elem.get("y", 0))
     svg_w = float(elem.get("width", 0))
@@ -37,7 +90,19 @@ def _add_rect(slide: Any, elem: Any, style: Dict,
     y = cs.y(svg_y)
     w = max(1, cs.x(svg_w))
     h = max(1, cs.y(svg_h))
-    shape = slide.shapes.add_shape(1, Emu(x), Emu(y), Emu(w), Emu(h))
+
+    radius = _corner_radius(elem)
+    shorter = min(svg_w, svg_h)
+    if radius > 0 and shorter > 0:
+        shape = slide.shapes.add_shape(
+            _MSO_ROUNDED_RECTANGLE, Emu(x), Emu(y), Emu(w), Emu(h))
+        # The adjustment is the radius as a fraction of the shorter side,
+        # clamped at a stadium so an oversized radius cannot overflow.
+        shape.adjustments[0] = min(radius / shorter, _MAX_CORNER_ADJUSTMENT)
+    else:
+        shape = slide.shapes.add_shape(
+            _MSO_RECTANGLE, Emu(x), Emu(y), Emu(w), Emu(h))
+
     apply_fill(shape, style.get("fill", "black"))
     apply_stroke(shape, style)
     if label_elem is not None:

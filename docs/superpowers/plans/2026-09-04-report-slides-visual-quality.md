@@ -3780,7 +3780,7 @@ fraction of the shorter side, so `adjustment = rx / min(width, height)`, clamped
 to `0.5` (a stadium). Both facts were checked against `python-pptx` before this
 plan was written.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `skills/report-slides/scripts/svg_to_pptx/tests/test_shapes.py`:
 
@@ -3848,13 +3848,13 @@ def test_ry_alone_also_rounds_the_rect():
     assert prst == "roundRect"
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/svg_to_pptx/tests/test_shapes.py -v -k "round or sharp or ry_alone"`
 Expected: FAIL — `assert 'rect' == 'roundRect'`, because `_add_rect` hard-codes
 shape id `1`.
 
-- [ ] **Step 3: Read the radius and pick the geometry**
+- [x] **Step 3: Read the radius and pick the geometry**
 
 Replace `_add_rect` (lines 29–45) in
 `skills/report-slides/scripts/svg_to_pptx/shapes.py` with:
@@ -3937,18 +3937,18 @@ def _add_rect(slide: Any, elem: Any, style: Dict,
     return shape
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/svg_to_pptx/tests/test_shapes.py -v`
 Expected: PASS — all tests green.
 
-- [ ] **Step 5: Confirm the whole converter suite still passes**
+- [x] **Step 5: Confirm the whole converter suite still passes**
 
 Run: `timeout 900 python3 -m pytest skills/report-slides/scripts/svg_to_pptx/tests/ -q`
 Expected: PASS. A test asserting `prst == "rect"` for a rect that does carry `rx`
 was encoding the bug; update it and say so in the commit message.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add skills/report-slides/scripts/svg_to_pptx/shapes.py \

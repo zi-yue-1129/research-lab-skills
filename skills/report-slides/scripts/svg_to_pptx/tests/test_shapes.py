@@ -294,3 +294,87 @@ def test_a_bare_generic_family_raises():
         _label_font_name(
             '<text x="100" y="100" font-size="21" '
             'font-family="sans-serif">Node</text>')
+
+_A_NS = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+
+
+def _preset_geometry(markup: str):
+    """Dispatch one SVG element and return its shape and preset geometry name.
+
+    Args:
+        markup: A single SVG element as a string.
+
+    Returns:
+        A `(shape, prst)` pair, where `prst` is the DrawingML preset geometry
+        name PowerPoint will render.
+    """
+    slide, _ = _blank_slide()
+    elem = etree.fromstring(markup)
+    style = compute_style(elem, {})
+    dispatch_shape(slide, elem, style, CS, None)
+    shape = slide.shapes[0]
+    prst = shape._element.find(f".//{_A_NS}prstGeom").get("prst")
+    return shape, prst
+
+
+def test_sharp_rect_stays_a_rectangle():
+    """A rect with no rx keeps the plain rectangle geometry."""
+    _, prst = _preset_geometry(
+        '<rect x="0" y="0" width="200" height="100" fill="#fff"/>')
+    assert prst == "rect"
+
+
+def test_rounded_rect_becomes_round_rect_geometry():
+    """A rect with rx exports as roundRect, not a sharp box."""
+    _, prst = _preset_geometry(
+        '<rect x="0" y="0" width="200" height="100" rx="8" fill="#fff"/>')
+    assert prst == "roundRect"
+
+
+def test_rounded_rect_adjustment_matches_the_svg_radius():
+    """The corner adjustment is rx as a fraction of the shorter side."""
+    shape, _ = _preset_geometry(
+        '<rect x="0" y="0" width="200" height="100" rx="10" fill="#fff"/>')
+    # rx=10 against a 100-unit shorter side -> 0.10
+    assert shape.adjustments[0] == pytest.approx(0.10, abs=0.005)
+
+
+def test_rounded_rect_adjustment_is_clamped_to_a_stadium():
+    """An rx larger than half the shorter side clamps instead of overflowing."""
+    shape, _ = _preset_geometry(
+        '<rect x="0" y="0" width="200" height="100" rx="400" fill="#fff"/>')
+    assert shape.adjustments[0] == pytest.approx(0.5, abs=0.001)
+
+
+def test_ry_alone_also_rounds_the_rect():
+    """SVG allows ry without rx; both must round the shape."""
+    _, prst = _preset_geometry(
+        '<rect x="0" y="0" width="200" height="100" ry="8" fill="#fff"/>')
+    assert prst == "roundRect"
+
+
+def test_a_zero_radius_is_not_a_rounded_rect():
+    """`rx="0"` is an explicitly sharp corner, not a degenerate roundRect."""
+    _, prst = _preset_geometry(
+        '<rect x="0" y="0" width="200" height="100" rx="0" fill="#fff"/>')
+    assert prst == "rect"
+
+
+def test_a_non_numeric_radius_raises():
+    """A malformed radius must not silently become a sharp corner."""
+    with pytest.raises(ValueError, match="rx"):
+        _preset_geometry(
+            '<rect x="0" y="0" width="200" height="100" rx="8px" fill="#fff"/>')
+
+
+def test_the_token_card_radius_survives_export():
+    """A card drawn at the token radius exports as a rounded card.
+
+    The token contract gives `card` a 12-unit radius and `node` an 8-unit one.
+    Every such surface exported as a sharp box, which is the single most
+    visible difference between the SVG preview and the delivered deck.
+    """
+    shape, prst = _preset_geometry(
+        '<rect x="48" y="108" width="352" height="144" rx="12" fill="#f8fafc"/>')
+    assert prst == "roundRect"
+    assert shape.adjustments[0] == pytest.approx(12 / 144, abs=0.005)
