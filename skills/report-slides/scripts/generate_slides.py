@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Dict, Optional, Sequence
 
 from design_tokens import DEFAULT_TOKENS_PATH, DesignTokens, TokenError, TypeRole
-from fonts import resolve_font_stack, vertical_metrics
+from fonts import resolve_font_stack, text_width, vertical_metrics
 from presentation_gates import ProductionGateError, assert_production_allowed
 from presentation_state import find_project_root
 
@@ -65,6 +65,7 @@ def apply_tokens(tokens_path: Optional[Path]) -> None:
     S["h"] = _TOKENS.raw["canvas"]["height"]
     S["grid"] = _TOKENS.raw["canvas"]["grid"]
     S["safe"] = dict(_TOKENS.raw["canvas"]["safe_area"])
+    S["spacing"] = list(_TOKENS.raw["spacing"]["scale"])
     for role in ("bg", "body", "muted", "card", "primary",
                  "positive", "warn", "danger", "line", "divider"):
         S[role] = _TOKENS.color(role)
@@ -236,14 +237,81 @@ def wrap(text: str, max_chars: int = 60) -> list:
     return lines or [""]
 
 
-def tlines(lines: list, x, y, size, color,
-           anchor="start", weight="normal", lh=1.45) -> str:
+def tlines(lines: list, x, y, size, color, anchor="start", weight="normal",
+           lh=1.45, *, role: str) -> str:
+    """Render a multi-line text element.
+
+    Args:
+        lines: Already-wrapped lines, one per rendered line.
+        x: Left, centre, or right coordinate, per `anchor`.
+        y: Baseline of the first line.
+        size: Font size in SVG units.
+        color: Fill colour.
+        anchor: SVG `text-anchor` value.
+        weight: SVG `font-weight` value.
+        lh: Line-height multiplier, applied to `size` for each `dy` after the
+            first line.
+        role: The typography role this text realises. Keyword-only and
+            mandatory: the visual linter skips a `<text>` with no
+            `data-style-role`, so an optional marker with a default would let a
+            caller silently disable the type-floor and colour rules for its
+            text.
+
+    Returns:
+        SVG markup for one `<text>` element.
+    """
     spans = []
     for i, line in enumerate(lines):
         dy = "0" if i == 0 else f"{size * lh:.1f}"
         spans.append(f'<tspan x="{x}" dy="{dy}">{esc(line)}</tspan>')
     return (f'<text x="{x}" y="{y}" font-size="{size}" font-weight="{weight}" '
-            f'fill="{color}" text-anchor="{anchor}">{"".join(spans)}</text>')
+            f'fill="{color}" text-anchor="{anchor}" '
+            f'data-style-role="{role}">{"".join(spans)}</text>')
+
+
+def measured_width(text: str, role: str) -> float:
+    """Measure a string's advance width at a type role's size.
+
+    Args:
+        text: The string to measure.
+        role: Type role key, such as `body`.
+
+    Returns:
+        Advance width in SVG units.
+    """
+    return text_width(text, S["font_resolved"], t_size(role), t_weight(role))
+
+
+def wrap_to_width(text: str, max_width: float, role: str) -> list:
+    """Wrap text to a pixel budget using real font metrics.
+
+    Character-count wrapping cannot survive a size change: 88 characters at 14
+    units and at 21 units occupy different widths. A word wider than the budget
+    is kept on its own line rather than dropped.
+
+    Args:
+        text: The string to wrap.
+        max_width: Available width in SVG units.
+        role: Type role key used for measurement.
+
+    Returns:
+        Wrapped lines; always at least one entry.
+    """
+    words = str(text).split()
+    if not words:
+        return [""]
+    lines: list = []
+    current: list = []
+    for word in words:
+        candidate = " ".join(current + [word])
+        if current and measured_width(candidate, role) > max_width:
+            lines.append(" ".join(current))
+            current = [word]
+        else:
+            current.append(word)
+    if current:
+        lines.append(" ".join(current))
+    return lines
 
 
 # ── Common slide frame ────────────────────────────────────────────────────────
@@ -343,32 +411,51 @@ def render_title(sl: dict, meta: dict) -> str:
     footer   = meta.get("footer", "")
     cx       = 600
 
+    # The two 8px accent bars that used to run the full width at y=0 and y=667
+    # are gone with the rest of the templated signature removed in Task 6.
     parts = [
-        f'<rect width="{S["w"]}" height="{S["h"]}" fill="{S["bg"]}"/>',
-        f'<rect x="0" y="0" width="{S["w"]}" height="8" fill="{S["accent"]}"/>',
-        f'<rect x="0" y="667" width="{S["w"]}" height="8" fill="{S["accent"]}"/>',
+        f'<rect width="{S["w"]}" height="{S["h"]}" fill="{S["bg"]}" '
+        f'data-bleed="true"/>',
     ]
 
-    title_lines = wrap(title, 52)
-    title_y     = 255 - (len(title_lines) - 1) * 20
-    parts.append(tlines(title_lines, cx, title_y, 30, S["accent"], "middle", "700", 1.3))
+    title_role = "deck_title"
+    title_lines = wrap_to_width(title, S["w"] - 2 * S["safe"]["left"] - 160, title_role)
+    title_adv = t_size(title_role) * t_lh(title_role)
+    title_y = 255 - (len(title_lines) - 1) * (title_adv / 2)
+    parts.append(tlines(title_lines, cx, title_y, t_size(title_role),
+                        S["accent"], "middle", str(t_weight(title_role)),
+                        t_lh(title_role), role=title_role))
 
-    div_y = title_y + len(title_lines) * 39
-    parts.append(f'<line x1="200" y1="{div_y}" x2="1000" y2="{div_y}" '
-                 f'stroke="{S["border"]}" stroke-width="1.5"/>')
+    div_y = title_y + len(title_lines) * title_adv
+    parts.append(f'<line x1="200" y1="{div_y:g}" x2="1000" y2="{div_y:g}" '
+                 f'stroke="{S["divider"]}" stroke-width="1.5"/>')
 
-    base_y = div_y + 35
+    base_y = div_y + 40
     if subtitle:
-        sub_lines = wrap(subtitle, 70)
-        parts.append(tlines(sub_lines, cx, base_y, 16, S["muted"], "middle"))
-        base_y += len(sub_lines) * 25 + 10
+        sub_role = "takeaway"
+        sub_lines = wrap_to_width(subtitle, S["w"] - 2 * S["safe"]["left"] - 120,
+                                  sub_role)
+        parts.append(tlines(sub_lines, cx, base_y, t_size(sub_role),
+                            S["muted"], "middle", str(t_weight(sub_role)),
+                            t_lh(sub_role), role=sub_role))
+        base_y += len(sub_lines) * t_size(sub_role) * t_lh(sub_role) + 12
 
     meta_str = "  ·  ".join(filter(None, [author, date]))
     if meta_str:
-        parts.append(f'<text x="{cx}" y="{base_y + 20}" font-size="13" '
+        parts.append(f'<text x="{cx}" y="{base_y + t_size("caption"):g}" '
+                     f'font-size="{t_size("caption"):g}" '
+                     f'data-style-role="caption" '
                      f'fill="{S["muted"]}" text-anchor="middle">{esc(meta_str)}</text>')
     if footer:
-        parts.append(f'<text x="1160" y="660" font-size="10" fill="{S["muted"]}" '
+        # Same lift as `frame()`: the baseline sits a measured descent
+        # above the safe-area boundary, not on it.
+        fs = t_size("footnote")
+        _, descent = vertical_metrics(
+            S["font_resolved"], fs, t_weight("footnote"))
+        parts.append(f'<text x="{S["w"] - S["safe"]["right"]}" '
+                     f'y="{S["h"] - S["safe"]["bottom"] - descent:g}" '
+                     f'font-size="{fs:g}" fill="{S["muted"]}" '
+                     f'data-style-role="footnote" '
                      f'text-anchor="end">{esc(footer)}</text>')
 
     return svg("\n  ".join(parts))
@@ -381,18 +468,30 @@ def render_bullet_list(sl: dict, meta: dict) -> str:
     footer   = meta.get("footer", "")
 
     parts = [frame(title, footer)]
-    x_dot, x_text = 88, 116
-    y = 90
+    safe = S["safe"]
+    x_dot = safe["left"] + 14
+    x_text = safe["left"] + 52
+    text_budget = S["w"] - x_text - safe["right"]
+    body_adv = t_size("body") * t_lh("body")
+    y = t_size("slide_title") + safe["top"] + 56
     for i, item in enumerate(bullets):
-        lines = wrap(str(item), 88)
+        lines = wrap_to_width(str(item), text_budget, "body")
         if numbered:
-            parts.append(f'<circle cx="{x_dot}" cy="{y + 5}" r="12" fill="{S["accent"]}"/>')
-            parts.append(f'<text x="{x_dot}" y="{y + 10}" font-size="11" font-weight="700" '
+            r = t_size("footnote") * 0.75
+            parts.append(f'<circle cx="{x_dot}" cy="{y - t_size("body") * 0.32:g}" '
+                         f'r="{r:g}" fill="{S["accent"]}"/>')
+            parts.append(f'<text x="{x_dot}" '
+                         f'y="{y - t_size("body") * 0.32 + r * 0.55:g}" '
+                         f'font-size="{t_size("footnote"):g}" font-weight="700" '
+                         f'data-style-role="footnote" '
                          f'fill="{S["white"]}" text-anchor="middle">{i + 1}</text>')
         else:
-            parts.append(f'<circle cx="{x_dot}" cy="{y + 6}" r="5" fill="{S["accent"]}"/>')
-        parts.append(tlines(lines, x_text, y, 14, S["body"]))
-        y += max(48, 24 * len(lines) + 16)
+            parts.append(f'<circle cx="{x_dot}" cy="{y - t_size("body") * 0.30:g}" '
+                         f'r="{t_size("body") * 0.28:g}" fill="{S["accent"]}"/>')
+        parts.append(tlines(lines, x_text, y, t_size("body"), S["body"],
+                            "start", str(t_weight("body")), t_lh("body"),
+                            role="body"))
+        y += len(lines) * body_adv + S["spacing"][2]
 
     return svg("\n  ".join(parts))
 
@@ -732,12 +831,14 @@ def render_two_column(sl: dict, meta: dict) -> str:
         max_c = int(pw / 9)
 
         if isinstance(content, str):
-            out.append(tlines(wrap(content, max_c), px + 20, ty, 13, S["body"]))
+            out.append(tlines(wrap(content, max_c), px + 20, ty, 13, S["body"],
+                              role="body"))
         else:
             for item in content:
                 lines = wrap(str(item), max_c - 4)
                 out.append(f'<circle cx="{px + 28}" cy="{ty + 3}" r="4" fill="{S["accent"]}"/>')
-                out.append(tlines(lines, px + 44, ty, 13, S["body"]))
+                out.append(tlines(lines, px + 44, ty, 13, S["body"],
+                                  role="body"))
                 ty += 24 * len(lines) + 8
         return out
 
@@ -783,7 +884,8 @@ def render_timeline(sl: dict, meta: dict) -> str:
 
         label = ev.get("label", "")
         label_lines = wrap(label, 18)
-        event_parts.append(tlines(label_lines, x, ty, 13, S["accent"], "middle", "700"))
+        event_parts.append(tlines(label_lines, x, ty, 13, S["accent"], "middle",
+                                  "700", role="node_label"))
 
         date_str = ev.get("date", "")
         if date_str:
@@ -794,7 +896,8 @@ def render_timeline(sl: dict, meta: dict) -> str:
         detail = ev.get("detail", "")
         if detail:
             det_y = ty + len(label_lines) * 18 + 6
-            event_parts.append(tlines(wrap(detail, 20), x, det_y, 11, S["muted"], "middle"))
+            event_parts.append(tlines(wrap(detail, 20), x, det_y, 11, S["muted"],
+                                      "middle", role="caption"))
 
         parts.append(f'<g data-pptx-role="group" data-node-id="event-{i}">\n    '
                     + "\n    ".join(event_parts) + '\n  </g>')
@@ -817,28 +920,51 @@ def render_conclusion(sl: dict, meta: dict) -> str:
         out.append(f'<rect x="{px}" y="{py}" width="{pw}" height="{ph}" '
                    f'rx="6" fill="{S["card"]}" stroke="{S["border"]}" stroke-width="1.5"/>')
         out.append(f'<rect x="{px}" y="{py}" width="{pw}" height="5" rx="4" fill="{color}"/>')
-        out.append(f'<text x="{px + 20}" y="{py + 32}" font-size="14" font-weight="700" '
+        out.append(f'<text x="{px + 24}" y="{py + 24 + t_size("takeaway"):g}" '
+                   f'font-size="{t_size("takeaway"):g}" '
+                   f'font-weight="{t_weight("takeaway")}" '
+                   f'data-style-role="takeaway" '
                    f'fill="{color}">{esc(heading)}</text>')
-        out.append(f'<line x1="{px + 20}" y1="{py + 40}" x2="{px + pw - 20}" y2="{py + 40}" '
-                   f'stroke="{S["border"]}" stroke-width="1"/>')
+        rule_y = py + 24 + t_size("takeaway") + 14
+        out.append(f'<line x1="{px + 24}" y1="{rule_y:g}" '
+                   f'x2="{px + pw - 24}" y2="{rule_y:g}" '
+                   f'stroke="{S["divider"]}" stroke-width="1"/>')
 
-        iy = py + 62
-        mc = int(pw / 9)
+        iy = rule_y + 24 + t_size("body")
+        body_adv = t_size("body") * t_lh("body")
         for idx, item in enumerate(items):
-            lines = wrap(str(item), mc - 4)
+            lines = wrap_to_width(str(item), pw - 96, "body")
             if numbered:
-                out.append(f'<circle cx="{px + 28}" cy="{iy + 2}" r="11" fill="{color}"/>')
-                out.append(f'<text x="{px + 28}" y="{iy + 7}" font-size="10" font-weight="700" '
+                r = t_size("footnote") * 0.85
+                out.append(f'<circle cx="{px + 32}" '
+                           f'cy="{iy - t_size("body") * 0.32:g}" '
+                           f'r="{r:g}" fill="{color}"/>')
+                out.append(f'<text x="{px + 32}" '
+                           f'y="{iy - t_size("body") * 0.32 + r * 0.55:g}" '
+                           f'font-size="{t_size("footnote"):g}" font-weight="700" '
+                           f'data-style-role="footnote" '
                            f'fill="{S["white"]}" text-anchor="middle">{idx + 1}</text>')
-                out.append(tlines(lines, px + 50, iy, 13, S["body"]))
+                out.append(tlines(lines, px + 32 + r + 16, iy, t_size("body"),
+                                  S["body"], "start", str(t_weight("body")),
+                                  t_lh("body"), role="body"))
             else:
-                out.append(f'<circle cx="{px + 28}" cy="{iy + 4}" r="5" fill="{color}"/>')
-                out.append(tlines(lines, px + 46, iy, 13, S["body"]))
-            iy += 28 * len(lines) + 10
+                out.append(f'<circle cx="{px + 32}" '
+                           f'cy="{iy - t_size("body") * 0.30:g}" '
+                           f'r="{t_size("body") * 0.28:g}" fill="{color}"/>')
+                out.append(tlines(lines, px + 32 + t_size("body") * 0.28 + 16, iy,
+                                  t_size("body"), S["body"], "start",
+                                  str(t_weight("body")), t_lh("body"),
+                                  role="body"))
+            iy += len(lines) * body_adv + S["spacing"][2]
         return out
 
-    parts += block(conclusions, 60,  66, 500, 562, S["accent"], c_head, numbered=False)
-    parts += block(next_steps,  640, 66, 500, 562, S["good"],   n_head, numbered=True)
+    panel_top = S["safe"]["top"] + t_size("slide_title") + 40
+    panel_h = S["h"] - panel_top - S["safe"]["bottom"] - 16
+    panel_w = (S["w"] - 2 * S["safe"]["left"] - 40) / 2
+    parts += block(conclusions, S["safe"]["left"], panel_top, panel_w, panel_h,
+                   S["accent"], c_head, numbered=False)
+    parts += block(next_steps, S["safe"]["left"] + panel_w + 40, panel_top,
+                   panel_w, panel_h, S["good"], n_head, numbered=True)
 
     return svg("\n  ".join(parts))
 

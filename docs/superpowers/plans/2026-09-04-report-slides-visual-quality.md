@@ -2452,7 +2452,7 @@ from a literal tuned for small text:
 - Bullet marker radii scale with the label: `r = t_size("body") * 0.28` for dots,
   `r = t_size("footnote") * 0.75` for numbered discs.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `skills/report-slides/scripts/tests/test_generate_slides_typography.py`:
 
@@ -2535,12 +2535,12 @@ def test_conclusion_blocks_use_roles() -> None:
     assert 13 not in sizes
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_generate_slides_typography.py -v -k "wrap or title_slide or bullet or conclusion"`
 Expected: FAIL — `AttributeError: module 'generate_slides' has no attribute 'wrap_to_width'`.
 
-- [ ] **Step 3: Give `tlines` its style role**
+- [x] **Step 3: Give `tlines` its style role**
 
 `tlines` (line 123) writes its own `<text>` element and is called from five
 sites in this plan, so it takes the role rather than leaving each caller to
@@ -2584,7 +2584,7 @@ and `role=sub_role` in `render_title_slide`, and `role="body"` in
 parameter is keyword-only with no default, a missed call site is a `TypeError`
 at import time rather than an unmarked element at review time.
 
-- [ ] **Step 4: Add measured wrapping**
+- [x] **Step 4: Add measured wrapping**
 
 In `skills/report-slides/scripts/generate_slides.py`, after the existing `wrap`
 function (line 139), add:
@@ -2638,7 +2638,7 @@ def wrap_to_width(text: str, max_width: float, role: str) -> list:
 Add `from fonts import resolve_font_stack, text_width, vertical_metrics` in
 place of the Task 6 import line.
 
-- [ ] **Step 5: Re-render the three text renderers**
+- [x] **Step 5: Re-render the three text renderers**
 
 In `render_title`, replace lines 174–192 with:
 
@@ -2778,12 +2778,12 @@ below the new title rule and use the token safe area:
                    panel_w, panel_h, S["good"], n_head, numbered=True)
 ```
 
-- [ ] **Step 6: Run test to verify it passes**
+- [x] **Step 6: Run test to verify it passes**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_generate_slides_typography.py -v`
 Expected: PASS — all tests green.
 
-- [ ] **Step 7: Render and inspect the pixels**
+- [x] **Step 7: Render and inspect the pixels**
 
 Unit tests confirm sizes but not legibility. Render the three slide types and look
 at them:
@@ -2828,13 +2828,13 @@ centred template, and body text is comfortably legible at a glance. If anything
 overflows, adjust the geometry formulas above — do not reduce a role's size to
 make text fit.
 
-- [ ] **Step 8: Run the existing suite**
+- [x] **Step 8: Run the existing suite**
 
 Run: `timeout 900 python3 -m pytest skills/report-slides/scripts/tests/ -q`
 Expected: PASS. Update any renderer fixture asserting the old sizes, and say in
 the commit message which expectations changed and why the old values were wrong.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add skills/report-slides/scripts/generate_slides.py \

@@ -94,3 +94,88 @@ def test_apply_style_raises_on_unparsable_frontmatter(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="no usable YAML frontmatter") as excinfo:
         gs.apply_style(str(broken))
     assert "broken.md" in str(excinfo.value)
+
+
+def test_wrap_to_width_respects_measured_width() -> None:
+    """Wrapping breaks lines by measured width, not character count."""
+    text = "Model architecture and evaluation protocol for the ablation study"
+    narrow = gs.wrap_to_width(text, 300, "body")
+    wide = gs.wrap_to_width(text, 900, "body")
+    assert len(narrow) > len(wide)
+    for line in narrow:
+        assert gs.measured_width(line, "body") <= 300
+
+
+def test_wrap_to_width_never_drops_words() -> None:
+    """Every input word survives wrapping."""
+    text = "alpha beta gamma delta epsilon zeta eta theta"
+    joined = " ".join(gs.wrap_to_width(text, 200, "body"))
+    assert joined.split() == text.split()
+
+
+def test_wrap_to_width_keeps_overlong_word_on_its_own_line() -> None:
+    """A single word wider than the budget is not silently dropped."""
+    lines = gs.wrap_to_width("supercalifragilisticexpialidocious", 40, "body")
+    assert lines == ["supercalifragilisticexpialidocious"]
+
+
+def _sizes(markup: str) -> set:
+    """Collect every font-size value present in SVG markup.
+
+    Args:
+        markup: SVG markup to scan.
+
+    Returns:
+        The distinct font-size values found.
+    """
+    return {float(m) for m in _FONT_SIZE_RE.findall(markup)}
+
+
+def test_title_slide_uses_deck_title_role() -> None:
+    """The title slide headline uses deck_title, not a 30pt literal."""
+    markup = gs.render_title(
+        {"title": "Ablation Study", "subtitle": "Round 3",
+         "author": "Lab", "date": "2026-09-04"},
+        {"footer": "1/8"},
+    )
+    sizes = _sizes(markup)
+    assert 44 in sizes
+    assert 30 not in sizes
+    assert min(sizes) >= 12
+
+
+def test_bullet_list_body_is_at_least_twenty() -> None:
+    """Bullet body text sits at the body role, never at 14."""
+    markup = gs.render_bullet_list(
+        {"title": "Findings", "bullets": ["one finding", "another finding"]},
+        {"footer": "2/8"},
+    )
+    sizes = _sizes(markup)
+    assert 21 in sizes
+    assert 14 not in sizes
+    assert min(sizes) >= 12
+
+
+def test_numbered_bullets_stay_inside_the_canvas() -> None:
+    """Six numbered bullets still fit within the canvas height."""
+    markup = gs.render_bullet_list(
+        {"title": "Findings", "numbered": True,
+         "bullets": [f"finding number {i}" for i in range(6)]},
+        {},
+    )
+    ys = [float(m) for m in re.findall(r'<circle cx="[0-9.]+" cy="([0-9.]+)"', markup)]
+    assert ys
+    assert max(ys) <= gs.S["h"] - gs.S["safe"]["bottom"]
+
+
+def test_conclusion_blocks_use_roles() -> None:
+    """Conclusion headings and items use takeaway and body roles."""
+    markup = gs.render_conclusion(
+        {"title": "Conclusion", "conclusions": ["it worked"],
+         "next_steps": ["scale it up"]},
+        {},
+    )
+    sizes = _sizes(markup)
+    assert 26 in sizes
+    assert 21 in sizes
+    assert 13 not in sizes
