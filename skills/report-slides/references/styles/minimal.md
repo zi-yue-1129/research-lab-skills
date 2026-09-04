@@ -11,7 +11,6 @@ positive: "#374151"
 warn: "#6b7280"
 danger: "#374151"
 font: "'Helvetica Neue', Arial, sans-serif"
-top_bar_h: 3
 ---
 
 Best for: printed handouts, journal submissions, or when projector color accuracy is uncertain.

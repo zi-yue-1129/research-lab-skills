@@ -5225,7 +5225,7 @@ per module, which is the inconsistency that reads as machine-generated.
 Documentation alone is not enforcement, so this task ships a test that fails if
 the instruction is ever dropped.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `skills/report-slides/scripts/tests/test_token_docs.py`:
 
@@ -5312,13 +5312,13 @@ def test_skill_md_documents_the_tokens_flag() -> None:
     assert "validate_design_tokens.py" in text
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_token_docs.py -v`
 Expected: FAIL — every assertion, because none of these documents mentions the
 token contract yet.
 
-- [ ] **Step 3: Update `architecture_diagram_worker_agent.md`**
+- [x] **Step 3: Update `architecture_diagram_worker_agent.md`**
 
 In the Production Procedure, insert a new step between the current step 4
 ("Reference") and step 5 ("Author"):
@@ -5385,7 +5385,7 @@ route, to `annotation_worker_agent.md`, `data_visualization_worker_agent.md`,
 and `conceptual_illustration_worker_agent.md` — for the conceptual worker, the
 tokens and the markers govern the *overlay* layer, not the generated pixels.
 
-- [ ] **Step 4: Update `diagram-patterns.md`**
+- [x] **Step 4: Update `diagram-patterns.md`**
 
 Add a section immediately after the file's opening paragraph:
 
@@ -5418,7 +5418,7 @@ instances of the same semantic component that differ in radius, stroke weight,
 padding, or type role fail.
 ```
 
-- [ ] **Step 5: Update `STYLES.md`**
+- [x] **Step 5: Update `STYLES.md`**
 
 Replace the "Applying to [C] Claude SVG slides" section — the one prescribing
 `font-size="20"` at `y="44"`, the `top_bar_h` accent bar, and the `y="54"` rule —
@@ -5453,7 +5453,7 @@ python3 scripts/generate_slides.py --tokens <file> --data ... --out ... --deck-i
 Delete the `top_bar_h` row from the frontmatter schema table and from every
 built-in style file (`default.md`, `minimal.md`, `dark.md`, `paper.md`).
 
-- [ ] **Step 6: Update `SKILL.md`**
+- [x] **Step 6: Update `SKILL.md`**
 
 In the "Style system" section (lines 108–130), add before the `set-style` block:
 
@@ -5478,18 +5478,18 @@ and the path is resolved and validated at the gate. Style `.md` files remain
 available for colour overrides only, applied after tokens.
 ```
 
-- [ ] **Step 7: Run test to verify it passes**
+- [x] **Step 7: Run test to verify it passes**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_token_docs.py -v`
 Expected: PASS — 13 passed.
 
-- [ ] **Step 8: Run the full skill suite**
+- [x] **Step 8: Run the full skill suite**
 
 Run: `timeout 900 python3 -m pytest skills/report-slides/scripts/ -q`
 Expected: PASS. Doc-consistency tests asserting the old `top_bar_h` schema row now
 fail by design; update them and record why in the commit message.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add skills/report-slides/agents/ \

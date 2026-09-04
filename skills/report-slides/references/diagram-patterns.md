@@ -5,6 +5,33 @@ objects. The required route defaults are native SVG for architecture and flow,
 deterministic data-driven SVG for timeline, statistical, and status views, and
 a raster base plus native SVG overlay for hybrid visuals.
 
+## Token-driven geometry
+
+Every route in this file draws its constants from the design-token file named by
+the module's `style_tokens_ref`, validated with `validate_design_tokens.py`.
+Nothing below is a free choice:
+
+| Visual property | Token path |
+|---|---|
+| Node fill / border / radius / padding | `surfaces.node` |
+| Card fill / border / radius / padding | `surfaces.card` |
+| Callout fill / border / radius / padding | `surfaces.callout` |
+| Node label size, weight, line height, max lines | `typography.roles.node_label` |
+| Axis and legend type | `typography.roles.axis` |
+| Caption type | `typography.roles.caption` |
+| Connector width, arrowhead, dash | `connectors.*` |
+| Minimum node-to-node gap | `spacing.node_gap_min` |
+| Minimum connector clearance | `spacing.connector_clearance_min` |
+| Grid quantum and safe area | `canvas.grid`, `canvas.safe_area` |
+| Semantic colours | `color.roles` |
+| Chart series colours | `chart.palette` |
+| When icons are forbidden | `icons.forbidden_when` |
+
+Two rules apply to every route's **Failure checks** list in addition to the ones
+already stated there: a colour that is not in `color.roles` fails, and two
+instances of the same semantic component that differ in radius, stroke weight,
+padding, or type role fail.
+
 ## Architecture
 
 - **Default route:** `native` with native SVG.

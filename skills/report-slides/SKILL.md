@@ -113,6 +113,25 @@ Full schema and color role descriptions are in `references/styles/STYLES.md` (re
 
 **Project default:** if `$SLIDES_DIR/_style.md` exists it is applied automatically to every deck.
 
+### Design tokens (the machine contract)
+
+Sizes, spacing, radii, connector geometry, contrast floors, and density budgets
+come from a design-token file, not from style Markdown. The shipped default is
+`references/tokens/default.tokens.yaml`; select another with `--tokens`.
+
+```bash
+# Validate a token file before use:
+python3 "$(find ~/.claude -path "*/report-slides/scripts/validate_design_tokens.py" | head -1)" \
+    --tokens <file>
+
+# Render with a specific token file:
+python3 scripts/generate_slides.py --tokens <file> --data <json> --out <dir> --deck-id <id>
+```
+
+Every ModuleSpec must name a token file in `style_tokens_ref`; `null` is rejected
+and the path is resolved and validated at the gate. Style `.md` files remain
+available for colour overrides only, applied after tokens.
+
 ### set-style \<name\>
 
 Copy a built-in style as the project default (one command):
@@ -888,8 +907,7 @@ role descriptions; otherwise use the defaults in the table below.
 |-----------|-----------|---------|
 | — | Canvas: `viewBox="0 0 1200 675"` | fixed |
 | `bg` | Slide background `<rect fill="..."/>` | `#ffffff` |
-| `primary` | Top bar, title text, bullet markers | `#1e3a5f` |
-| `top_bar_h` | Top bar `height` in px | `6` |
+| `primary` | Title text, bullet markers, accents | `#1e3a5f` |
 | `border` | Divider line, card borders | `#e2e8f0` |
 | `body` | Main paragraph text | `#374151` |
 | `muted` | Footer, axis labels, captions | `#64748b` |

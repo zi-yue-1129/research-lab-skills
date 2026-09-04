@@ -29,6 +29,71 @@ Run the full mandatory visual-authoring gate exactly as defined in this skill's 
 2. **Discover:** Search project `manifest.yaml` files by purpose, conceptual theme, and semantic region before rendering, to find any existing conceptual-illustration assets that might be reused or modified.
 3. **Classify:** Select exactly one route: `generative` ([V:AI]) is the default for conceptual illustrations when native shapes or data-driven routes cannot adequately represent the idea.
 4. **Reference:** Load only the relevant references for the generative route from this skill's `references/` directory.
+
+4b. **Resolve tokens:** Load the design-token file named by your
+   ModuleSpec's `style_tokens_ref`. Validate it first:
+
+   ```bash
+   VDT="$(find ~/.claude -path "*/report-slides/scripts/validate_design_tokens.py" | head -1)"
+   python3 "$VDT" --tokens <style_tokens_ref>
+   ```
+
+   The file conforms to `references/design-tokens.schema.json`; the
+   shipped default is `references/tokens/default.tokens.yaml`.
+
+   Tokens govern the **overlay** layer, not the generated pixels. A
+   diffusion model cannot be held to a radius or a type size, which is
+   exactly why factual labels, values, and legends never go into the
+   raster: everything a token could govern belongs in the native overlay,
+   where it can be checked. For that overlay you MUST NOT invent a
+   colour, radius, stroke weight, gap, or font size:
+
+   - Caption and callout box fill, border, radius, and padding:
+     `surfaces.callout`.
+   - Label type: `typography.roles.node_label`; captions and
+     attributions: `typography.roles.caption` or
+     `typography.roles.footnote`. Never below the size a role states.
+   - Leader line width, arrowhead style and size, dash pattern:
+     `connectors.*`. Draw arrowheads with `marker-end`, never as a
+     separate polygon.
+   - Minimum gap between overlay elements: `spacing.node_gap_min`.
+   - The overlay stays inside `canvas.safe_area`; positions snap to
+     `canvas.grid`.
+   - Colours come from `color.roles` by name, including the palette the
+     generation prompt asks the image to sit within, so the illustration
+     does not fight the deck it lands in. A raw hex value not present in
+     the token set is a defect.
+   - `icons.forbidden_when` still applies: a generated illustration does
+     not license decorative iconography the token set forbids.
+
+   A module whose `style_tokens_ref` cannot be resolved is a blocker. Do
+   not fall back to built-in defaults.
+
+4c. **Declare what you drew.** The raster carries no markers — it is one
+   image. The overlay does, and the visual-style linter reads them: an
+   element without them is *skipped* rather than flagged, so an unmarked
+   overlay passes every rule by never being examined.
+
+   - Every `<text>`: `data-style-role="<typography role>"` — the same
+     role you took the size from.
+   - Every caption or callout that reads as one thing:
+     `<g data-node-id="<stable id>">`. Node ids are what let the linter
+     tell "these two captions overlap" from "this label is inside its own
+     box".
+   - Every shape drawn from a surface or colour role:
+     `data-style-role="<role>"`. A `chart.*` or `mark.*` role also
+     exempts the element from the layout grid, because a data mark is
+     positioned by its value.
+   - Every leader line into the illustration: `data-from="<node id>"
+     `data-to="<node id>"`, plus `marker-end` for its arrowhead.
+   - The generated raster itself almost always runs past
+     `canvas.safe_area` by design; mark it `data-bleed="true"`. Without
+     it the safe-area rule reports the illustration on every slide it
+     appears on, and the rule gets trained away as noise.
+
+   An overlay that resolves its tokens correctly but declares none of
+   this is invisible to every check downstream of it.
+
 5. **Author:** Create or modify a reusable source; resolve reuse, modification, or derivation identity before rendering. For [V:AI], prepare a detailed prompt that describes the conceptual illustration without embedding factual labels, values, or legends in the generated pixels. For an edit (modifying an existing illustration, not creating a new one), provide the earlier asset to the image-generation capability and name every changed region and reason. Never substitute an arbitrary web image or unrelated redraw.
 6. **Render:** Render the module to pixels. For `generative` route ([V:AI]), use runtime image generation to produce the raster asset. Do not embed factual claims, numbers, axis labels, or legend text directly into the generated pixels — keep all such content in accompanying native overlay text or the slide's own text elements.
 7. **Review:** Inspect the rendered pixels with model vision, revise the prompt if needed, and repeat render/vision until the visual review passes.

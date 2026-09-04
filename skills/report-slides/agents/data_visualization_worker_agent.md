@@ -29,6 +29,73 @@ Run the full mandatory visual-authoring gate exactly as defined in this skill's 
 2. **Discover:** Search project `manifest.yaml` files by purpose, diagram type, and semantic region before rendering, to find any existing data-visualization assets that might be reused or modified.
 3. **Classify:** Select exactly one route: `data` (deterministic data-driven SVG for charts, tables, timelines) is the primary default for data visualization; use `native` (editable SVG shapes) only if the chart type does not fit the Python renderer's supported types (see reference below).
 4. **Reference:** Load only the relevant references for the selected route from this skill's `references/` directory.
+
+4b. **Resolve tokens:** Load the design-token file named by your
+   ModuleSpec's `style_tokens_ref` and derive every visual constant from
+   it. Validate it first:
+
+   ```bash
+   VDT="$(find ~/.claude -path "*/report-slides/scripts/validate_design_tokens.py" | head -1)"
+   python3 "$VDT" --tokens <style_tokens_ref>
+   ```
+
+   The file conforms to `references/design-tokens.schema.json`; the
+   shipped default is `references/tokens/default.tokens.yaml`.
+
+   For the `data` route this is one flag: pass the same file to the
+   renderer as `generate_slides.py --tokens <style_tokens_ref>`, and the
+   chart, table, and timeline geometry follows it. Do not also pass a
+   `--style` file for anything but colour.
+
+   For the `[V:NATIVE]` fallback you author the geometry yourself, and
+   every constant still comes from the token file:
+
+   - Table and metric-card fill, border, radius, and padding:
+     `surfaces.card`.
+   - Header and label type: `typography.roles.node_label`; body cells:
+     `typography.roles.body`; axis ticks and legends:
+     `typography.roles.axis`; captions and source notes:
+     `typography.roles.caption`. Never below the size a role states.
+   - Series colours: `chart.palette`, in order, so the same series index
+     is the same colour on every slide of the deck.
+   - Gridline and axis stroke weights and dash patterns: `connectors.*`.
+   - Content stays inside `canvas.safe_area`; positions snap to
+     `canvas.grid`.
+   - Semantic colours come from `color.roles` by name. A raw hex value
+     not present in the token set is a defect.
+
+   A module whose `style_tokens_ref` cannot be resolved is a blocker. Do
+   not fall back to built-in defaults.
+
+4c. **Declare what you drew.** For the `data` route the renderer emits
+   these markers already; for `[V:NATIVE]` you author them. The
+   visual-style linter reads them, and an element without them is
+   *skipped* rather than flagged, so an unmarked chart passes every rule
+   by never being examined.
+
+   - Every `<text>`: `data-style-role="<typography role>"` — the same
+     role you took the size from. An axis tick labelled at `body` size is
+     a finding; an unmarked one is invisible.
+   - Every legend swatch, bar, wedge, and point:
+     `data-style-role="chart.<series>"`. A `chart.*` or `mark.*` role
+     also exempts the element from the layout grid, because a data mark
+     is positioned by its value, not by the grid.
+   - Every card or grouped mark that reads as one thing:
+     `<g data-node-id="<stable id>">`. Node ids are what let the linter
+     tell "these two cards are too close" from "this label is inside its
+     own card".
+   - Any leader line or callout arrow: `data-from="<node id>"
+     `data-to="<node id>"`, plus `marker-end` for its arrowhead. Without
+     declared endpoints a drifted line is indistinguishable from a
+     deliberate one and the rule cannot fire.
+   - Anything that runs past `canvas.safe_area` on purpose, such as a
+     full-bleed background band: `data-bleed="true"`. Without it the
+     safe-area rule reports it on every slide, and the rule gets trained
+     away as noise.
+
+   A chart that resolves its tokens correctly but declares none of this
+   is invisible to every check downstream of it.
+
 5. **Author:** Create or modify a reusable source; resolve reuse, modification, or derivation identity before rendering.
 6. **Render:** Render the module to pixels. For `data` route ([V:DATA]), use the existing `[A] Python renderer` — `generate_slides.py` — with `slide_data.json` following the schema documented in `SKILL.md` § "Generate slides" § "[A] Python renderer". `generate_slides.py` automatically wraps table/bar_chart/line_chart/pie_chart/timeline output in the `data-pptx-role` marker required by `svg_to_pptx/converter.py` — no extra action needed from you for this route. For chart types not supported by the Python renderer, use `[V:NATIVE]` SVG (editable SVG shapes and connectors); in that case you MUST hand-author the same `data-pptx-role="table"`/`"chart"` marker (with `data-pptx-source` and `data-pptx-bbox`) around any tabular or chart content yourself — a hand-drawn grid of rects or bars with no marker is a hard blocker enforced by `validate_native_objects.py`, not a style choice.
 7. **Review:** Inspect the rendered pixels with model vision, revise the source if needed, and repeat render/vision until the visual review passes.

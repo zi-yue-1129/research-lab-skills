@@ -29,6 +29,71 @@ Run the full mandatory visual-authoring gate exactly as defined in this skill's 
 2. **Discover:** Search project `manifest.yaml` files by purpose, diagram type, and semantic region before rendering, to find any existing architecture/flow assets that might be reused or modified.
 3. **Classify:** Select exactly one route: `native` (editable SVG shapes and connectors) is the primary default for architecture and flow diagrams; use Mermaid as an optional alternative only when conversion preserves editability (see reference below).
 4. **Reference:** Load only the relevant references for the selected route from this skill's `references/` directory.
+
+4b. **Resolve tokens:** Load the design-token file named by your
+   ModuleSpec's `style_tokens_ref` and derive every visual constant from
+   it. Validate it first:
+
+   ```bash
+   VDT="$(find ~/.claude -path "*/report-slides/scripts/validate_design_tokens.py" | head -1)"
+   python3 "$VDT" --tokens <style_tokens_ref>
+   ```
+
+   The file conforms to `references/design-tokens.schema.json`; the
+   shipped default is `references/tokens/default.tokens.yaml`.
+
+   You MUST NOT invent a colour, radius, stroke weight, gap, or font
+   size. Every one comes from the token file:
+
+   - Node fill, border, radius, and padding: `surfaces.node`.
+   - Node label type: `typography.roles.node_label` — never below its
+     size.
+   - Connector width, arrowhead style and size, dash pattern:
+     `connectors.*`. Draw arrowheads with `marker-end`, never as a
+     separate polygon: a hand-drawn arrow polygon detaches from its
+     connector on export and is a hard finding.
+   - Minimum gap between nodes: `spacing.node_gap_min`. Minimum
+     clearance between a connector and an unrelated node:
+     `spacing.connector_clearance_min`.
+   - Content stays inside `canvas.safe_area`; positions snap to
+     `canvas.grid`.
+   - Colours come from `color.roles` by name. A raw hex value not present
+     in the token set is a defect.
+
+   A module whose `style_tokens_ref` cannot be resolved is a blocker. Do
+   not fall back to built-in defaults.
+
+4c. **Declare what you drew.** Every element carries the marker that says
+   which token decision it realises. These are not annotations for a
+   human reader: the visual-style linter reads them, and an element
+   without them is *skipped* rather than flagged, so an unmarked diagram
+   passes every rule by never being examined.
+
+   - Every `<text>`: `data-style-role="<typography role>"` — the same
+     role you took the size from.
+   - Every node's group: `<g data-node-id="<stable id>">`, and the
+     node's own shape inside it. Node ids are what let the linter tell
+     "these two boxes are too close" from "this label is inside its own
+     box".
+   - Every shape drawn from a surface or colour role:
+     `data-style-role="<role>"`, for example `node.primary`, `divider`,
+     or `chart.bar`. A `chart.*` or `mark.*` role also exempts the
+     element from the layout grid, because a data mark is positioned by
+     its value.
+   - Every connector: `data-from="<node id>" data-to="<node id>"`, plus
+     `marker-end` for its arrowhead. The declared endpoints are what make
+     a drifted connector falsifiable — without them, an endpoint that has
+     come adrift is indistinguishable from one placed deliberately, and
+     the rule cannot fire. A `<line>` with none of these is read as a
+     plain rule, not a connector, and is not checked for attachment.
+   - Anything that runs past `canvas.safe_area` on purpose, such as a
+     full-bleed background: `data-bleed="true"`. Without it the safe-area
+     rule reports it on every slide, and the rule gets trained away as
+     noise.
+
+   A diagram that resolves its tokens correctly but declares none of this
+   is invisible to every check downstream of it.
+
 5. **Author:** Create or modify a reusable source; resolve reuse, modification, or derivation identity before rendering.
 6. **Render:** Render the module to pixels. For `native` route ([V:NATIVE]), author SVG directly with editable shapes and connector elements. **Every semantic node — a background shape plus its icon and label, a boundary group, any cluster that represents one thing in the diagram — MUST be wrapped in `<g data-pptx-role="group" data-node-id="<stable-id>">` so `svg_to_pptx/converter.py` materializes it as one native PPTX Group shape instead of leaving its parts as disconnected shapes. This is a hard requirement enforced by `validate_native_objects.py` (see "Before Returning"), not a style choice.** For Mermaid (optional, [B]): use the Mermaid rendering gate — check for `mmdc` availability, convert the `.mmd` source to SVG, and verify the output is fully editable; if `mmdc` is unavailable or conversion loses editability, fall back to native SVG and disclose the editability loss in the manifest. Mermaid-sourced SVG cannot carry `data-pptx-role` markers, so a module rendered via Mermaid is exempt from the grouping requirement but must record `pptx_construct: svg_shapes` in its manifest.
 7. **Review:** Inspect the rendered pixels with model vision, revise the source if needed, and repeat render/vision until the visual review passes.

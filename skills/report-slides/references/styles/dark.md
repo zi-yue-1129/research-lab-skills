@@ -11,7 +11,6 @@ positive: "#34d399"
 warn: "#fbbf24"
 danger: "#f87171"
 font: "'Helvetica Neue', Arial, sans-serif"
-top_bar_h: 6
 ---
 
 Best for: conference presentations in dim rooms, or for a modern high-contrast look.

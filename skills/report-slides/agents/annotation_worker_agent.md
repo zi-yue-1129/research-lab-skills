@@ -31,6 +31,75 @@ Run the full mandatory visual-authoring gate exactly as defined in this skill's 
 2. **Discover:** Search project `manifest.yaml` files by purpose, annotation type, and semantic region before authoring, to find any existing annotation assets that might be reused or modified.
 3. **Classify:** Select exactly one route: `hybrid` ([V:HYBRID]) is the default for annotation modules—an editable SVG overlay composed onto an existing raster base.
 4. **Reference:** Load only the relevant references for the hybrid route from this skill's `references/` directory.
+
+4b. **Resolve tokens:** Load the design-token file named by your
+   ModuleSpec's `style_tokens_ref` and derive every visual constant of
+   the overlay from it. Validate it first:
+
+   ```bash
+   VDT="$(find ~/.claude -path "*/report-slides/scripts/validate_design_tokens.py" | head -1)"
+   python3 "$VDT" --tokens <style_tokens_ref>
+   ```
+
+   The file conforms to `references/design-tokens.schema.json`; the
+   shipped default is `references/tokens/default.tokens.yaml`.
+
+   The overlay is the layer a reader treats as the deck speaking, so it
+   is the layer where an improvised radius or type size reads loudest.
+   You MUST NOT invent a colour, radius, stroke weight, gap, or font
+   size:
+
+   - Callout box fill, border, radius, and padding: `surfaces.callout`.
+   - Callout and label type: `typography.roles.node_label`; evidence and
+     source notes: `typography.roles.caption` or
+     `typography.roles.footnote`. Never below the size a role states —
+     an overlay label is the smallest type on the slide and the first to
+     become unreadable at presentation scale.
+   - Leader line width, arrowhead style and size, dash pattern:
+     `connectors.*`. Draw arrowheads with `marker-end`, never as a
+     separate polygon: a hand-drawn arrow polygon detaches from its line
+     on export and is a hard finding.
+   - Minimum gap between callouts: `spacing.node_gap_min`. Minimum
+     clearance between a leader line and an unrelated callout:
+     `spacing.connector_clearance_min`.
+   - The overlay stays inside `canvas.safe_area` and inside the base
+     module's bounds; positions snap to `canvas.grid`.
+   - Colours come from `color.roles` by name. A raw hex value not present
+     in the token set is a defect.
+
+   A module whose `style_tokens_ref` cannot be resolved is a blocker. Do
+   not fall back to built-in defaults.
+
+4c. **Declare what you drew.** Every overlay element carries the marker
+   that says which token decision it realises. The visual-style linter
+   reads them, and an element without them is *skipped* rather than
+   flagged, so an unmarked overlay passes every rule by never being
+   examined.
+
+   - Every `<text>`: `data-style-role="<typography role>"` — the same
+     role you took the size from.
+   - Every callout that reads as one thing — box, label, and marker:
+     `<g data-node-id="<stable id>">`. Node ids are what let the linter
+     tell "these two callouts overlap" from "this label is inside its own
+     box".
+   - Every shape drawn from a surface or colour role:
+     `data-style-role="<role>"`, for example `callout.warning` or
+     `divider`. A `chart.*` or `mark.*` role also exempts the element
+     from the layout grid, because a data mark is positioned by its
+     value.
+   - Every leader line: `data-from="<node id>" data-to="<node id>"`, plus
+     `marker-end` for its arrowhead. The declared endpoints are what make
+     a drifted leader falsifiable — an annotation pointing two
+     millimetres away from its feature is the single most common
+     annotation defect, and without endpoints the rule cannot fire.
+   - Anything that runs past `canvas.safe_area` on purpose, such as a
+     full-bleed tint over the base raster: `data-bleed="true"`. Without
+     it the safe-area rule reports it on every slide, and the rule gets
+     trained away as noise.
+
+   An overlay that resolves its tokens correctly but declares none of
+   this is invisible to every check downstream of it.
+
 5. **Author:** Create or modify a reusable SVG overlay source; resolve reuse, modification, or derivation identity before composition. For [V:HYBRID], author an SVG overlay in the same `1200x675` coordinate system as the raster base, placing factual labels, legends, callout boxes, arrows, and evidence markers without baking any text or values into the base raster pixels.
 6. **Compose:** Composite the SVG overlay with the base module's raster asset. For [V:HYBRID], the overlay remains editable SVG while the base remains raster.
 7. **Review:** Inspect the composed module with model vision, verifying label placement accuracy and bbox containment within the base module's bounds. Revise the SVG if needed, and repeat composition/vision until the visual review passes.
