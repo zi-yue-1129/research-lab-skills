@@ -1,10 +1,12 @@
 """Tests for strict Complex Visual Specification and Worker Assignment validation."""
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
 
 from validate_visual_module import (
@@ -14,6 +16,20 @@ from validate_visual_module import (
 )
 
 SCRIPT = Path(__file__).resolve().parent.parent / "validate_visual_module.py"
+_DEFAULT_TOKENS = (
+    Path(__file__).resolve().parents[2] / "references" / "tokens" / "default.tokens.yaml"
+)
+
+
+@pytest.fixture(autouse=True)
+def _tokens_beside_spec(tmp_path: Path) -> None:
+    """Place the default token file next to every spec fixture.
+
+    `style_tokens_ref` is now a required, resolvable path rather than an
+    optional one, so a spec written into `tmp_path` needs the token file it
+    names to exist alongside it.
+    """
+    shutil.copy(_DEFAULT_TOKENS, tmp_path / "deck.tokens.yaml")
 
 _MODULE_DEFAULTS = {
     "semantic_responsibility": "Represent one semantically independent visual module",
@@ -21,7 +37,7 @@ _MODULE_DEFAULTS = {
     "output_anchors": [],
     "dependencies": [],
     "dimensions": {"width": 320, "height": 180},
-    "style_tokens_ref": None,
+    "style_tokens_ref": "deck.tokens.yaml",
     "editability": "native",
     "annotation_requirements": [],
     "reuse_of": None,
@@ -84,7 +100,14 @@ def test_valid_spec_passes(tmp_path: Path) -> None:
     result = _run("--spec", str(spec_path), "--json")
 
     assert result.returncode == 0, result.stdout
-    assert json.loads(result.stdout) == {"valid": True, "errors": []}
+    payload = json.loads(result.stdout)
+    assert payload["valid"] is True
+    assert payload["errors"] == []
+    # Spec validation now also reports which token set each module resolved to,
+    # so the caller writing the module spec can persist it.
+    assert set(payload["token_digests"]) == {
+        module["id"] for module in _VALID_SPEC["modules"]
+    }
 
 
 def test_spec_missing_modules_fails(tmp_path: Path) -> None:

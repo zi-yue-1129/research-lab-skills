@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -26,6 +27,10 @@ from presentation_gates import (
 from presentation_state import create_deck, create_slide, create_visual_module, load_visual_modules, record_review, set_deck_status, set_module_status
 from presentation_events import create_assignment_record, load_events, load_plans, append_event
 from presentation_events import register_plan_record
+
+_DEFAULT_TOKENS = (
+    Path(__file__).resolve().parents[2] / "references" / "tokens" / "default.tokens.yaml"
+)
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "presentation_state.py"
@@ -305,12 +310,15 @@ def _approved_module_project(tmp_path: Path) -> tuple[Path, str, str, dict, dict
             "id": "module-a", "purpose": "Show evidence", "semantic_responsibility": "Evidence",
             "route": "native", "module_type": "architecture", "input_anchors": [],
             "output_anchors": [], "dependencies": [], "dimensions": {"width": 4, "height": 3},
-            "style_tokens_ref": None, "editability": "native", "annotation_requirements": [], "reuse_of": None,
+            "style_tokens_ref": "deck.tokens.yaml", "editability": "native", "annotation_requirements": [], "reuse_of": None,
         }],
         "connections": [], "layout": {"direction": "TB", "hierarchy": ["module-a"]},
     }
     spec_path = project / "spec.yaml"
     spec_path.write_text(yaml.safe_dump(spec), encoding="utf-8")
+    # `style_tokens_ref` must now resolve to a valid token file beside the spec:
+    # an unresolved style reference is indistinguishable from an applied one.
+    shutil.copy(_DEFAULT_TOKENS, project / "deck.tokens.yaml")
     module_state = project / ".research/presentations/state/visual_modules.yaml"
     modules = yaml.safe_load(module_state.read_text(encoding="utf-8"))
     modules["visual_modules"][module["id"]].update({"visual_spec_path": "spec.yaml", "visual_spec_sha256": contract_sha256(spec)})

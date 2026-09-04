@@ -27,7 +27,11 @@ from presentation_evidence_gates import (
 )
 from presentation_module_lineage import resolve_module_production_lineage
 from validate_deck_plan import validate_deck_approval, validate_deck_plan
-from validate_visual_module import validate_complex_visual_spec, validate_worker_assignment
+from validate_visual_module import (
+    validate_complex_visual_spec,
+    validate_style_tokens_resolvable,
+    validate_worker_assignment,
+)
 
 _APPROVED_STATUSES = frozenset(
     {"approved", "producing", "draft_review", "revising", "validating", "completed"}
@@ -411,6 +415,12 @@ def assert_module_assignable(project_root: Path, module_id: str, assignment: dic
             try:
                 spec_document = load_contract(project_root / spec_path)
                 blockers.extend({"reason": error} for error in validate_complex_visual_spec(spec_document))
+                blockers.extend(
+                    {"reason": error}
+                    for error in validate_style_tokens_resolvable(
+                        spec_document, (project_root / spec_path).parent
+                    )
+                )
                 spec_digest = contract_sha256(spec_document)
                 persisted_spec_digest = module.get("visual_spec_sha256", module.get("spec_sha256"))
                 if not isinstance(persisted_spec_digest, str):

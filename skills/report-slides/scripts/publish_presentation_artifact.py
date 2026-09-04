@@ -47,7 +47,11 @@ from presentation_gates import (
 from presentation_workflow import _workflow_lock
 from presentation_state import load_decks, load_slides, load_visual_modules
 from validate_slide_spec import validate_slide_spec
-from validate_visual_module import validate_complex_visual_spec, validate_worker_assignment
+from validate_visual_module import (
+    validate_complex_visual_spec,
+    validate_style_tokens_resolvable,
+    validate_worker_assignment,
+)
 
 _MODULE_ARTIFACT_KINDS = MODULE_ARTIFACT_KINDS
 _SLIDE_ARTIFACT_KINDS = SLIDE_ARTIFACT_KINDS
@@ -415,6 +419,10 @@ def _validate_module_context(
     assignment = _current_assignment(project_root, module, deck_id)
     spec_document, spec_path = _module_spec_document(project_root, module, contract, contract_path, deck_id)
     spec_errors = validate_complex_visual_spec(spec_document)
+    if spec_path is not None:
+        spec_errors.extend(
+            validate_style_tokens_resolvable(spec_document, spec_path.parent)
+        )
     if spec_errors:
         _fail(deck_id, [{"reason": error} for error in spec_errors])
     _validate_protected_fields(spec_document, deck_id)

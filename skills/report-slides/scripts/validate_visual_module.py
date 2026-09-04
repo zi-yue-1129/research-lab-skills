@@ -15,6 +15,7 @@ from typing import Any
 
 import yaml
 
+from design_tokens import DesignTokens, TokenError
 from presentation_contracts import (
     load_contract,
     validate_acyclic_dependencies,
@@ -285,13 +286,28 @@ def _validate_dimensions(
 def _validate_style_tokens_ref(
     module: dict[str, Any], prefix: str, errors: list[str]
 ) -> None:
-    """Require an explicit style-token path or null reference."""
+    """Require a non-empty design-token path.
+
+    `null` is no longer accepted. An unresolved style reference is
+    indistinguishable from a correctly applied style at render time, so the
+    reference must always name a token file. Whether that file exists and
+    validates is checked separately by `validate_style_tokens_resolvable`,
+    which needs the document's directory.
+
+    Args:
+        module: Parsed ModuleSpec mapping.
+        prefix: Error-message prefix identifying the module position.
+        errors: Accumulator appended to in place.
+    """
     if "style_tokens_ref" not in module:
-        errors.append(f"{prefix}.style_tokens_ref: required string or null")
+        errors.append(f"{prefix}.style_tokens_ref: required non-empty string")
         return
     value = module["style_tokens_ref"]
-    if value is not None and (not isinstance(value, str) or not value.strip()):
-        errors.append(f"{prefix}.style_tokens_ref: must be a non-empty string or null")
+    if not isinstance(value, str) or not value.strip():
+        errors.append(
+            f"{prefix}.style_tokens_ref: must be a non-empty string "
+            f"naming a design-token file, got {value!r}"
+        )
 
 
 def _validate_nullable_text(
@@ -331,6 +347,116 @@ def _is_rfc3339_z(value: str) -> bool:
     return True
 
 
+def _resolve_token_ref(doc_or_module: Any, base_dir: Path) -> Path:
+    """Resolve a spec's style_tokens_ref against its own directory.
+
+    Args:
+        doc_or_module: A ModuleSpec mapping carrying `style_tokens_ref`.
+        base_dir: Directory the specification was loaded from.
+
+    Returns:
+        The resolved token-file path.
+
+    Raises:
+        TokenError: If the reference is absent, empty, or escapes `base_dir`.
+    """
+    ref = doc_or_module.get("style_tokens_ref") if isinstance(doc_or_module, dict) else None
+    if not isinstance(ref, str) or not ref.strip():
+        raise TokenError(f"style_tokens_ref: required non-empty string, got {ref!r}")
+    resolved_base = base_dir.resolve()
+    candidate = (resolved_base / ref.strip()).resolve()
+    try:
+        candidate.relative_to(resolved_base)
+    except ValueError as exc:
+        raise TokenError(
+            f"style_tokens_ref: {ref!r} resolves outside the specification directory"
+        ) from exc
+    return candidate
+
+
+def validate_style_tokens_resolvable(doc: Any, base_dir: Path) -> list[str]:
+    """Check that every module's style_tokens_ref resolves to valid tokens.
+
+    Args:
+        doc: Parsed Complex Visual Specification mapping.
+        base_dir: Directory the specification was loaded from; references
+            resolve relative to it and may not escape it.
+
+    Returns:
+        Deterministically ordered human-readable validation errors.
+    """
+    from validate_design_tokens import validate_token_file
+
+    errors: list[str] = []
+    modules = doc.get("modules") if isinstance(doc, dict) else None
+    if not isinstance(modules, list):
+        return errors
+    resolved_base = base_dir.resolve()
+    for index, module in enumerate(modules):
+        if not isinstance(module, dict):
+            continue
+        ref = module.get("style_tokens_ref")
+        if not isinstance(ref, str) or not ref.strip():
+            continue  # already reported by _validate_style_tokens_ref
+        prefix = f"modules[{index}].style_tokens_ref"
+        candidate = (resolved_base / ref.strip()).resolve()
+        try:
+            candidate.relative_to(resolved_base)
+        except ValueError:
+            errors.append(
+                f"{prefix}: {ref!r} resolves outside the specification directory"
+            )
+            continue
+        for error in validate_token_file(candidate):
+            errors.append(f"{prefix}: {error}")
+    return errors
+
+
+def resolved_token_digest(doc: Any, base_dir: Path) -> str:
+    """Return the digest of the token set a module spec resolves to.
+
+    Args:
+        doc: A module or complex-visual specification mapping.
+        base_dir: Directory the spec's relative paths resolve against.
+
+    Returns:
+        The `DesignTokens.digest` of the resolved file.
+
+    Raises:
+        TokenError: If the reference does not resolve or does not validate.
+            Callers must not substitute a default: a module validated against
+            the wrong token set is worse than one validated against none, since
+            the record then asserts something false.
+    """
+    return DesignTokens.load(_resolve_token_ref(doc, base_dir)).digest
+
+
+def _module_token_digests(doc: Any, base_dir: Path) -> dict[str, str]:
+    """Map each module id to the digest of the token set it resolves to.
+
+    Args:
+        doc: Parsed Complex Visual Specification mapping.
+        base_dir: Directory the specification was loaded from.
+
+    Returns:
+        Module id to token digest. Callers reach this only after
+        `validate_style_tokens_resolvable` reported no errors, so every
+        reference here is known to resolve.
+    """
+    digests: dict[str, str] = {}
+    modules = doc.get("modules") if isinstance(doc, dict) else None
+    if not isinstance(modules, list):
+        return digests
+    for index, module in enumerate(modules):
+        if not isinstance(module, dict):
+            continue
+        # The Complex Visual Specification names the field `id`; the flatter
+        # ModuleSpec mapping used by callers names it `module_id`.
+        key = str(module.get("module_id") or module.get("id") or index)
+        digests[key] = resolved_token_digest(module, base_dir)
+    return digests
+
+
 def main() -> None:
     """Run Complex Visual Specification or Worker Assignment validation."""
     parser = argparse.ArgumentParser(
@@ -343,13 +469,25 @@ def main() -> None:
     args = parser.parse_args()
 
     target = args.spec or args.assignment
+    token_digests: dict[str, str] = {}
     try:
         document = _load_document(target)
-        errors = validate_complex_visual_spec(document) if args.spec else validate_worker_assignment(document)
+        if args.spec:
+            errors = validate_complex_visual_spec(document)
+            errors.extend(validate_style_tokens_resolvable(document, target.parent))
+            if not errors:
+                token_digests = _module_token_digests(document, target.parent)
+        else:
+            errors = validate_worker_assignment(document)
     except (OSError, ValueError, yaml.YAMLError, json.JSONDecodeError) as exc:
         errors = [f"failed to read/parse {target}: {exc}"]
 
+    # `token_digests` names the token set each module was held to, so a caller
+    # persisting the module spec can record which tokens it validated against.
+    # "Resolved" alone only says some file was fine at some past moment.
     result = {"valid": not errors, "errors": errors}
+    if args.spec:
+        result["token_digests"] = token_digests
     print(json.dumps(result) if args.json else json.dumps(result, indent=2))
     sys.exit(0 if not errors else 1)
 

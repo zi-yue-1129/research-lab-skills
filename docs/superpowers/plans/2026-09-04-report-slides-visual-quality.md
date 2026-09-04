@@ -136,7 +136,7 @@ packages, so pytest already walks up to `scripts/`. The gap is only
   task in this plan and in plan 2 depends on it, and none of them may reintroduce
   a `sys.path` preamble in a test file.
 
-- [ ] **Step 1: Observe the failure**
+- [x] **Step 1: Observe the failure**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_presentation_gates.py -q`
 
@@ -152,13 +152,13 @@ ERROR skills/report-slides/scripts/tests/test_presentation_gates.py
 This is an existing defect, not one this plan introduces. It is listed as Task 0
 because 27 later steps in the two plans cannot be run until it is fixed.
 
-- [ ] **Step 2: Record the collection baseline**
+- [x] **Step 2: Record the collection baseline**
 
 Run: `timeout 900 python3 -m pytest --collect-only -q | tail -1`
 Expected: `4008 tests collected` (or higher on a later checkout). Write the
 number down; Step 4 asserts it does not move.
 
-- [ ] **Step 3: Add the conftest**
+- [x] **Step 3: Add the conftest**
 
 Create `skills/report-slides/scripts/conftest.py`:
 
@@ -189,7 +189,7 @@ The `if` guard matters: pytest imports a conftest once per session, but a
 developer running two directories in one invocation should not accumulate
 duplicate `sys.path` entries.
 
-- [ ] **Step 4: Run the same file and the whole suite**
+- [x] **Step 4: Run the same file and the whole suite**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_presentation_gates.py -q`
 Expected: PASS — `18 passed`.
@@ -199,7 +199,7 @@ Expected: the same count as Step 2 — `4008 tests collected`. A conftest that
 changes `sys.path` can shadow a module of the same name elsewhere in the tree;
 an unchanged count is the check that it has not.
 
-- [ ] **Step 5: Bring `skills/` into the CI gate**
+- [x] **Step 5: Bring `skills/` into the CI gate**
 
 `.github/workflows/pytest.yml` runs `pytest scripts/ tests/` and its `paths:`
 filters never mention `skills/**`. The 1506 tests under
@@ -214,7 +214,7 @@ change the run step to:
         run: pytest scripts/ tests/ skills/
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add skills/report-slides/scripts/conftest.py .github/workflows/pytest.yml
@@ -236,7 +236,7 @@ git commit -m "test: anchor sys.path for report-slides scripts and gate skills/ 
   CLI, Tasks 6–7 and 13–17 read roles from it. Schema `$id` is
   `https://claude-research-skills/report-slides/design-tokens/v1`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `skills/report-slides/scripts/tests/test_design_tokens.py`:
 
@@ -297,12 +297,12 @@ def test_schema_rejects_typography_below_floor() -> None:
         jsonschema.Draft202012Validator(schema).validate(tokens)
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_design_tokens.py -v`
 Expected: FAIL — `FileNotFoundError` for `design-tokens.schema.json`.
 
-- [ ] **Step 3: Create the schema**
+- [x] **Step 3: Create the schema**
 
 Create `skills/report-slides/references/design-tokens.schema.json`:
 
@@ -532,7 +532,7 @@ Create `skills/report-slides/references/design-tokens.schema.json`:
 > declared draft. Either way, `test_schema_rejects_typography_below_floor` is the
 > check that proves the floor is live; do not remove it.
 
-- [ ] **Step 4: Create the default token file**
+- [x] **Step 4: Create the default token file**
 
 Create `skills/report-slides/references/tokens/default.tokens.yaml`.
 
@@ -625,12 +625,12 @@ density:
   max_bullets: 6
 ```
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_design_tokens.py -v`
 Expected: PASS — 10 passed (3 plain tests plus one parametrised 7 ways).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add skills/report-slides/references/design-tokens.schema.json \
@@ -662,7 +662,7 @@ git commit -m "feat(report-slides): add validated design-token contract"
     `color(role: str) -> str`, `is_decorative(role: str) -> bool`,
     `surface(name: str) -> Mapping[str, Any]`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `skills/report-slides/scripts/tests/test_design_tokens.py`:
 
@@ -787,12 +787,12 @@ def test_unknown_role_raises() -> None:
         tokens.color("accent")
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_design_tokens.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'design_tokens'` at collection.
 
-- [ ] **Step 3: Write the loader**
+- [x] **Step 3: Write the loader**
 
 Create `skills/report-slides/scripts/design_tokens.py`:
 
@@ -1077,12 +1077,12 @@ def semantic_errors(data: Mapping[str, Any]) -> List[str]:
 
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_design_tokens.py -v`
 Expected: PASS — 20 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add skills/report-slides/scripts/design_tokens.py \
@@ -1107,7 +1107,7 @@ git commit -m "feat(report-slides): add design-token loader with digest and hard
 The CLI mirrors the existing validator convention in this skill: a `{"valid":
 bool, "errors": [...]}` JSON payload on stdout and a non-zero exit on failure.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `skills/report-slides/scripts/tests/test_validate_design_tokens.py`:
 
@@ -1164,12 +1164,12 @@ def test_validate_token_file_returns_errors(tmp_path: Path) -> None:
     assert "nope.yaml" in errors[0]
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_validate_design_tokens.py -v`
 Expected: FAIL — the subprocess exits 2 with `can't open file ... validate_design_tokens.py`, and the third test fails on `ModuleNotFoundError`.
 
-- [ ] **Step 3: Write the CLI**
+- [x] **Step 3: Write the CLI**
 
 Create `skills/report-slides/scripts/validate_design_tokens.py`:
 
@@ -1221,12 +1221,12 @@ if __name__ == "__main__":
     main()
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_validate_design_tokens.py -v`
 Expected: PASS — 3 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add skills/report-slides/scripts/validate_design_tokens.py \
