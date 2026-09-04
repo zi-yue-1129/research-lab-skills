@@ -179,3 +179,193 @@ def test_conclusion_blocks_use_roles() -> None:
     assert 26 in sizes
     assert 21 in sizes
     assert 13 not in sizes
+
+
+def test_chart_area_clears_the_title_rule() -> None:
+    """The plot top sits below the frame rule, not at the old y=100."""
+    left, right, top, bottom = gs.chart_area()
+    rule_y = gs.S["safe"]["top"] + gs.t_size("slide_title") + 16
+    assert top > rule_y
+    assert bottom < gs.S["h"] - gs.S["safe"]["bottom"]
+    assert right <= gs.S["w"] - gs.S["safe"]["right"]
+
+
+def test_chart_area_left_margin_fits_axis_labels() -> None:
+    """The left margin clears the widest tick label at the axis role."""
+    left, _, _, _ = gs.chart_area()
+    assert left >= gs.measured_width("100%", "axis") + gs.S["safe"]["left"] + 8
+
+
+def test_bar_chart_axis_labels_are_at_least_sixteen() -> None:
+    """Bar chart axis and category labels use the axis role."""
+    markup = gs.render_bar_chart(
+        {"index": 1, "title": "Throughput",
+         "categories": ["1k", "4k", "8k", "16k"],
+         "series": [{"label": "sparse", "values": [10, 40, 70, 95]},
+                    {"label": "dense", "values": [30, 45, 50, 52]}],
+         "y_max": 100, "note": "higher is better"},
+        {"footer": "3/8"},
+    )
+    sizes = _sizes(markup)
+    assert 16 in sizes
+    assert 10 not in sizes
+    assert min(sizes) >= 12
+
+
+def test_line_chart_axis_labels_are_at_least_sixteen() -> None:
+    """Line chart axis labels use the axis role."""
+    markup = gs.render_line_chart(
+        {"index": 2, "title": "Loss",
+         "categories": ["e1", "e2", "e3"],
+         "series": [{"label": "train", "values": [90, 50, 30]}],
+         "y_max": 100},
+        {},
+    )
+    sizes = _sizes(markup)
+    assert 16 in sizes
+    assert 10 not in sizes
+    assert min(sizes) >= 12
+
+
+def test_pie_chart_legend_is_at_least_sixteen() -> None:
+    """Pie chart legend labels use the axis role."""
+    markup = gs.render_pie_chart(
+        {"index": 3, "title": "Budget",
+         "categories": ["compute", "storage", "network"],
+         "values": [60, 25, 15]},
+        {},
+    )
+    sizes = _sizes(markup)
+    assert 16 in sizes
+    assert 13 not in sizes
+    assert min(sizes) >= 12
+
+
+def test_bar_chart_legend_entries_do_not_collide() -> None:
+    """Legend entries are spaced by measured label width, not a fixed 230.
+
+    The swatch dimensions come from the axis role rather than the plan's
+    literal 16x12: the swatch scales with the label it sits beside, so a
+    hard-coded size in the pattern would match nothing once the role changed.
+    """
+    markup = gs.render_bar_chart(
+        {"index": 4, "title": "Comparison",
+         "categories": ["a", "b"],
+         "series": [
+             {"label": "an extremely long series label that overruns", "values": [1, 2]},
+             {"label": "second", "values": [3, 4]},
+         ],
+         "y_max": 10},
+        {},
+    )
+    swatch = gs.t_size("axis") * 0.75
+    xs = sorted(
+        float(m) for m in re.findall(
+            rf'<rect x="([0-9.]+)" y="[0-9.]+" '
+            rf'width="{swatch:.1f}" height="{swatch:.1f}"',
+            markup)
+    )
+    assert len(xs) == 2
+    first_label = "an extremely long series label that overruns"
+    assert xs[1] - xs[0] >= gs.measured_width(first_label, "axis") + 22
+
+
+def test_bar_chart_note_sits_below_the_legend() -> None:
+    """The chart note has its own row, so it cannot collide with a legend.
+
+    The note used to share the legend's baseline at CB+51 and was right
+    anchored, so a wide last legend entry ran straight into it.
+    """
+    markup = gs.render_bar_chart(
+        {"index": 5, "title": "Comparison",
+         "categories": ["a"],
+         "series": [{"label": "one", "values": [1]}],
+         "y_max": 10, "note": "higher is better"},
+        {},
+    )
+    _, _, _, bottom = gs.chart_area()
+    legend_y = bottom + gs.t_size("axis") * gs.t_lh("axis") + 16
+    note_y = float(
+        re.search(r'y="([0-9.]+)"[^>]*data-style-role="footnote"[^>]*>higher',
+                  markup).group(1)
+    )
+    assert note_y > legend_y
+    assert note_y <= gs.S["h"] - gs.S["safe"]["bottom"]
+
+
+_TWO_SERIES = {
+    "index": 6, "title": "Comparison",
+    "categories": ["1k", "4k"],
+    "series": [
+        {"label": "sparse", "values": [10, 40]},
+        {"label": "dense", "values": [30, 45]},
+    ],
+    "y_max": 100,
+}
+
+
+def test_bar_chart_series_get_distinct_colours() -> None:
+    """Two series with no explicit colour must not render identically.
+
+    Every series fell back to the same single colour, so a two-series bar
+    chart drew both groups and both legend swatches in one ink. The chart was
+    then unreadable, and the legend actively misleading -- it claimed to
+    distinguish two things it rendered the same. The token file ships a chart
+    palette precisely so this does not happen.
+    """
+    markup = gs.render_bar_chart(_TWO_SERIES, {})
+    # Only the legend swatches: matching every <rect> would also catch the
+    # frame's white background and pass for the wrong reason.
+    swatch = gs.t_size("axis") * 0.75
+    fills = re.findall(
+        rf'<rect x="[0-9.]+" y="[0-9.]+" width="{swatch:.1f}" '
+        rf'height="{swatch:.1f}" fill="(#[0-9a-fA-F]{{6}})"',
+        markup,
+    )
+    assert len(fills) == 2
+    assert len(set(fills)) == 2, f"all series share one colour: {set(fills)}"
+
+
+def test_line_chart_series_get_distinct_colours() -> None:
+    """Two line series with no explicit colour must not render identically."""
+    markup = gs.render_line_chart(_TWO_SERIES, {})
+    strokes = re.findall(r'<polyline [^>]*stroke="(#[0-9a-fA-F]{6})"', markup)
+    assert len(strokes) == 2
+    assert len(set(strokes)) == 2, f"both lines share one colour: {set(strokes)}"
+
+
+def test_series_colours_come_from_the_token_palette() -> None:
+    """The colours used are the token palette's, in order."""
+    markup = gs.render_line_chart(_TWO_SERIES, {})
+    strokes = re.findall(r'<polyline [^>]*stroke="(#[0-9a-fA-F]{6})"', markup)
+    assert strokes == gs.S["chart_palette"][:2]
+
+
+def test_an_explicit_series_colour_still_wins() -> None:
+    """A series that names its own colour keeps it."""
+    payload = {**_TWO_SERIES, "series": [
+        {"label": "sparse", "values": [10, 40], "color": "#123456"},
+        {"label": "dense", "values": [30, 45]},
+    ]}
+    markup = gs.render_line_chart(payload, {})
+    strokes = re.findall(r'<polyline [^>]*stroke="(#[0-9a-fA-F]{6})"', markup)
+    assert strokes[0] == "#123456"
+
+
+def test_line_chart_labels_its_series() -> None:
+    """A multi-series line chart must say which line is which.
+
+    `chart_area` reserves a legend row in its bottom budget, but the line
+    renderer never drew one, so two distinguishable lines were still
+    unlabelled -- the reader could see there were two and not which was which.
+    """
+    markup = gs.render_line_chart(_TWO_SERIES, {})
+    swatch = gs.t_size("axis") * 0.75
+    fills = re.findall(
+        rf'<rect x="[0-9.]+" y="[0-9.]+" width="{swatch:.1f}" '
+        rf'height="{swatch:.1f}" fill="(#[0-9a-fA-F]{{6}})"',
+        markup,
+    )
+    assert fills == gs.S["chart_palette"][:2]
+    assert "sparse" in markup
+    assert "dense" in markup

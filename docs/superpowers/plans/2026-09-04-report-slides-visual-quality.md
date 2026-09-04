@@ -2884,7 +2884,7 @@ git commit -m "feat(report-slides): typeset title, bullet, and conclusion slides
 - `CL = 130` must clear the widest y-tick label at 16pt plus an 8-unit gap,
   measured rather than assumed.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `skills/report-slides/scripts/tests/test_generate_slides_typography.py`:
 
@@ -2970,12 +2970,12 @@ def test_bar_chart_legend_entries_do_not_collide() -> None:
     assert xs[1] - xs[0] >= gs.measured_width(first_label, "axis") + 22
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_generate_slides_typography.py -v -k "chart"`
 Expected: FAIL — `AttributeError: module 'generate_slides' has no attribute 'chart_area'`.
 
-- [ ] **Step 3: Replace the fixed chart area with a token-derived one**
+- [x] **Step 3: Replace the fixed chart area with a token-derived one**
 
 Replace lines 97–98 of `skills/report-slides/scripts/generate_slides.py`:
 
@@ -3023,7 +3023,7 @@ Add that line immediately after each renderer's `chart_parts = []`
 (bar: line 230; line chart and pie chart: the equivalent position). Delete the
 module-level constants so no renderer can silently keep the old values.
 
-- [ ] **Step 4: Apply the role mapping and re-space the legend**
+- [x] **Step 4: Apply the role mapping and re-space the legend**
 
 In each of the ten sites in the mapping table above, replace the literal
 `font-size="N"` with `font-size="{t_size(ROLE):g}"` using the role from the table,
@@ -3080,12 +3080,12 @@ line 294) so the declared native-chart bounding box matches the new plot area:
                                  style_keys=("font",)))
 ```
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_generate_slides_typography.py -v`
 Expected: PASS — all tests green.
 
-- [ ] **Step 6: Render and inspect the pixels**
+- [x] **Step 6: Render and inspect the pixels**
 
 ```bash
 timeout 300 python3 -c "
@@ -3125,14 +3125,14 @@ with the note, and no plot element crosses the frame rule. If the legend overflo
 the right edge with many series, wrap it to a second row rather than shrinking the
 axis role.
 
-- [ ] **Step 7: Run the existing suite**
+- [x] **Step 7: Run the existing suite**
 
 Run: `timeout 900 python3 -m pytest skills/report-slides/scripts/tests/ -q`
 Expected: PASS. Native-chart tests asserting the old `bbox=(60, 70, 1080, 500)`
 now see the token-derived box; update those expectations and record in the commit
 message why the old constant was wrong.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add skills/report-slides/scripts/generate_slides.py \

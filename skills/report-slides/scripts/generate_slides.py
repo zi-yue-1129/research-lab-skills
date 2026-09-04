@@ -74,6 +74,7 @@ def apply_tokens(tokens_path: Optional[Path]) -> None:
     S["good"] = _TOKENS.color("positive")
     S["border"] = _TOKENS.color("divider")
     S["blue"] = _TOKENS.raw["chart"]["palette"][0]
+    S["chart_palette"] = list(_TOKENS.raw["chart"]["palette"])
     S["white"] = "#ffffff"
     S["font"] = _TOKENS.font_stack("sans")
     S["font_resolved"] = resolve_font_stack(S["font"])
@@ -211,9 +212,107 @@ def apply_style(style_path: str) -> None:
     print(f"  [style] Applied: {style_path}")
 
 
+def series_color(series: dict, index: int) -> str:
+    """Return the colour for one chart series.
+
+    Args:
+        series: One series mapping from slide_data.json.
+        index: Zero-based position of the series in the chart.
+
+    Returns:
+        The series' own `color` when it names one, otherwise the token chart
+        palette entry for its position.
+
+    Every series used to fall back to a single colour, so a two-series chart
+    drew both in one ink and its legend claimed to distinguish two things it
+    rendered identically. The palette exists in the token file for this.
+    """
+    explicit = series.get("color")
+    if isinstance(explicit, str) and explicit.strip():
+        return explicit
+    palette = S["chart_palette"]
+    return palette[index % len(palette)]
+
+
+def chart_legend(series: list, left: float, bottom: float) -> list:
+    """Render one legend row for a series list.
+
+    Entries advance by the measured width of the label they carry. The bar
+    chart's former fixed pitch of 230 units put every second entry on top of
+    the first whenever a label ran long.
+
+    Args:
+        series: Series mappings from slide_data.json, in chart order.
+        left: Left edge of the plot area; the legend starts here.
+        bottom: Bottom edge of the plot area.
+
+    Returns:
+        SVG markup fragments for the legend, one per swatch and label.
+    """
+    parts: list = []
+    legend_x = left
+    legend_y = bottom + t_size("axis") * t_lh("axis") + 16
+    swatch = t_size("axis") * 0.75
+    for index, one in enumerate(series):
+        color = series_color(one, index)
+        label = str(one.get("label", ""))
+        parts.append(f'<rect x="{legend_x:.1f}" '
+                     f'y="{legend_y - swatch:.1f}" '
+                     f'width="{swatch:.1f}" height="{swatch:.1f}" '
+                     f'fill="{color}"/>')
+        parts.append(f'<text x="{legend_x + swatch + 8:.1f}" '
+                     f'y="{legend_y:.1f}" '
+                     f'font-size="{t_size("axis"):g}" '
+                     f'data-style-role="axis" '
+                     f'fill="{S["body"]}">{esc(label)}</text>')
+        legend_x += swatch + 8 + measured_width(label, "axis") + 32
+    return parts
+
+
+def chart_note(note: str, right: float, bottom: float) -> str:
+    """Render the chart note on its own row below the legend.
+
+    The note used to share the legend's baseline and was right anchored, so a
+    wide last legend entry ran straight into it.
+
+    Args:
+        note: Note text; assumed non-empty.
+        right: Right edge of the plot area, which the note is anchored to.
+        bottom: Bottom edge of the plot area.
+
+    Returns:
+        SVG markup for the note text element.
+    """
+    note_y = (bottom + t_size("axis") * t_lh("axis") + 16
+              + t_size("footnote") * t_lh("footnote") + 12)
+    return (f'<text x="{right}" y="{note_y:.1f}" '
+            f'font-size="{t_size("footnote"):g}" '
+            f'data-style-role="footnote" '
+            f'fill="{S["muted"]}" text-anchor="end">{esc(note)}</text>')
+
+
 # Chart drawing area
-CL, CR, CT, CB = 130, 1100, 100, 520
-CW, CH = CR - CL, CB - CT
+def chart_area() -> tuple:
+    """Compute the plot rectangle from the active tokens.
+
+    The area clears the frame rule at the top, the widest y-tick label on the
+    left, and the category-label plus legend plus note rows at the bottom. The
+    former fixed `130, 1100, 100, 520` was tuned for 10-12 unit chart text and
+    a 20 unit title, both of which changed.
+
+    Returns:
+        `(left, right, top, bottom)` in SVG units.
+    """
+    safe = S["safe"]
+    rule_y = safe["top"] + t_size("slide_title") + 16
+    top = rule_y + 24
+    left = safe["left"] + measured_width("100%", "axis") + 8
+    right = S["w"] - safe["right"]
+    axis_adv = t_size("axis") * t_lh("axis")
+    foot_adv = t_size("footnote") * t_lh("footnote")
+    # category labels, then legend row, then note row
+    bottom = S["h"] - safe["bottom"] - (axis_adv + axis_adv + foot_adv + 24)
+    return left, right, top, bottom
 
 
 # ── Text helpers ──────────────────────────────────────────────────────────────
@@ -507,13 +606,17 @@ def render_bar_chart(sl: dict, meta: dict) -> str:
 
     parts = [frame(title, footer)]
     chart_parts = []
+    CL, CR, CT, CB = chart_area()
+    CW, CH = CR - CL, CB - CT
 
     for i in range(6):
         val = y_max * i / 5
         y   = CB - (val / y_max) * CH
         chart_parts.append(f'<line x1="{CL}" y1="{y:.1f}" x2="{CR}" y2="{y:.1f}" '
-                     f'stroke="{S["border"]}" stroke-width="1"/>')
-        chart_parts.append(f'<text x="{CL - 8}" y="{y + 4:.1f}" font-size="10" '
+                     f'stroke="{S["divider"]}" stroke-width="1"/>')
+        chart_parts.append(f'<text x="{CL - 8}" y="{y + 4:.1f}" '
+                     f'font-size="{t_size("axis"):g}" '
+                     f'data-style-role="axis" '
                      f'fill="{S["muted"]}" text-anchor="end">{val:.0f}%</text>')
 
     chart_parts.append(f'<line x1="{CL}" y1="{CT}" x2="{CL}" y2="{CB}" '
@@ -525,7 +628,7 @@ def render_bar_chart(sl: dict, meta: dict) -> str:
     n_ser  = len(series)
     if not n_cats or not n_ser:
         parts.append(_wrap_pptx_role("chart", slide_index, chart_parts,
-                                     bbox=(60, 70, 1080, 500),
+                                     bbox=(CL, CT, CR - CL, CB - CT),
                                      style_keys=("font",)))
         return svg("\n  ".join(parts))
 
@@ -537,7 +640,10 @@ def render_bar_chart(sl: dict, meta: dict) -> str:
     for ci, cat in enumerate(categories):
         gx = CL + ci * cat_slot + pad
         lx = gx + group_w / 2
-        chart_parts.append(f'<text x="{lx:.1f}" y="{CB + 20}" font-size="12" font-weight="600" '
+        chart_parts.append(f'<text x="{lx:.1f}" y="{CB + 20}" '
+                     f'font-size="{t_size("axis"):g}" '
+                     f'font-weight="{t_weight("axis")}" '
+                     f'data-style-role="axis" '
                      f'fill="{S["body"]}" text-anchor="middle">{esc(cat)}</text>')
 
         for si, ser in enumerate(series):
@@ -545,7 +651,7 @@ def render_bar_chart(sl: dict, meta: dict) -> str:
             if ci >= len(vals):
                 continue
             val   = float(vals[ci])
-            color = ser.get("color", S["blue"])
+            color = series_color(ser, si)
             bx    = gx + si * bar_w
             bh    = max((val / y_max) * CH, 2)
             by    = CB - bh
@@ -554,23 +660,18 @@ def render_bar_chart(sl: dict, meta: dict) -> str:
                          f'width="{bar_w - 3:.1f}" height="{bh:.1f}" fill="{color}"/>')
             if bh > 16:
                 chart_parts.append(f'<text x="{bx + (bar_w - 3) / 2:.1f}" y="{by - 4:.1f}" '
-                             f'font-size="11" font-weight="700" fill="{color}" '
+                             f'font-size="{t_size("footnote"):g}" '
+                             f'font-weight="700" '
+                             f'data-style-role="footnote" fill="{color}" '
                              f'text-anchor="middle">{val:.1f}%</text>')
 
-    lx = CL
-    for si, ser in enumerate(series):
-        color = ser.get("color", S["blue"])
-        chart_parts.append(f'<rect x="{lx + si * 230}" y="{CB + 40}" '
-                     f'width="16" height="12" fill="{color}"/>')
-        chart_parts.append(f'<text x="{lx + si * 230 + 22}" y="{CB + 51}" '
-                     f'font-size="12" fill="{S["body"]}">{esc(ser.get("label", ""))}</text>')
+    chart_parts.extend(chart_legend(series, CL, CB))
 
     if note:
-        chart_parts.append(f'<text x="{CR}" y="{CB + 51}" font-size="10" '
-                     f'fill="{S["muted"]}" text-anchor="end">{esc(note)}</text>')
+        chart_parts.append(chart_note(note, CR, CB))
 
     parts.append(_wrap_pptx_role("chart", slide_index, chart_parts,
-                                 bbox=(60, 70, 1080, 500),
+                                 bbox=(CL, CT, CR - CL, CB - CT),
                                  style_keys=("font",)))
     return svg("\n  ".join(parts))
 
@@ -589,13 +690,17 @@ def render_line_chart(sl: dict, meta: dict) -> str:
 
     parts = [frame(title, footer)]
     chart_parts = []
+    CL, CR, CT, CB = chart_area()
+    CW, CH = CR - CL, CB - CT
 
     for i in range(6):
         val = y_max * i / 5
         y   = CB - (val / y_max) * CH
         chart_parts.append(f'<line x1="{CL}" y1="{y:.1f}" x2="{CR}" y2="{y:.1f}" '
-                     f'stroke="{S["border"]}" stroke-width="1"/>')
-        chart_parts.append(f'<text x="{CL - 8}" y="{y + 4:.1f}" font-size="10" '
+                     f'stroke="{S["divider"]}" stroke-width="1"/>')
+        chart_parts.append(f'<text x="{CL - 8}" y="{y + 4:.1f}" '
+                     f'font-size="{t_size("axis"):g}" '
+                     f'data-style-role="axis" '
                      f'fill="{S["muted"]}" text-anchor="end">{val:.0f}%</text>')
     chart_parts.append(f'<line x1="{CL}" y1="{CT}" x2="{CL}" y2="{CB}" '
                  f'stroke="{S["muted"]}" stroke-width="1.5"/>')
@@ -607,11 +712,13 @@ def render_line_chart(sl: dict, meta: dict) -> str:
         step = CW / max(n_cats - 1, 1)
         for ci, cat in enumerate(categories):
             x = CL + ci * step
-            chart_parts.append(f'<text x="{x:.1f}" y="{CB + 20}" font-size="12" '
+            chart_parts.append(f'<text x="{x:.1f}" y="{CB + 20}" '
+                         f'font-size="{t_size("axis"):g}" '
+                         f'data-style-role="axis" '
                          f'fill="{S["body"]}" text-anchor="middle">{esc(cat)}</text>')
-        for ser in series:
+        for si, ser in enumerate(series):
             vals = ser.get("values", [])
-            color = ser.get("color", S["blue"])
+            color = series_color(ser, si)
             points = []
             for ci, val in enumerate(vals[:n_cats]):
                 x = CL + ci * step
@@ -622,12 +729,15 @@ def render_line_chart(sl: dict, meta: dict) -> str:
                 chart_parts.append(f'<polyline points="{" ".join(points)}" '
                              f'fill="none" stroke="{color}" stroke-width="2.5"/>')
 
+    # The legend row `chart_area` budgets for was never drawn here, so two
+    # distinguishable lines were still unlabelled.
+    chart_parts.extend(chart_legend(series, CL, CB))
+
     if note:
-        chart_parts.append(f'<text x="{CR}" y="{CB + 51}" font-size="10" '
-                     f'fill="{S["muted"]}" text-anchor="end">{esc(note)}</text>')
+        chart_parts.append(chart_note(note, CR, CB))
 
     parts.append(_wrap_pptx_role("chart", slide_index, chart_parts,
-                                 bbox=(60, 70, 1080, 500),
+                                 bbox=(CL, CT, CR - CL, CB - CT),
                                  style_keys=("font",)))
     return svg("\n  ".join(parts))
 
@@ -649,6 +759,7 @@ def render_pie_chart(sl: dict, meta: dict) -> str:
     if not categories or not values:
         return svg("\n  ".join(parts))
 
+    CL, CR, CT, CB = chart_area()
     cx, cy, r = 420, 340, 200
     total = sum(values) or 1
     chart_parts = []
@@ -666,19 +777,25 @@ def render_pie_chart(sl: dict, meta: dict) -> str:
         )
         angle = end_angle
 
+    swatch = t_size("axis")
+    legend_adv = t_size("axis") * t_lh("axis") + 12
     for i, cat in enumerate(categories):
-        ly = 160 + i * 32
+        ly = 160 + i * legend_adv
         color = colors[i % len(colors)]
-        chart_parts.append(f'<rect x="700" y="{ly}" width="16" height="16" fill="{color}"/>')
-        chart_parts.append(f'<text x="724" y="{ly + 13}" font-size="13" '
+        chart_parts.append(f'<rect x="700" y="{ly:.1f}" '
+                     f'width="{swatch:g}" height="{swatch:g}" fill="{color}"/>')
+        chart_parts.append(f'<text x="{700 + swatch + 8:g}" y="{ly + swatch * 0.8:.1f}" '
+                     f'font-size="{t_size("axis"):g}" '
+                     f'data-style-role="axis" '
                      f'fill="{S["body"]}">{esc(cat)}</text>')
 
     if note:
-        chart_parts.append(f'<text x="1100" y="600" font-size="10" fill="{S["muted"]}" '
-                     f'text-anchor="end">{esc(note)}</text>')
+        # Same row as the other two renderers put it in, so a deck mixing
+        # chart types keeps its notes on one baseline.
+        chart_parts.append(chart_note(note, CR, CB))
 
     parts.append(_wrap_pptx_role("chart", slide_index, chart_parts,
-                                 bbox=(140, 90, 900, 480),
+                                 bbox=(CL, CT, CR - CL, CB - CT),
                                  style_keys=("font",)))
     return svg("\n  ".join(parts))
 
