@@ -206,31 +206,33 @@ class SvgConverter:
         standalone textboxes. Positions are still conservatively based on the
         SVG ``x``/``y`` attributes; transformed text is not inferred here.
         """
+        from .shapes import _geometry
         shape_bboxes: List[Tuple[Any, float, float, float, float]] = []
         for elem in self.root.iter():
             tag = _local_tag(elem)
-            try:
-                if tag == "rect":
-                    x = float(elem.get("x", 0))
-                    y = float(elem.get("y", 0))
-                    w = float(elem.get("width", 0))
-                    h = float(elem.get("height", 0))
-                    if self._is_canvas_background(x, y, w, h):
-                        continue
-                    shape_bboxes.append((elem, x, y, w, h))
-                elif tag == "circle":
-                    cx = float(elem.get("cx", 0))
-                    cy = float(elem.get("cy", 0))
-                    r = float(elem.get("r", 0))
-                    shape_bboxes.append((elem, cx - r, cy - r, 2 * r, 2 * r))
-                elif tag == "ellipse":
-                    cx = float(elem.get("cx", 0))
-                    cy = float(elem.get("cy", 0))
-                    rx = float(elem.get("rx", 0))
-                    ry = float(elem.get("ry", 0))
-                    shape_bboxes.append((elem, cx - rx, cy - ry, 2 * rx, 2 * ry))
-            except ValueError:
-                pass
+            # Malformed geometry is not swallowed here: a shape missing from
+            # this pass silently loses its label, which looks like an authoring
+            # mistake in the SVG and is not one. `_geometry` raises
+            # `SvgSourceError`, which the per-child guards re-raise.
+            if tag == "rect":
+                x = _geometry(elem, "x")
+                y = _geometry(elem, "y")
+                w = _geometry(elem, "width")
+                h = _geometry(elem, "height")
+                if self._is_canvas_background(x, y, w, h):
+                    continue
+                shape_bboxes.append((elem, x, y, w, h))
+            elif tag == "circle":
+                cx = _geometry(elem, "cx")
+                cy = _geometry(elem, "cy")
+                r = _geometry(elem, "r")
+                shape_bboxes.append((elem, cx - r, cy - r, 2 * r, 2 * r))
+            elif tag == "ellipse":
+                cx = _geometry(elem, "cx")
+                cy = _geometry(elem, "cy")
+                rx = _geometry(elem, "rx")
+                ry = _geometry(elem, "ry")
+                shape_bboxes.append((elem, cx - rx, cy - ry, 2 * rx, 2 * ry))
 
         for text_elem in self.root.iter():
             if _local_tag(text_elem) != "text":

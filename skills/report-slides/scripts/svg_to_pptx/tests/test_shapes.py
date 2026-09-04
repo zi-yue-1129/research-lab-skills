@@ -378,3 +378,65 @@ def test_the_token_card_radius_survives_export():
         '<rect x="48" y="108" width="352" height="144" rx="12" fill="#f8fafc"/>')
     assert prst == "roundRect"
     assert shape.adjustments[0] == pytest.approx(12 / 144, abs=0.005)
+
+
+def _label_bold(markup: str) -> object:
+    """Write one SVG text element into a shape and return its run bold flag.
+
+    Args:
+        markup: A single SVG `<text>` element as a string.
+
+    Returns:
+        The `font.bold` of the first run, which is `None` when the converter
+        set no explicit weight.
+    """
+    from svg_to_pptx.shapes import _write_label
+
+    slide, _ = _blank_slide()
+    elem = etree.fromstring(markup)
+    style = compute_style(elem, {})
+    shape = slide.shapes.add_textbox(Emu(0), Emu(0), Emu(1000000), Emu(500000))
+    _write_label(shape, elem, style, CS, (100, 100, 200, 40))
+    return shape.text_frame.paragraphs[0].runs[0].font.bold
+
+
+def test_semibold_text_exports_as_bold():
+    """Weight 600 must reach PPTX as bold.
+
+    `typography.roles.node_label` and `typography.roles.takeaway` are both
+    weight 600. DrawingML has no numeric weight, only a bold flag, so a
+    semibold role that is not mapped to it exports as regular type: the SVG
+    shows an emphasised node label and the deck does not, on every diagram.
+    """
+    assert _label_bold(
+        '<text x="100" y="100" font-size="18" font-weight="600">Node</text>'
+    ) is True
+
+
+def test_bold_text_still_exports_as_bold():
+    """Weight 700 keeps working."""
+    assert _label_bold(
+        '<text x="100" y="100" font-size="32" font-weight="700">Title</text>'
+    ) is True
+
+
+def test_regular_text_is_not_made_bold():
+    """Weight 400 must not be emphasised.
+
+    A threshold that swept everything into bold would be as wrong as the
+    omission: body copy at weight 400 is most of the text on a deck.
+    """
+    assert _label_bold(
+        '<text x="100" y="100" font-size="21" font-weight="400">Body</text>'
+    ) is not True
+
+
+def test_medium_text_is_not_made_bold():
+    """Weight 500 is medium, not semibold, and stays regular.
+
+    CSS font matching treats 600 and above as the bold end of a family; 500 is
+    on the regular side, and the token contract never asks for it.
+    """
+    assert _label_bold(
+        '<text x="100" y="100" font-size="21" font-weight="500">Body</text>'
+    ) is not True

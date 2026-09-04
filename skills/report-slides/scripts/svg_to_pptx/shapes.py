@@ -298,6 +298,32 @@ def _font_size_svg(style: Dict) -> float:
         return 14.0
 
 
+# CSS font matching puts 600 and above on the bold end of a family, and
+# DrawingML has no numeric weight -- only a bold flag. The token contract uses
+# 600 for `node_label` and `takeaway`, so a threshold of 700 exported every
+# node label and panel heading as regular type.
+_BOLD_WEIGHT_FLOOR = 600
+
+
+def _is_bold_weight(weight: str) -> bool:
+    """Return whether an SVG font-weight value is bold in PPTX terms.
+
+    Args:
+        weight: The resolved `font-weight` value, keyword or numeric.
+
+    Returns:
+        True for `bold` and for any numeric weight at or above 600.
+    """
+    if weight == "bold":
+        return True
+    try:
+        return float(weight) >= _BOLD_WEIGHT_FLOOR
+    except ValueError:
+        # `normal`, `lighter`, `bolder`, or anything unrecognised: PPTX has no
+        # relative weight, so the only faithful answer is "not bold".
+        return False
+
+
 def _apply_font(run: Any, style: Dict, parent_style: Dict) -> None:
     size_raw = style.get("font-size", parent_style.get("font-size", "14"))
     try:
@@ -305,7 +331,7 @@ def _apply_font(run: Any, style: Dict, parent_style: Dict) -> None:
     except ValueError:
         run.font.size = Pt(14)
     weight = style.get("font-weight", parent_style.get("font-weight", "normal"))
-    if weight in ("bold", "700", "800", "900"):
+    if _is_bold_weight(weight):
         run.font.bold = True
     fstyle = style.get("font-style", parent_style.get("font-style", "normal"))
     if fstyle == "italic":
