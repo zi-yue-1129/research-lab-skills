@@ -33,6 +33,7 @@ class MutationTest(unittest.TestCase):
         self._real_name = lint.read_frontmatter_name
         self._real_a = list(lint.BUCKET_A_AGENT_FILES)
         self._real_bcd = list(lint.BUCKET_BCD_AGENT_FILES)
+        self._real_non_ars = list(lint.NON_ARS_AGENT_FILES)
 
     def tearDown(self):
         lint.load_manifest_keys = self._real_keys
@@ -40,6 +41,7 @@ class MutationTest(unittest.TestCase):
         lint.read_frontmatter_name = self._real_name
         lint.BUCKET_A_AGENT_FILES = self._real_a
         lint.BUCKET_BCD_AGENT_FILES = self._real_bcd
+        lint.NON_ARS_AGENT_FILES = self._real_non_ars
 
     def _assert_fails(self, needle=None):
         errs = lint.run_checks()
@@ -79,6 +81,22 @@ class MutationTest(unittest.TestCase):
         # A Bucket B agent's name (report_compiler_agent) appears as a manifest key.
         real = self._real_keys()
         lint.load_manifest_keys = lambda: real | {"report_compiler_agent"}
+        errs = lint.run_checks()
+        self.assertTrue(any("I3" in e for e in errs),
+                        f"expected an I3 leak error; got {errs}")
+
+    def test_I5_undeclared_non_ars_agent_fails(self):
+        # The non-ARS roster is the only thing declaring agents that live outside
+        # the ARS phase model. Emptying it must resurface them as undeclared —
+        # otherwise the roster is a comment, not a guard.
+        lint.NON_ARS_AGENT_FILES = []
+        self._assert_fails("I5")
+
+    def test_I3_non_ars_leak_into_manifest_fails(self):
+        # A non-ARS agent in the manifest would fence a skill that has no ARS
+        # phase at all, so it must fail the same way a Bucket B/C/D leak does.
+        real = self._real_keys()
+        lint.load_manifest_keys = lambda: real | {"slide_architect_agent"}
         errs = lint.run_checks()
         self.assertTrue(any("I3" in e for e in errs),
                         f"expected an I3 leak error; got {errs}")
@@ -127,6 +145,7 @@ class I5DepthAndSymlinkTest(unittest.TestCase):
         self._real_root = lint.REPO_ROOT
         self._real_a = list(lint.BUCKET_A_AGENT_FILES)
         self._real_bcd = list(lint.BUCKET_BCD_AGENT_FILES)
+        self._real_non_ars = list(lint.NON_ARS_AGENT_FILES)
         self._real_keys = lint.load_manifest_keys
         self._real_manifest = lint.load_manifest
         self._real_name = lint.read_frontmatter_name
@@ -138,6 +157,7 @@ class I5DepthAndSymlinkTest(unittest.TestCase):
         lint.REPO_ROOT = self._real_root
         lint.BUCKET_A_AGENT_FILES = self._real_a
         lint.BUCKET_BCD_AGENT_FILES = self._real_bcd
+        lint.NON_ARS_AGENT_FILES = self._real_non_ars
         lint.load_manifest_keys = self._real_keys
         lint.load_manifest = self._real_manifest
         lint.read_frontmatter_name = self._real_name
@@ -153,6 +173,10 @@ class I5DepthAndSymlinkTest(unittest.TestCase):
         # Point every non-I5 invariant at consistent synthetic data so ONLY I5 can react.
         lint.BUCKET_A_AGENT_FILES = list(a_files)
         lint.BUCKET_BCD_AGENT_FILES = list(bcd_files)
+        # The non-ARS roster holds real repo paths that do not exist under the
+        # synthetic root; leaving it populated would make I5 report stale
+        # entries and defeat this helper's "only I5 can react" contract.
+        lint.NON_ARS_AGENT_FILES = []
         agents = {k: {"bucket": "A", "phase": "1", "allowed_write_globs": ["phase1_*/**"]}
                   for k in manifest_keys}
         lint.load_manifest = lambda: {"agents": agents}

@@ -38,9 +38,18 @@ from render_review_sheet import compose_review_sheet
 from presentation_module_fixtures import record_module_production
 
 
+_SCRIPTS_DIR = Path(__file__).resolve().parent.parent
+
+
 def test_workflow_actions_are_not_available_before_implementation() -> None:
-    """The RED test suite intentionally imports the Task 4 API."""
-    assert Path("presentation_workflow.py").exists()
+    """The RED test suite intentionally imports the Task 4 API.
+
+    The path is resolved against this file rather than the process working
+    directory: a bare relative path asserts where pytest was launched from, not
+    whether the module exists, so the check passed only when the runner happened
+    to `cd` into `scripts/`.
+    """
+    assert (_SCRIPTS_DIR / "presentation_workflow.py").exists()
 
 
 def test_approval_action_requires_an_evidence_document(tmp_path: Path) -> None:

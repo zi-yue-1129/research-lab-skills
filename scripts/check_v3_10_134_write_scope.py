@@ -24,9 +24,10 @@ Three invariants:
          (c) on-disk frontmatter `name` fields read from each (a) file,
        must be IDENTICAL. Any element in one but not the others is a fail-open risk.
 
-  I3 — Bucket B/C/D exclusion. None of the 16 exempt agents' frontmatter `name` may
-       appear as a manifest key (a Bucket B/C/D agent in the manifest would impose a
-       single-phase fence on a legitimately multi-phase agent).
+  I3 — Non-Bucket-A exclusion. Neither the 16 exempt agents' nor the non-ARS agents'
+       frontmatter `name` may appear as a manifest key (a Bucket B/C/D agent in the
+       manifest would impose a single-phase fence on a legitimately multi-phase agent;
+       a non-ARS agent has no phase for the fence to mean anything).
 
   I4 — Manifest shape. Every manifest entry carries bucket == "A", a non-empty
        allowed_write_globs list, and a phase label.
@@ -93,6 +94,34 @@ BUCKET_BCD_AGENT_FILES = [
     "skills/academic-pipeline/agents/pipeline_orchestrator_agent.md",
     "skills/academic-pipeline/agents/state_tracker_agent.md",
     "skills/academic-paper-reviewer/agents/field_analyst_agent.md",
+]
+
+# Agents that live entirely OUTSIDE the ARS pipeline's phase model. The manifest
+# fences a Bucket A agent to the write globs of its single ARS phase; an agent
+# belonging to a skill that has no ARS phase cannot be fenced that way, and is
+# also not one of the 16 classified B/C/D exemptions -- so it belongs in neither
+# ARS roster and would fall through I5 as "undeclared".
+#
+# Declaring them here is what keeps I5 non-vacuous: I5 asserts that the rosters
+# together cover every `**/agents/*.md` on disk, so a genuinely new ARS agent
+# still gets flagged, while these stay accounted for by name rather than by a
+# blanket path exclusion that would also hide future additions.
+#
+# Being listed here is an assertion that the agent takes no ARS phase fence.
+# I3 therefore also refuses to see these names as manifest keys.
+NON_ARS_AGENT_FILES = [
+    # report-slides/agents/ (11) -- presentation authoring, not an ARS phase
+    "skills/report-slides/agents/annotation_worker_agent.md",
+    "skills/report-slides/agents/architecture_diagram_worker_agent.md",
+    "skills/report-slides/agents/complex_visual_decomposer_agent.md",
+    "skills/report-slides/agents/conceptual_illustration_worker_agent.md",
+    "skills/report-slides/agents/content_reviewer_agent.md",
+    "skills/report-slides/agents/data_visualization_worker_agent.md",
+    "skills/report-slides/agents/research_narrative_planner_agent.md",
+    "skills/report-slides/agents/scientific_visual_reviewer_agent.md",
+    "skills/report-slides/agents/slide_architect_agent.md",
+    "skills/report-slides/agents/visual_integration_agent.md",
+    "skills/report-slides/agents/visual_quality_reviewer_agent.md",
 ]
 
 _NAME_RE = re.compile(r"^name:\s*(.+?)\s*$", re.MULTILINE)
@@ -165,7 +194,11 @@ def run_checks() -> list[str]:
     #   * Comparing resolved paths also means a genuinely NEW standalone .md (not a symlink)
     #     at any depth is still flagged, because it resolves to itself and is absent from the
     #     roster. That is exactly the fail-open case we want to catch.
-    declared = set(BUCKET_A_AGENT_FILES) | set(BUCKET_BCD_AGENT_FILES)
+    declared = (
+        set(BUCKET_A_AGENT_FILES)
+        | set(BUCKET_BCD_AGENT_FILES)
+        | set(NON_ARS_AGENT_FILES)
+    )
     undeclared = []
     for md in REPO_ROOT.glob("**/agents/*.md"):
         rel_parts = md.relative_to(REPO_ROOT).parts
@@ -242,6 +275,19 @@ def run_checks() -> list[str]:
         errors.append(
             f"I3: Bucket B/C/D agent name(s) {leaked} appear as manifest keys — a single-phase "
             "fence on a legitimately multi-phase/orthogonal agent. Remove from manifest."
+        )
+
+    non_ars_names: set[str] = set()
+    for rel in NON_ARS_AGENT_FILES:
+        nm = read_frontmatter_name(rel)
+        if nm:
+            non_ars_names.add(nm)
+    leaked_non_ars = sorted(non_ars_names & manifest_keys)
+    if leaked_non_ars:
+        errors.append(
+            f"I3: non-ARS agent name(s) {leaked_non_ars} appear as manifest keys — the manifest "
+            "fences by ARS pipeline phase and these agents have none, so the fence would be "
+            "arbitrary. Remove from manifest, or reclassify the agent into Bucket A."
         )
 
     # I4 — manifest entry shape

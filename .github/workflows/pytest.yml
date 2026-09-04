@@ -5,6 +5,7 @@ on:
     paths:
       - 'scripts/**'
       - 'tests/**'
+      - 'skills/**'
       - 'shared/contracts/**'
       - 'conftest.py'
       - 'pyproject.toml'
@@ -18,6 +19,7 @@ on:
     paths:
       - 'scripts/**'
       - 'tests/**'
+      - 'skills/**'
       - 'shared/contracts/**'
       - 'conftest.py'
       - 'pyproject.toml'
@@ -59,4 +61,4 @@ jobs:
           # pattern-protection lint cannot resolve the default branch via
           # `git symbolic-ref`. Provide its documented env fallback.
           GITHUB_DEFAULT_BRANCH: main
-        run: pytest scripts/ tests/
+        run: pytest scripts/ tests/ skills/
