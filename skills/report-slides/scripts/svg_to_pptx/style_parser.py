@@ -1,6 +1,7 @@
 """style_parser.py — SVG style/attribute resolution for python-pptx."""
 from __future__ import annotations
 
+import math as _math
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -137,9 +138,6 @@ def apply_stroke(shape: Any, style: Dict[str, str]) -> None:
         shape.line.width = Pt(1)
 
 
-import math as _math
-
-
 def parse_transform(transform_str: str) -> Tuple[float, float, float, float, float]:
     """Parse SVG transform → (tx, ty, rotation_deg, scale_x, scale_y)."""
     tx, ty, rot, sx, sy = 0.0, 0.0, 0.0, 1.0, 1.0
@@ -186,7 +184,9 @@ def apply_gradient_fill(shape: Any, stops: List[Tuple[str, str]],
     sp = shape._element
     spPr = sp.find(qn("p:spPr"))
     if spPr is None:
-        return
+        raise ValueError(
+            "shape has no p:spPr element; cannot apply a gradient fill"
+        )
     for child in list(spPr):
         tag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
         if tag in ("solidFill", "gradFill", "noFill", "blipFill", "pattFill"):
@@ -514,3 +514,144 @@ def apply_alpha(shape: Any, style: Dict[str, str]) -> None:
             f".//{{{_A_NS}}}ln/{{{_A_NS}}}solidFill/{{{_A_NS}}}srgbClr")
         if line_color is not None:
             _set_alpha(line_color, stroke_factor)
+
+
+# The SVG gradient model is much larger than what DrawingML's `a:gradFill` can
+# express, and than what this converter reads. Each of these would change how a
+# gradient looks and none of them is implemented, so each is refused by name.
+# Silently ignoring them exports a deck that looks wrong with nothing to explain
+# it, which is the expensive failure -- the author sees the render, not the code.
+_UNSUPPORTED_GRADIENT_ATTRS = {
+    "gradientTransform": "a transformed gradient",
+    "{http://www.w3.org/1999/xlink}href": "gradient inheritance",
+    "href": "gradient inheritance",
+}
+
+
+def _gradient_coord(raw: Optional[str], default: float, name: str) -> float:
+    """Parse one linearGradient coordinate in objectBoundingBox units.
+
+    Args:
+        raw: The attribute value, or `None` when absent.
+        default: The SVG default for this attribute.
+        name: The attribute name, for the error message.
+
+    Returns:
+        The coordinate as a fraction, so `"50%"` and `"0.5"` both give `0.5`.
+
+    Raises:
+        ValueError: If the value is neither a number nor a percentage.
+    """
+    if raw is None:
+        return default
+    text = raw.strip()
+    try:
+        if text.endswith("%"):
+            return float(text[:-1]) / 100.0
+        return float(text)
+    except ValueError as exc:
+        raise ValueError(
+            f"linearGradient {name}={raw!r} is neither a number nor a "
+            f"percentage; only objectBoundingBox units are supported"
+        ) from exc
+
+
+def _reject_unsupported_gradient(elem: Any) -> None:
+    """Refuse a gradient using a feature this converter does not implement.
+
+    Args:
+        elem: The `<linearGradient>` element.
+
+    Raises:
+        ValueError: If the gradient declares an unsupported feature.
+    """
+    for attr, description in _UNSUPPORTED_GRADIENT_ATTRS.items():
+        if elem.get(attr) is not None:
+            raise ValueError(
+                f"linearGradient {elem.get('id')!r} uses {description} "
+                f"({attr}), which this converter does not support"
+            )
+    units = elem.get("gradientUnits", "objectBoundingBox")
+    if units != "objectBoundingBox":
+        raise ValueError(
+            f"linearGradient {elem.get('id')!r} sets gradientUnits={units!r}; "
+            f"only objectBoundingBox is supported"
+        )
+    spread = elem.get("spreadMethod", "pad")
+    if spread != "pad":
+        raise ValueError(
+            f"linearGradient {elem.get('id')!r} sets spreadMethod={spread!r}; "
+            f"DrawingML gradient fills pad, and reflect/repeat would render "
+            f"differently in the export than in the SVG preview"
+        )
+
+
+def parse_linear_gradient(elem: Any) -> Tuple[List[Tuple[str, str]], float]:
+    """Read stops and direction from an SVG `<linearGradient>` element.
+
+    Args:
+        elem: The `<linearGradient>` element.
+
+    Returns:
+        `(stops, angle_degrees)`, where each stop is `(offset, color)` in the
+        form `apply_gradient_fill` expects, and the angle is measured from the
+        positive x-axis.
+
+    Raises:
+        ValueError: If the element declares no usable stops, or uses a feature
+            this converter does not support.
+    """
+    _reject_unsupported_gradient(elem)
+    stops: List[Tuple[str, str]] = []
+    for child in elem:
+        tag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
+        if tag != "stop":
+            continue
+        offset = child.get("offset", "0")
+        inline = parse_inline_style(child.get("style", ""))
+        color = child.get("stop-color") or inline.get("stop-color")
+        if color is None:
+            raise ValueError(
+                f"gradient stop at offset {offset!r} has no stop-color"
+            )
+        opacity = child.get("stop-opacity") or inline.get("stop-opacity")
+        if opacity is not None and float(opacity) != 1.0:
+            raise ValueError(
+                f"gradient stop at offset {offset!r} sets stop-opacity="
+                f"{opacity!r}; DrawingML gradient stops here carry no alpha, "
+                f"so this would be dropped. Bake the opacity into stop-color "
+                f"or use a solid fill with fill-opacity."
+            )
+        stops.append((offset, color))
+    if not stops:
+        raise ValueError(
+            f"linearGradient {elem.get('id')!r} declares no stops"
+        )
+    x1 = _gradient_coord(elem.get("x1"), 0.0, "x1")
+    y1 = _gradient_coord(elem.get("y1"), 0.0, "y1")
+    x2 = _gradient_coord(elem.get("x2"), 1.0, "x2")
+    y2 = _gradient_coord(elem.get("y2"), 0.0, "y2")
+    angle = _math.degrees(_math.atan2(y2 - y1, x2 - x1))
+    return stops, angle
+
+
+def apply_paint(shape: Any, style: Dict[str, str]) -> None:
+    """Fill a shape with either a resolved gradient or a solid colour.
+
+    The converter pre-resolves `fill="url(#id)"` into `_gradient_stops` and
+    `_gradient_angle` entries on the style mapping, because only the converter
+    holds the document's `<defs>` index. `apply_gradient_fill` has been present
+    and tested since before this change; nothing had ever called it, so a
+    gradient fill reached `resolve_color`, returned None, and left the shape
+    with no fill at all.
+
+    Args:
+        shape: A PPTX shape.
+        style: Computed style mapping for the SVG element.
+    """
+    stops = style.get("_gradient_stops")
+    if stops:
+        apply_gradient_fill(
+            shape, stops, float(style.get("_gradient_angle", 0.0)))
+        return
+    apply_fill(shape, style.get("fill", "black"))

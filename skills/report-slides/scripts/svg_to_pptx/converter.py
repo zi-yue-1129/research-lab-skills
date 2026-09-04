@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -16,6 +17,19 @@ _SVG_NS = "http://www.w3.org/2000/svg"
 _XLINK_NS = "http://www.w3.org/1999/xlink"
 _CANVAS_TOLERANCE = 1e-6
 _CHART_TYPE_MAP = {"bar_chart": "bar", "line_chart": "line", "pie_chart": "pie"}
+
+
+class SvgSourceError(ValueError):
+    """Raised for an error in the SVG source that must reach the caller.
+
+    `_dispatch_children` guards each child with a broad `except Exception` so
+    one malformed element does not lose the rest of the slide. That guard is
+    right for a shape python-pptx merely refuses, and wrong for a source error
+    the author can fix: a non-numeric geometry attribute or a fill naming a
+    gradient that does not exist would be logged at verbose level and the deck
+    would export missing a shape, an anchor, or a fill, with nothing to explain
+    it. Like `NativeObjectMarkerError`, this propagates.
+    """
 
 
 class NativeObjectMarkerError(ValueError):
@@ -107,6 +121,7 @@ class SvgConverter:
         self._shape_labels: Dict[int, List[Any]] = {}
         self._text_to_shape: Dict[int, Any] = {}
         self._defs: Dict[str, Any] = {}
+        self._gradient_defs: Dict[str, Any] = {}
         self._connector_registry: List = []
         self._shape_registry: List = []
         self._pending_texts: List = []
@@ -139,10 +154,20 @@ class SvgConverter:
         return slide
 
     def _resolve_defs(self) -> None:
+        """Index `<defs>` children by id, parsing gradients as they are found.
+
+        Raises:
+            ValueError: If a `<linearGradient>` is malformed or uses an
+                unsupported feature. This runs before `_dispatch_children`, so
+                the error reaches the caller rather than its per-child guard.
+        """
+        from .style_parser import parse_linear_gradient
         for elem in self.root.iter():
             if _local_tag(elem) == "defs":
                 for child in elem:
                     eid = child.get("id")
+                    if eid and _local_tag(child) == "linearGradient":
+                        self._gradient_defs[eid] = parse_linear_gradient(child)
                     if eid:
                         self._defs[eid] = child
 
@@ -248,14 +273,39 @@ class SvgConverter:
             try:
                 style = compute_style(elem, inherited)
                 self._dispatch_element(slide, elem, style)
-            except NativeObjectMarkerError:
+            except (NativeObjectMarkerError, SvgSourceError):
                 raise
             except Exception as exc:
                 if self.verbose:
                     print(f"  [warn] {tag}: {exc}")
 
+    def _resolve_paint_server(self, style: Dict) -> None:
+        """Resolve a `fill="url(#id)"` reference into gradient style entries.
+
+        Args:
+            style: Computed style mapping, modified in place.
+
+        Raises:
+            SvgSourceError: If the fill names a paint server that no `<defs>`
+                entry defines.
+        """
+        fill = style.get("fill", "")
+        match = re.match(r"url\(#([^)]+)\)", fill.strip()) if fill else None
+        if match is None:
+            return
+        gradient_id = match.group(1)
+        if gradient_id not in self._gradient_defs:
+            raise SvgSourceError(
+                f"fill references unknown paint server {gradient_id!r}; "
+                f"defined gradients: {sorted(self._gradient_defs)}"
+            )
+        stops, angle = self._gradient_defs[gradient_id]
+        style["_gradient_stops"] = stops
+        style["_gradient_angle"] = angle
+
     def _dispatch_element(self, slide: Any, elem: Any, style: Dict) -> None:
         tag = _local_tag(elem)
+        self._resolve_paint_server(style)
         if tag in ("rect", "circle", "ellipse", "image"):
             from .shapes import dispatch_shape
             shape = dispatch_shape(
@@ -264,26 +314,28 @@ class SvgConverter:
             if shape is not None and self._group_collect is not None:
                 self._group_collect.append(shape)
             if shape is not None and tag in ("rect", "circle", "ellipse"):
-                try:
-                    if tag == "rect":
-                        bx = float(elem.get("x", 0))
-                        by = float(elem.get("y", 0))
-                        bw = float(elem.get("width", 0))
-                        bh = float(elem.get("height", 0))
-                    elif tag == "circle":
-                        cx = float(elem.get("cx", 0))
-                        cy = float(elem.get("cy", 0))
-                        r = float(elem.get("r", 0))
+                # A malformed geometry attribute must not silently drop the
+                # shape from the anchor registry: `_bind_connectors` would then
+                # leave connectors dangling with no diagnostic, which is
+                # precisely what the review gate is meant to catch.
+                from .shapes import _geometry
+                if tag == "rect":
+                    bx = _geometry(elem, "x")
+                    by = _geometry(elem, "y")
+                    bw = _geometry(elem, "width")
+                    bh = _geometry(elem, "height")
+                else:
+                    cx = _geometry(elem, "cx")
+                    cy = _geometry(elem, "cy")
+                    if tag == "circle":
+                        r = _geometry(elem, "r")
                         bx, by, bw, bh = cx - r, cy - r, 2 * r, 2 * r
                     else:
-                        cx = float(elem.get("cx", 0))
-                        cy = float(elem.get("cy", 0))
-                        rx = float(elem.get("rx", 0))
-                        ry = float(elem.get("ry", 0))
+                        rx = _geometry(elem, "rx")
+                        ry = _geometry(elem, "ry")
                         bx, by, bw, bh = cx - rx, cy - ry, 2 * rx, 2 * ry
-                    self._shape_registry.append((elem, bx, by, bw, bh, shape.shape_id))
-                except Exception:
-                    pass
+                self._shape_registry.append(
+                    (elem, bx, by, bw, bh, shape.shape_id))
         elif tag == "text":
             if id(elem) not in self._text_to_shape:
                 self._pending_texts.append((elem, style))
@@ -462,7 +514,7 @@ class SvgConverter:
                         local_texts.append((child, style))
                         continue
                     self._dispatch_element(slide, child, style)
-                except NativeObjectMarkerError:
+                except (NativeObjectMarkerError, SvgSourceError):
                     raise
                 except Exception as exc:  # noqa: BLE001 - skip one bad child
                     if self.verbose:

@@ -4784,7 +4784,7 @@ git commit -m "feat(report-slides): apply SVG dash patterns and opacity in PPTX 
    review gate is supposed to catch, with no diagnostic. This violates the
    repository's no-silent-failures rule.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `skills/report-slides/scripts/svg_to_pptx/tests/test_integration.py`:
 
@@ -4920,7 +4920,7 @@ returns `(slide, prs)` from an in-memory `SvgConverter` run. Do **not** call
 and returns nothing. `Path` is already imported at the top of that file; add the
 import if a future refactor removes it.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/svg_to_pptx/tests/test_integration.py -v -k "gradient or malformed or whole_deck"`
 Expected: FAIL — `assert None is not None` for the gradient tests, and
@@ -4928,7 +4928,7 @@ Expected: FAIL — `assert None is not None` for the gradient tests, and
 passes from the start; it is a regression guard for the serialisation step, not a
 driver of this change.
 
-- [ ] **Step 3: Parse gradient definitions**
+- [x] **Step 3: Parse gradient definitions**
 
 Append to `skills/report-slides/scripts/svg_to_pptx/style_parser.py`:
 
@@ -5092,7 +5092,7 @@ reported:
         )
 ```
 
-- [ ] **Step 4: Index gradients in the converter and inject them into styles**
+- [x] **Step 4: Index gradients in the converter and inject them into styles**
 
 In `skills/report-slides/scripts/svg_to_pptx/converter.py`, add
 `self._gradient_defs: Dict[str, Any] = {}` beside the existing `self._defs`
@@ -5134,14 +5134,14 @@ returned, resolve a paint-server reference:
 
 Add `import re` to the module imports if absent.
 
-- [ ] **Step 5: Use `apply_paint` in the shape builders**
+- [x] **Step 5: Use `apply_paint` in the shape builders**
 
 In `skills/report-slides/scripts/svg_to_pptx/shapes.py`, replace
 `apply_fill(shape, style.get("fill", "black"))` with `apply_paint(shape, style)`
 in both `_add_rect` and `_add_oval`, and add `apply_paint` to the
 `.style_parser` import.
 
-- [ ] **Step 6: Stop swallowing the shape-registry error**
+- [x] **Step 6: Stop swallowing the shape-registry error**
 
 Replace the `try` / `except Exception: pass` block in `_dispatch_element`
 (lines 258–279) so geometry parsing failures surface. Keep the same registry
@@ -5181,18 +5181,18 @@ Note that `dispatch_shape` itself parses the same attributes earlier, so a
 malformed value already raises there; this change removes the second, silent
 swallow so the message is not lost if the earlier path ever changes.
 
-- [ ] **Step 7: Run test to verify it passes**
+- [x] **Step 7: Run test to verify it passes**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/svg_to_pptx/tests/ -v`
 Expected: PASS — all tests green.
 
-- [ ] **Step 8: Check the whole skill suite**
+- [x] **Step 8: Check the whole skill suite**
 
 Run: `timeout 900 python3 -m pytest skills/report-slides/scripts/ -q`
 Expected: PASS. If `_dispatch_children`'s broad per-child guard now surfaces a
 previously hidden error in a fixture, fix the fixture; do not restore the swallow.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add skills/report-slides/scripts/svg_to_pptx/

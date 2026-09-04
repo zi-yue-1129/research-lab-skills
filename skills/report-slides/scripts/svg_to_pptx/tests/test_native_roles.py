@@ -327,13 +327,35 @@ def test_absent_pptx_style_still_falls_back_to_defaults(tmp_path: Path):
 
 # ── I2: per-child error tolerance inside a group marker ──────────────────────
 
-def test_group_with_one_malformed_child_still_groups_the_valid_ones(tmp_path: Path):
-    """One bad child must not delete the whole node, matching _dispatch_children."""
+def test_group_with_one_unrenderable_child_still_groups_the_valid_ones(
+        tmp_path: Path, monkeypatch):
+    """One bad child must not delete the whole node, matching _dispatch_children.
+
+    The failing child here raises from inside the dispatcher rather than
+    carrying a malformed attribute. That is the case the per-child guard exists
+    for: something the converter or python-pptx cannot render, which the SVG
+    author cannot see and cannot fix from the source. A malformed coordinate is
+    the opposite -- see the next test.
+    """
+    from svg_to_pptx import shapes as shapes_module
+
+    real_dispatch = shapes_module.dispatch_shape
+    calls = {"n": 0}
+
+    def flaky_dispatch(slide, elem, style, cs, label_elem):
+        """Fail on the second rect only, for a reason not in the SVG."""
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("python-pptx refused this shape")
+        return real_dispatch(slide, elem, style, cs, label_elem)
+
+    monkeypatch.setattr(shapes_module, "dispatch_shape", flaky_dispatch)
+
     svg_path = _write_svg(tmp_path, (
         '<g data-pptx-role="group" data-node-id="node1">'
         '<rect x="100" y="100" width="200" height="80" fill="#f8fafc"/>'
-        '<rect x="100" y="oops" width="200" height="80" fill="#f8fafc"/>'
-        '<text x="200" y="200">Encoder</text>'
+        '<rect x="100" y="200" width="200" height="80" fill="#f8fafc"/>'
+        '<text x="200" y="320">Encoder</text>'
         '</g>'
     ))
     slide = _convert(svg_path)
@@ -342,6 +364,27 @@ def test_group_with_one_malformed_child_still_groups_the_valid_ones(tmp_path: Pa
     groups = [s for s in slide.shapes if s.shape_type == MSO_SHAPE_TYPE.GROUP]
     assert len(groups) == 1
     assert len(groups[0].shapes) == 2
+
+
+def test_group_child_source_error_propagates(tmp_path: Path):
+    """A malformed coordinate inside a group reaches the caller.
+
+    This used to be the fixture for per-child tolerance above, and it was the
+    wrong example: `y="oops"` was logged at verbose level and the rect vanished
+    from both the slide and `_shape_registry`, so `_bind_connectors` could no
+    longer anchor a connector to that node. The deck then rendered with a
+    dangling arrow and nothing anywhere said why.
+    """
+    from svg_to_pptx.converter import SvgSourceError
+
+    svg_path = _write_svg(tmp_path, (
+        '<g data-pptx-role="group" data-node-id="node1">'
+        '<rect x="100" y="100" width="200" height="80" fill="#f8fafc"/>'
+        '<rect x="100" y="oops" width="200" height="80" fill="#f8fafc"/>'
+        '</g>'
+    ))
+    with pytest.raises(SvgSourceError, match="oops"):
+        _convert(svg_path)
 
 
 def test_group_child_marker_error_still_propagates(tmp_path: Path):

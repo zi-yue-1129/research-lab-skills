@@ -8,9 +8,9 @@ from pptx.util import Emu, Pt
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 
 from fonts import parse_font_stack, resolve_font_stack
-from .style_parser import (apply_alpha, apply_dash, apply_fill,
+from .style_parser import (apply_alpha, apply_dash, apply_paint,
                            apply_stroke, compute_style, resolve_color)
-from .converter import CoordSystem, _local_tag, _text_xy
+from .converter import CoordSystem, SvgSourceError, _local_tag, _text_xy
 
 _ALIGN = {"start": PP_ALIGN.LEFT, "middle": PP_ALIGN.CENTER, "end": PP_ALIGN.RIGHT}
 _ATTACHED_LABEL_TOP_PADDING_SVG = 4.0
@@ -26,6 +26,37 @@ def dispatch_shape(slide: Any, elem: Any, style: Dict,
     elif tag == "image":
         return _add_image(slide, elem, style, cs)
     return None
+
+
+def _geometry(elem: Any, attr: str, default: float = 0.0) -> float:
+    """Read one numeric geometry attribute off an SVG element.
+
+    `float()` on a malformed value raises a bare `ValueError`, which
+    `_dispatch_children`'s per-child guard logs at verbose level and discards:
+    the shape vanishes from the slide and from the connector anchor registry
+    with nothing to explain it. `SvgSourceError` propagates instead.
+
+    Args:
+        elem: The SVG element.
+        attr: Attribute name to read.
+        default: Value to use when the attribute is absent.
+
+    Returns:
+        The attribute as a float.
+
+    Raises:
+        SvgSourceError: If the attribute is present but not a number.
+    """
+    raw = elem.get(attr)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError as exc:
+        tag = _local_tag(elem)
+        raise SvgSourceError(
+            f"<{tag}> has a non-numeric {attr}={raw!r}; fix the SVG source"
+        ) from exc
 
 
 _MSO_RECTANGLE = 1
@@ -56,11 +87,12 @@ def _corner_radius(elem: Any) -> float:
             continue
         try:
             values.append(abs(float(raw)))
-        except ValueError:
-            # A malformed radius must not silently become a sharp corner.
-            raise ValueError(
+        except ValueError as exc:
+            # A malformed radius must not silently become a sharp corner, and
+            # must not be swallowed by the per-child guard either.
+            raise SvgSourceError(
                 f"rect has non-numeric {attr}={raw!r}; fix the SVG source"
-            )
+            ) from exc
     return max(values) if values else 0.0
 
 
@@ -83,10 +115,10 @@ def _add_rect(slide: Any, elem: Any, style: Dict,
     Returns:
         The created PPTX shape.
     """
-    svg_x = float(elem.get("x", 0))
-    svg_y = float(elem.get("y", 0))
-    svg_w = float(elem.get("width", 0))
-    svg_h = float(elem.get("height", 0))
+    svg_x = _geometry(elem, "x")
+    svg_y = _geometry(elem, "y")
+    svg_w = _geometry(elem, "width")
+    svg_h = _geometry(elem, "height")
     x = cs.x(svg_x)
     y = cs.y(svg_y)
     w = max(1, cs.x(svg_w))
@@ -104,7 +136,7 @@ def _add_rect(slide: Any, elem: Any, style: Dict,
         shape = slide.shapes.add_shape(
             _MSO_RECTANGLE, Emu(x), Emu(y), Emu(w), Emu(h))
 
-    apply_fill(shape, style.get("fill", "black"))
+    apply_paint(shape, style)
     apply_stroke(shape, style)
     apply_dash(shape, style)
     apply_alpha(shape, style)
@@ -117,23 +149,21 @@ def _add_rect(slide: Any, elem: Any, style: Dict,
 def _add_oval(slide: Any, elem: Any, style: Dict,
               cs: CoordSystem, label_elem: Optional[Any]) -> Any:
     tag = _local_tag(elem)
+    cx = _geometry(elem, "cx")
+    cy = _geometry(elem, "cy")
     if tag == "circle":
-        cx = float(elem.get("cx", 0))
-        cy = float(elem.get("cy", 0))
-        r = float(elem.get("r", 0))
+        r = _geometry(elem, "r")
         x, y, w, h = cx - r, cy - r, 2 * r, 2 * r
     else:
-        cx = float(elem.get("cx", 0))
-        cy = float(elem.get("cy", 0))
-        rx = float(elem.get("rx", 0))
-        ry = float(elem.get("ry", 0))
+        rx = _geometry(elem, "rx")
+        ry = _geometry(elem, "ry")
         x, y, w, h = cx - rx, cy - ry, 2 * rx, 2 * ry
     ex = cs.x(x)
     ey = cs.y(y)
     ew = max(1, cs.x(w))
     eh = max(1, cs.y(h))
     shape = slide.shapes.add_shape(9, Emu(ex), Emu(ey), Emu(ew), Emu(eh))
-    apply_fill(shape, style.get("fill", "black"))
+    apply_paint(shape, style)
     apply_stroke(shape, style)
     apply_dash(shape, style)
     apply_alpha(shape, style)

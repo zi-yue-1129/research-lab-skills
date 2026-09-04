@@ -156,3 +156,149 @@ def test_root_svg_font_family_reaches_the_run():
         assert names == {"DejaVu Sans"}
     finally:
         os.unlink(path)
+
+
+_A_NS = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+
+_GRADIENT_SVG = """\
+<svg viewBox="0 0 1200 675" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="fade" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#1e3a5f"/>
+      <stop offset="100%" stop-color="#0f766e"/>
+    </linearGradient>
+  </defs>
+  <rect x="100" y="100" width="400" height="200" fill="url(#fade)"/>
+</svg>"""
+
+_BAD_GEOMETRY_SVG = """\
+<svg viewBox="0 0 1200 675" xmlns="http://www.w3.org/2000/svg">
+  <rect x="100" y="100" width="not-a-number" height="200" fill="#1e3a5f"/>
+</svg>"""
+
+
+def test_gradient_fill_produces_a_grad_fill_element() -> None:
+    """A url(#id) fill resolves to a native OOXML gradient, not an empty fill."""
+    slide, _ = _conv(_GRADIENT_SVG)
+    shape = slide.shapes[0]
+    grad = shape._element.find(f".//{_A_NS}gradFill")
+    assert grad is not None
+    stops = grad.findall(f"{_A_NS}gsLst/{_A_NS}gs")
+    assert len(stops) == 2
+    assert stops[0].find(f"{_A_NS}srgbClr").get("val") == "1E3A5F"
+    assert stops[1].find(f"{_A_NS}srgbClr").get("val") == "0F766E"
+
+
+def test_gradient_stops_carry_their_offsets() -> None:
+    """Stop offsets survive as OOXML gs positions."""
+    slide, _ = _conv(_GRADIENT_SVG)
+    grad = slide.shapes[0]._element.find(f".//{_A_NS}gradFill")
+    positions = [
+        stop.get("pos") for stop in grad.findall(f"{_A_NS}gsLst/{_A_NS}gs")
+    ]
+    assert positions == ["0", "100000"]
+
+
+def test_solid_fill_is_unaffected_by_gradient_support() -> None:
+    """A plain hex fill still produces a solidFill, not a gradient."""
+    slide, _ = _conv(_DIAGRAM_SVG)
+    shape = slide.shapes[0]
+    assert shape._element.find(f".//{_A_NS}solidFill") is not None
+    assert shape._element.find(f".//{_A_NS}gradFill") is None
+
+
+def test_percentage_gradient_coordinates_are_accepted() -> None:
+    """`x2="100%"` is ordinary SVG and must not crash the converter.
+
+    linearGradient coordinates default to objectBoundingBox units, where a
+    percentage and a fraction mean the same thing, and most authoring tools
+    emit the percentage. `float("100%")` raises `ValueError`, so a naive parse
+    would die on markup it should render.
+    """
+    svg = _GRADIENT_SVG.replace('x2="1"', 'x2="100%"')
+    slide, _ = _conv(svg)
+    assert slide.shapes[0]._element.find(f".//{_A_NS}gradFill") is not None
+
+
+def test_a_nonsense_gradient_coordinate_is_named() -> None:
+    """An unparsable coordinate says which attribute was wrong."""
+    svg = _GRADIENT_SVG.replace('x2="1"', 'x2="halfway"')
+    with pytest.raises(ValueError, match="x2"):
+        _conv(svg)
+
+
+def test_an_unknown_paint_server_is_reported() -> None:
+    """A fill naming a gradient that does not exist is an error.
+
+    It must also reach the caller: `_dispatch_children` guards each child with
+    a broad `except Exception`, so an ordinary error here would be logged at
+    verbose level and the shape would export unfilled with nothing to explain
+    it.
+    """
+    svg = _GRADIENT_SVG.replace('fill="url(#fade)"', 'fill="url(#nope)"')
+    with pytest.raises(ValueError, match="nope"):
+        _conv(svg)
+
+
+@pytest.mark.parametrize("attribute,value", [
+    ("gradientUnits", "userSpaceOnUse"),
+    ("spreadMethod", "reflect"),
+    ("gradientTransform", "rotate(45)"),
+])
+def test_an_unsupported_gradient_feature_is_refused(
+        attribute: str, value: str) -> None:
+    """Features that change the rendering are refused, not dropped.
+
+    Accepting the markup and ignoring the feature exports a deck that looks
+    wrong with nothing in the log to explain it -- and the person who sees the
+    render is not the person reading the code.
+    """
+    svg = _GRADIENT_SVG.replace(
+        '<linearGradient id="fade"',
+        f'<linearGradient id="fade" {attribute}="{value}"')
+    with pytest.raises(ValueError, match=attribute):
+        _conv(svg)
+
+
+def test_a_stop_opacity_that_would_be_dropped_is_refused() -> None:
+    """DrawingML stops here carry no alpha, so a translucent stop is an error."""
+    svg = _GRADIENT_SVG.replace(
+        'stop-color="#0f766e"', 'stop-color="#0f766e" stop-opacity="0.4"')
+    with pytest.raises(ValueError, match="stop-opacity"):
+        _conv(svg)
+
+
+def test_a_stop_without_a_colour_is_refused() -> None:
+    """A stop with no stop-color contributes nothing and is an error."""
+    svg = _GRADIENT_SVG.replace('stop-color="#0f766e"', "")
+    with pytest.raises(ValueError, match="stop-color"):
+        _conv(svg)
+
+
+def test_malformed_geometry_raises_instead_of_dropping_the_shape() -> None:
+    """A bad geometry attribute is reported, not silently swallowed.
+
+    The registry block caught every exception and passed. The shape then never
+    entered `_shape_registry`, so `_bind_connectors` could not anchor anything
+    to it -- producing exactly the dangling connectors the review gate exists
+    to catch, with no diagnostic anywhere.
+    """
+    with pytest.raises(ValueError, match="not-a-number"):
+        _conv(_BAD_GEOMETRY_SVG)
+
+
+def test_the_whole_deck_route_still_exports(tmp_path) -> None:
+    """The gradient path also survives the directory-to-deck entry point.
+
+    `convert_file(slides_dir, out_path)` is the route `SKILL.md` actually
+    calls; the in-memory `_conv` helper bypasses `prs.save`, so a shape that
+    python-pptx accepts in memory but refuses to serialise would slip through
+    every other test in this task.
+    """
+    slides_dir = tmp_path / "slides"
+    slides_dir.mkdir()
+    (slides_dir / "slide01.svg").write_text(_GRADIENT_SVG, encoding="utf-8")
+    out = tmp_path / "deck.pptx"
+    convert_file(str(slides_dir), str(out))
+    assert out.exists()
+    assert len(Presentation(str(out)).slides) == 1
