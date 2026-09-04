@@ -13,7 +13,7 @@ import json
 import argparse
 import os
 from pathlib import Path
-from typing import Dict, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from design_tokens import DEFAULT_TOKENS_PATH, DesignTokens, TokenError, TypeRole
 from fonts import resolve_font_stack, text_width, vertical_metrics
@@ -337,7 +337,51 @@ def chart_note(note: str, right: float, bottom: float) -> str:
 
 
 # Chart drawing area
-def chart_area() -> tuple:
+_MAX_TICK_DECIMALS = 3
+
+
+def tick_decimals(y_max: float) -> int:
+    """Return the fewest decimals that keep the six y ticks distinct.
+
+    `{val:.0f}` was fixed, so the shipped example deck -- QWK on a 0-1 axis --
+    labelled its six grid lines 0, 0, 0, 1, 1, 1. An axis whose labels repeat
+    tells the reader nothing about the scale.
+
+    Args:
+        y_max: The axis maximum.
+
+    Returns:
+        A decimal count between 0 and 3. A degenerate axis (`y_max` of 0) has
+        no distinct ticks at any precision and gets the maximum.
+    """
+    for decimals in range(_MAX_TICK_DECIMALS + 1):
+        labels = {f"{y_max * i / 5:.{decimals}f}" for i in range(6)}
+        if len(labels) == 6:
+            return decimals
+    return _MAX_TICK_DECIMALS
+
+
+def axis_tick_labels(y_max: float, unit: str) -> List[str]:
+    """Return the six y-axis tick labels for a bar or line chart.
+
+    The renderers appended a literal `%` to every tick, so a throughput series
+    of 340 requests per second was labelled `340%`. A percentage suffix on
+    non-percentage data is not a styling choice; it states something false
+    about the numbers. The unit is now declared per slide and defaults to
+    empty, because a bare number is never wrong.
+
+    Args:
+        y_max: The axis maximum.
+        unit: The slide's `unit` string, appended verbatim.
+
+    Returns:
+        Six labels, from 0 to `y_max`.
+    """
+    decimals = tick_decimals(y_max)
+    return [f"{y_max * i / 5:.{decimals}f}{unit}" for i in range(6)]
+
+
+def chart_area(widest_y_tick: str = "100%") -> tuple:
     """Compute the plot rectangle from the active tokens.
 
     The area clears the frame rule at the top, the widest y-tick label on the
@@ -345,13 +389,18 @@ def chart_area() -> tuple:
     former fixed `130, 1100, 100, 520` was tuned for 10-12 unit chart text and
     a 20 unit title, both of which changed.
 
+    Args:
+        widest_y_tick: The widest label the caller will draw beside the axis.
+            The gutter was measured from a hardcoded `100%`, so a chart whose
+            unit is wider than that ran its ticks into the left margin.
+
     Returns:
         `(left, right, top, bottom)` in SVG units.
     """
     safe = S["safe"]
     rule_y = safe["top"] + t_size("slide_title") + 16
     top = rule_y + 24
-    left = safe["left"] + measured_width("100%", "axis") + 8
+    left = safe["left"] + measured_width(widest_y_tick, "axis") + 8
     right = S["w"] - safe["right"]
     axis_adv = t_size("axis") * t_lh("axis")
     foot_adv = t_size("footnote") * t_lh("footnote")
@@ -645,13 +694,19 @@ def render_bar_chart(sl: dict, meta: dict) -> str:
     categories = sl.get("categories", [])
     series     = sl.get("series", [])
     y_max      = float(sl.get("y_max", 100))
+    unit       = str(sl.get("unit", ""))
     note       = sl.get("note", "")
     footer     = meta.get("footer", "")
     slide_index = sl.get("index", 0)
 
     parts = [frame(title, footer)]
     chart_parts = []
-    CL, CR, CT, CB = chart_area()
+    tick_labels = axis_tick_labels(y_max, unit)
+    # One place finer than the axis: a bar labelled at the axis's own
+    # precision rounded a QWK of 0.853 to 0.9.
+    value_decimals = tick_decimals(y_max) + 1
+    CL, CR, CT, CB = chart_area(
+        max(tick_labels, key=lambda label: measured_width(label, "axis")))
     CW, CH = CR - CL, CB - CT
 
     for i in range(6):
@@ -662,7 +717,7 @@ def render_bar_chart(sl: dict, meta: dict) -> str:
         chart_parts.append(f'<text x="{CL - 8}" y="{y + 4:.1f}" '
                      f'font-size="{t_size("axis"):g}" '
                      f'data-style-role="axis" '
-                     f'fill="{S["muted"]}" text-anchor="end">{val:.0f}%</text>')
+                     f'fill="{S["muted"]}" text-anchor="end">{tick_labels[i]}</text>')
 
     chart_parts.append(f'<line x1="{CL}" y1="{CT}" x2="{CL}" y2="{CB}" '
                  f'stroke="{S["muted"]}" stroke-width="1.5"/>')
@@ -708,7 +763,8 @@ def render_bar_chart(sl: dict, meta: dict) -> str:
                              f'font-size="{t_size("footnote"):g}" '
                              f'font-weight="700" '
                              f'data-style-role="footnote" fill="{color}" '
-                             f'text-anchor="middle">{val:.1f}%</text>')
+                             f'text-anchor="middle">'
+                             f'{val:.{value_decimals}f}{unit}</text>')
 
     chart_parts.extend(chart_legend(series, CL, CB))
 
@@ -729,13 +785,19 @@ def render_line_chart(sl: dict, meta: dict) -> str:
     categories = sl.get("categories", [])
     series     = sl.get("series", [])
     y_max      = float(sl.get("y_max", 100))
+    unit       = str(sl.get("unit", ""))
     note       = sl.get("note", "")
     footer     = meta.get("footer", "")
     slide_index = sl.get("index", 0)
 
     parts = [frame(title, footer)]
     chart_parts = []
-    CL, CR, CT, CB = chart_area()
+    tick_labels = axis_tick_labels(y_max, unit)
+    # One place finer than the axis: a bar labelled at the axis's own
+    # precision rounded a QWK of 0.853 to 0.9.
+    value_decimals = tick_decimals(y_max) + 1
+    CL, CR, CT, CB = chart_area(
+        max(tick_labels, key=lambda label: measured_width(label, "axis")))
     CW, CH = CR - CL, CB - CT
 
     for i in range(6):
@@ -746,7 +808,7 @@ def render_line_chart(sl: dict, meta: dict) -> str:
         chart_parts.append(f'<text x="{CL - 8}" y="{y + 4:.1f}" '
                      f'font-size="{t_size("axis"):g}" '
                      f'data-style-role="axis" '
-                     f'fill="{S["muted"]}" text-anchor="end">{val:.0f}%</text>')
+                     f'fill="{S["muted"]}" text-anchor="end">{tick_labels[i]}</text>')
     chart_parts.append(f'<line x1="{CL}" y1="{CT}" x2="{CL}" y2="{CB}" '
                  f'stroke="{S["muted"]}" stroke-width="1.5"/>')
     chart_parts.append(f'<line x1="{CL}" y1="{CB}" x2="{CR}" y2="{CB}" '

@@ -819,14 +819,14 @@ python3 scripts/generate_slides.py --data <dir>/slide_data.json --out <dir>/ --s
         { "label": "baseline", "color": "#d97706", "values": [72.1, 81.6] },
         { "label": "this run", "color": "#059669", "values": [98.4, 100.0] }
       ],
-      "y_max": 100, "note": "n=..." },
+      "y_max": 100, "unit": "%", "note": "n=..." },
 
     { "index": 3, "type": "line_chart",
       "title": "...", "categories": ["E1", "E2", "E3"],
       "series": [
         { "label": "train loss", "color": "#3b82f6", "values": [80, 60, 45] }
       ],
-      "y_max": 100, "note": "n=..." },
+      "y_max": 100, "unit": "%", "note": "n=..." },
 
     { "index": 4, "type": "pie_chart",
       "title": "...", "categories": ["Train", "Dev", "Test"],
@@ -881,6 +881,13 @@ python3 scripts/generate_slides.py --data <dir>/slide_data.json --out <dir>/ --s
   ]
 }
 ```
+
+`unit` (`bar_chart`, `line_chart`) is appended to every axis tick and value
+label, and defaults to empty. Declare it whenever the numbers have one --
+`"%"`, `" req/s"`, `" ms"` -- and leave it out otherwise: the renderer used to
+append `%` unconditionally, which labelled a throughput of 340 requests per
+second as `340.0%`. The y-axis gutter is measured from the widest tick the
+unit produces, so a long unit does not run into the left margin.
 
 Only include [A] slides in `slide_data.json`.
 
