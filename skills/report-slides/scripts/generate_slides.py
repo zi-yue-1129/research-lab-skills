@@ -45,6 +45,15 @@ TYPE: Dict[str, TypeRole] = {}
 _TOKENS: Optional[DesignTokens] = None
 
 
+class SlideCapacityError(ValueError):
+    """Raised when content cannot be rendered legibly at presentation scale.
+
+    Shrinking type below a token role, or clipping rows, would hide the problem
+    rather than solve it. The caller must split the content across slides or
+    reduce it.
+    """
+
+
 def apply_tokens(tokens_path: Optional[Path]) -> None:
     """Load a design-token file into the module-level style state.
 
@@ -232,6 +241,19 @@ def series_color(series: dict, index: int) -> str:
         return explicit
     palette = S["chart_palette"]
     return palette[index % len(palette)]
+
+
+def content_top() -> float:
+    """Return the first y coordinate below the frame rule.
+
+    Four renderers used to hard-code their own origin (75, 80, 66), each tuned
+    against the former 20-unit title. They now share one derivation so a change
+    to the `slide_title` role moves all of them together.
+
+    Returns:
+        The top edge of the slide's content area in SVG units.
+    """
+    return S["safe"]["top"] + t_size("slide_title") + 40
 
 
 def chart_legend(series: list, left: float, bottom: float) -> list:
@@ -832,32 +854,50 @@ def render_table(sl: dict, meta: dict) -> str:
     if not n_cols:
         return svg("\n  ".join(parts))
 
-    tl, tr = 60, 1140
-    tw      = tr - tl
-    col_w   = tw / n_cols
-    row_h   = min(50, 450 / (len(rows) + 1))
-    top_y   = 75
-    table_h = row_h * (len(rows) + 1)
+    safe = S["safe"]
+    tl = safe["left"]
+    tr = S["w"] - safe["right"]
+    tw = tr - tl
+    col_w = tw / n_cols
+    top_y = content_top()
+
+    # A row is its text's line box plus symmetric vertical padding. The former
+    # `min(50, 450 / (len(rows) + 1))` shrank the row to fit the slide, which
+    # at 13-unit text was invisible and at the body role would clip descenders.
+    header_h = t_size("node_label") * t_lh("node_label") + 2 * 12
+    body_h = t_size("body") * t_lh("body") + 2 * 12
+    available = S["h"] - top_y - safe["bottom"]
+    capacity = int((available - header_h) // body_h)
+    if len(rows) > capacity:
+        raise SlideCapacityError(
+            f"table has {len(rows)} rows but only {capacity} fit at the body "
+            f"role ({t_size('body'):g} units); split the table across slides or "
+            f"drop columns rather than shrinking the text"
+        )
+    row_h = body_h
+    table_h = header_h + row_h * len(rows)
 
     table_parts = [
         f'<rect x="{tl}" y="{top_y}" width="{tw}" '
-        f'height="{row_h}" fill="{S["accent"]}"/>'
+        f'height="{header_h:.1f}" fill="{S["accent"]}"/>'
     ]
     for ci, col in enumerate(columns):
         cx = tl + ci * col_w + col_w / 2
-        table_parts.append(f'<text x="{cx:.1f}" y="{top_y + row_h * 0.63:.1f}" '
-                     f'font-size="13" font-weight="700" fill="{S["white"]}" '
+        table_parts.append(f'<text x="{cx:.1f}" y="{top_y + header_h * 0.66:.1f}" '
+                     f'font-size="{t_size("node_label"):g}" '
+                     f'font-weight="{t_weight("node_label")}" fill="{S["white"]}" '
+                     f'data-style-role="node_label" '
                      f'text-anchor="middle">{esc(col)}</text>')
 
     for ri, row in enumerate(rows):
-        ry = top_y + (ri + 1) * row_h
+        ry = top_y + header_h + ri * row_h
         bg = S["card"] if ri % 2 == 0 else S["bg"]
         table_parts.append(f'<rect x="{tl}" y="{ry:.1f}" width="{tw}" '
                      f'height="{row_h:.1f}" fill="{bg}" '
                      f'stroke="{S["border"]}" stroke-width="0.5"/>')
         for ci, cell in enumerate(row):
             cx    = tl + ci * col_w + col_w / 2
-            cy    = ry + row_h * 0.63
+            cy    = ry + row_h * 0.66
             color = S["body"]
             if highlight_col is not None and ci == highlight_col:
                 cs = str(cell)
@@ -865,7 +905,9 @@ def render_table(sl: dict, meta: dict) -> str:
                     color = S["good"]
                 elif "-" in cs:
                     color = S["danger"]
-            table_parts.append(f'<text x="{cx:.1f}" y="{cy:.1f}" font-size="13" '
+            table_parts.append(f'<text x="{cx:.1f}" y="{cy:.1f}" '
+                         f'font-size="{t_size("body"):g}" '
+                         f'data-style-role="body" '
                          f'fill="{color}" text-anchor="middle">{esc(cell)}</text>')
 
     table_parts.append(f'<rect x="{tl}" y="{top_y}" width="{tw}" '
@@ -881,6 +923,24 @@ def render_table(sl: dict, meta: dict) -> str:
     return svg("\n  ".join(parts))
 
 
+def _metric_card_height() -> float:
+    """Return the height one metric card needs for its three type roles.
+
+    Returns:
+        Card height in SVG units: the caption, display value, and footnote
+        stacked with grid spacing between them, inside the card surface's
+        vertical padding.
+    """
+    surface = _TOKENS.surface("card")
+    return (surface["padding"]["y"]
+            + t_size("caption")
+            + S["spacing"][4]
+            + t_size("deck_title")
+            + S["spacing"][3]
+            + t_size("footnote")
+            + surface["padding"]["y"])
+
+
 def render_metric_cards(sl: dict, meta: dict) -> str:
     title   = sl.get("title", "")
     metrics = sl.get("metrics", [])
@@ -893,35 +953,110 @@ def render_metric_cards(sl: dict, meta: dict) -> str:
 
     cols = 2 if n == 4 else min(n, 3)
     rows = (n + cols - 1) // cols
-    pad  = 40
-    gap  = 20
-    cw   = (S["w"] - 2 * pad - (cols - 1) * gap) / cols
-    ch   = (S["h"] - 80 - 2 * pad - (rows - 1) * gap) / rows
+    safe = S["safe"]
+    band_top = content_top()
+    band_h = S["h"] - band_top - safe["bottom"]
+    gap = S["spacing"][4]
+    cw = (S["w"] - safe["left"] - safe["right"] - (cols - 1) * gap) / cols
+    # The card is as tall as its content, not as tall as the slide. Dividing the
+    # whole band by the row count left the label at the card's top edge, the
+    # value adrift in its middle, and the change stranded at the bottom.
+    ch = _metric_card_height()
+    grid_h = rows * ch + (rows - 1) * gap
+    if grid_h > band_h:
+        raise SlideCapacityError(
+            f"{n} metric cards need {grid_h:.0f} units of height in {rows} "
+            f"rows but only {band_h:.0f} are available; use fewer cards per "
+            f"slide"
+        )
+    top = band_top + (band_h - grid_h) / 2
+    surface = _TOKENS.surface("card")
 
     for i, m in enumerate(metrics):
-        col   = i % cols
-        row   = i // cols
-        cx    = pad + col * (cw + gap)
-        cy    = 80 + pad + row * (ch + gap)
+        col = i % cols
+        row = i // cols
+        cx = safe["left"] + col * (cw + gap)
+        cy = top + row * (ch + gap)
         color = m.get("color", S["blue"])
         label = m.get("label", "")
         value = m.get("value", "")
         change = m.get("change", "")
 
-        parts.append(f'<rect x="{cx:.1f}" y="{cy:.1f}" width="{cw:.1f}" height="{ch:.1f}" '
-                     f'rx="8" fill="{S["card"]}" stroke="{S["border"]}" stroke-width="1.5"/>')
-        parts.append(f'<rect x="{cx:.1f}" y="{cy:.1f}" width="{cw:.1f}" height="5" '
-                     f'rx="4" fill="{color}"/>')
-        parts.append(f'<text x="{cx + cw/2:.1f}" y="{cy + 36:.1f}" font-size="13" '
+        parts.append(f'<rect x="{cx:.1f}" y="{cy:.1f}" width="{cw:.1f}" '
+                     f'height="{ch:.1f}" rx="{surface["radius"]}" '
+                     f'fill="{S["card"]}" stroke="{S["divider"]}" '
+                     f'stroke-width="{surface["border_width"]}"/>')
+        # Inset by the card radius so the bar's own corners cannot render
+        # outside the card outline, which a full-width bar with a smaller
+        # radius did on every card.
+        parts.append(f'<rect x="{cx + surface["radius"]:.1f}" y="{cy:.1f}" '
+                     f'width="{cw - 2 * surface["radius"]:.1f}" '
+                     f'height="5" rx="2.5" fill="{color}"/>')
+        label_y = cy + surface["padding"]["y"] + t_size("caption")
+        parts.append(f'<text x="{cx + cw / 2:.1f}" y="{label_y:.1f}" '
+                     f'font-size="{t_size("caption"):g}" '
+                     f'data-style-role="caption" '
                      f'fill="{S["muted"]}" text-anchor="middle">{esc(label)}</text>')
-        parts.append(f'<text x="{cx + cw/2:.1f}" y="{cy + ch/2 + 16:.1f}" font-size="38" '
-                     f'font-weight="700" fill="{color}" text-anchor="middle">{esc(value)}</text>')
+        value_y = label_y + S["spacing"][4] + t_size("deck_title")
+        parts.append(f'<text x="{cx + cw / 2:.1f}" '
+                     f'y="{value_y:.1f}" '
+                     f'font-size="{t_size("deck_title"):g}" '
+                     f'font-weight="{t_weight("deck_title")}" fill="{color}" '
+                     f'data-style-role="deck_title" '
+                     f'text-anchor="middle">{esc(value)}</text>')
         if change:
-            cc = S["good"] if "+" in str(change) else (S["danger"] if "-" in str(change) else S["muted"])
-            parts.append(f'<text x="{cx + cw/2:.1f}" y="{cy + ch - 18:.1f}" '
-                         f'font-size="12" fill="{cc}" text-anchor="middle">{esc(change)}</text>')
+            cc = (S["good"] if "+" in str(change)
+                  else (S["danger"] if "-" in str(change) else S["muted"]))
+            parts.append(f'<text x="{cx + cw / 2:.1f}" '
+                         f'y="{value_y + S["spacing"][3] + t_size("footnote"):.1f}" '
+                         f'font-size="{t_size("footnote"):g}" fill="{cc}" '
+                         f'data-style-role="footnote" '
+                         f'text-anchor="middle">{esc(change)}</text>')
 
     return svg("\n  ".join(parts))
+
+
+_PANEL_COUNT = 2
+
+
+def _panel_geometry() -> tuple:
+    """Return the two-column panel rectangle geometry.
+
+    Returns:
+        `(left_x, right_x, top_y, width, height)` in SVG units. The former
+        literals (60, 640, 66, 500, 562) predate the token safe area and left
+        an asymmetric margin against a 48-unit safe edge.
+    """
+    safe = S["safe"]
+    gap = S["spacing"][4]
+    top = content_top()
+    width = (S["w"] - safe["left"] - safe["right"] - gap) / _PANEL_COUNT
+    height = S["h"] - top - safe["bottom"]
+    return safe["left"], safe["left"] + width + gap, top, width, height
+
+
+def _panel_text_width() -> float:
+    """Return the width available to prose inside one panel.
+
+    Returns:
+        The panel width less the card surface's horizontal padding on both
+        sides.
+    """
+    width = _panel_geometry()[3]
+    return width - 2 * _TOKENS.surface("card")["padding"]["x"]
+
+
+def _panel_lines(text: str, width: float) -> list:
+    """Wrap panel prose at the body role.
+
+    Args:
+        text: Prose to wrap.
+        width: Available width in SVG units.
+
+    Returns:
+        Wrapped lines; always at least one entry.
+    """
+    return wrap_to_width(text, width, "body")
 
 
 def render_two_column(sl: dict, meta: dict) -> str:
@@ -932,35 +1067,69 @@ def render_two_column(sl: dict, meta: dict) -> str:
 
     parts = [frame(title, footer)]
 
-    def panel(p: dict, px, py, pw, ph) -> list:
-        out = []
-        out.append(f'<rect x="{px}" y="{py}" width="{pw}" height="{ph}" '
-                   f'rx="6" fill="{S["card"]}" stroke="{S["border"]}" stroke-width="1.5"/>')
+    surface = _TOKENS.surface("card")
+    pad_x = surface["padding"]["x"]
+    pad_y = surface["padding"]["y"]
+    body_adv = t_size("body") * t_lh("body")
+
+    def panel(p: dict, px: float, py: float, pw: float, ph: float) -> list:
+        """Render one column panel.
+
+        Args:
+            p: Panel mapping with optional `title` and `content`. `content` is
+                either a prose string or a list of bullet items.
+            px: Panel left edge.
+            py: Panel top edge.
+            pw: Panel width.
+            ph: Panel height.
+
+        Returns:
+            SVG markup fragments for the panel.
+        """
+        out = [f'<rect x="{px:.1f}" y="{py:.1f}" width="{pw:.1f}" '
+               f'height="{ph:.1f}" rx="{surface["radius"]}" fill="{S["card"]}" '
+               f'stroke="{S["divider"]}" '
+               f'stroke-width="{surface["border_width"]}"/>']
+        ty = py + pad_y + t_size("takeaway")
         pt = p.get("title", "")
         if pt:
-            out.append(f'<text x="{px + 20}" y="{py + 30}" font-size="14" font-weight="700" '
+            out.append(f'<text x="{px + pad_x:.1f}" y="{ty:.1f}" '
+                       f'font-size="{t_size("takeaway"):g}" '
+                       f'font-weight="{t_weight("takeaway")}" '
+                       f'data-style-role="takeaway" '
                        f'fill="{S["accent"]}">{esc(pt)}</text>')
-            out.append(f'<line x1="{px + 20}" y1="{py + 38}" x2="{px + pw - 20}" y2="{py + 38}" '
-                       f'stroke="{S["border"]}" stroke-width="1"/>')
+            rule_y = ty + S["spacing"][2]
+            out.append(f'<line x1="{px + pad_x:.1f}" y1="{rule_y:.1f}" '
+                       f'x2="{px + pw - pad_x:.1f}" y2="{rule_y:.1f}" '
+                       f'stroke="{S["divider"]}" stroke-width="1" '
+                       f'data-style-role="divider"/>')
+            ty = rule_y + S["spacing"][3] + t_size("body")
 
         content = p.get("content", [])
-        ty = py + 60
-        max_c = int(pw / 9)
-
         if isinstance(content, str):
-            out.append(tlines(wrap(content, max_c), px + 20, ty, 13, S["body"],
+            # Character-count wrapping (`int(pw / 9)`) was calibrated for
+            # 13-unit text; at the body role it overruns the panel by a third.
+            out.append(tlines(_panel_lines(content, pw - 2 * pad_x),
+                              px + pad_x, ty, t_size("body"), S["body"],
+                              "start", str(t_weight("body")), t_lh("body"),
                               role="body"))
         else:
+            x_dot = px + pad_x + t_size("body") * 0.28
+            x_text = px + pad_x + t_size("body")
             for item in content:
-                lines = wrap(str(item), max_c - 4)
-                out.append(f'<circle cx="{px + 28}" cy="{ty + 3}" r="4" fill="{S["accent"]}"/>')
-                out.append(tlines(lines, px + 44, ty, 13, S["body"],
+                lines = _panel_lines(str(item), px + pw - pad_x - x_text)
+                out.append(f'<circle cx="{x_dot:.1f}" '
+                           f'cy="{ty - t_size("body") * 0.30:.1f}" '
+                           f'r="{t_size("body") * 0.28:g}" fill="{S["accent"]}"/>')
+                out.append(tlines(lines, x_text, ty, t_size("body"), S["body"],
+                                  "start", str(t_weight("body")), t_lh("body"),
                                   role="body"))
-                ty += 24 * len(lines) + 8
+                ty += len(lines) * body_adv + S["spacing"][2]
         return out
 
-    parts += panel(left,  60,  66, 500, 562)
-    parts += panel(right, 640, 66, 500, 562)
+    left_x, right_x, panel_top, panel_w, panel_h = _panel_geometry()
+    parts += panel(left, left_x, panel_top, panel_w, panel_h)
+    parts += panel(right, right_x, panel_top, panel_w, panel_h)
 
     return svg("\n  ".join(parts))
 
@@ -974,47 +1143,117 @@ def render_timeline(sl: dict, meta: dict) -> str:
     if not events:
         return svg("\n  ".join(parts))
 
-    n  = len(events)
-    y0 = 370
-    x0, x1 = 100, 1100
-    xs = [x0 + i * (x1 - x0) / max(n - 1, 1) for i in range(n)]
+    n = len(events)
+    safe = S["safe"]
+    top = content_top()
+    bottom = S["h"] - safe["bottom"]
+    y0 = (top + bottom) / 2
+    node_r = 10
+    stem = S["spacing"][4]
 
-    parts.append(f'<line x1="{x0}" y1="{y0}" x2="{x1}" y2="{y0}" '
-                 f'stroke="{S["border"]}" stroke-width="3"/>')
+    label_adv = t_size("node_label") * t_lh("node_label")
+    date_adv = t_size("footnote") * t_lh("footnote")
+    detail_adv = t_size("caption") * t_lh("caption")
 
-    for i, (ev, x) in enumerate(zip(events, xs)):
+    # Each event owns an equal share of the axis, and its text is wrapped to
+    # that share. The former `wrap(label, 18)` / `wrap(detail, 20)` character
+    # counts had no relationship to the number of events on the slide.
+    axis_left = safe["left"]
+    axis_right = S["w"] - safe["right"]
+    slot = (axis_right - axis_left) / n
+    text_budget = slot - S["spacing"][3]
+
+    blocks = []
+    for ev in events:
+        label_lines = wrap_to_width(
+            str(ev.get("label", "")), text_budget, "node_label")
+        date_str = str(ev.get("date", ""))
+        detail = str(ev.get("detail", ""))
+        detail_lines = (wrap_to_width(detail, text_budget, "caption")
+                        if detail else [])
+        widths = [measured_width(line, "node_label") for line in label_lines]
+        widths += [measured_width(line, "caption") for line in detail_lines]
+        if date_str:
+            widths.append(measured_width(date_str, "footnote"))
+        blocks.append({
+            "label_lines": label_lines,
+            "date": date_str,
+            "detail_lines": detail_lines,
+            "height": (len(label_lines) * label_adv
+                       + (date_adv if date_str else 0.0)
+                       + len(detail_lines) * detail_adv),
+            "width": max(widths) if widths else 0.0,
+        })
+
+    half_band = (bottom - top) / 2 - node_r - stem
+    tallest = max(block["height"] for block in blocks)
+    if tallest > half_band:
+        raise SlideCapacityError(
+            f"{n} timeline events need {tallest:.0f} units of label height but "
+            f"only {half_band:.0f} are available on either side of the axis; "
+            f"split the timeline across slides or shorten the details"
+        )
+
+    max_slot = max(block["width"] for block in blocks) + S["spacing"][3]
+    x_left = axis_left + max_slot / 2
+    x_right = axis_right - max_slot / 2
+    if n > 1:
+        pitch = (x_right - x_left) / (n - 1)
+        # Half a unit of slack: the pitch equals the slot exactly when every
+        # label wraps to its full budget, and floating-point noise there would
+        # reject a layout that fits. Half a unit is far below the 8-unit grid,
+        # so it cannot hide a real overlap.
+        if pitch + 0.5 < max_slot:
+            raise SlideCapacityError(
+                f"{n} timeline events need {max_slot:.0f} units of horizontal "
+                f"pitch but only {pitch:.0f} are available; split the timeline "
+                f"across slides or shorten the labels"
+            )
+    xs = [x_left + i * (x_right - x_left) / max(n - 1, 1) for i in range(n)]
+
+    parts.append(f'<line x1="{axis_left}" y1="{y0:.1f}" x2="{axis_right}" '
+                 f'y2="{y0:.1f}" stroke="{S["line"]}" stroke-width="3"/>')
+
+    for i, (ev, x, block) in enumerate(zip(events, xs, blocks)):
         color = ev.get("color", S["accent"])
         above = i % 2 == 0
-        event_parts = []
-
-        event_parts.append(f'<circle cx="{x:.1f}" cy="{y0}" r="10" '
-                     f'fill="{color}" stroke="{S["bg"]}" stroke-width="2"/>')
+        event_parts = [f'<circle cx="{x:.1f}" cy="{y0:.1f}" r="{node_r}" '
+                       f'fill="{color}" stroke="{S["bg"]}" stroke-width="2"/>']
 
         if above:
-            event_parts.append(f'<line x1="{x:.1f}" y1="{y0 - 10}" x2="{x:.1f}" y2="{y0 - 28}" '
-                         f'stroke="{color}" stroke-width="1.5" stroke-dasharray="3,2"/>')
-            ty = y0 - 46
+            event_parts.append(
+                f'<line x1="{x:.1f}" y1="{y0 - node_r:.1f}" x2="{x:.1f}" '
+                f'y2="{y0 - node_r - stem:.1f}" stroke="{color}" '
+                f'stroke-width="1.5" stroke-dasharray="3,2"/>')
+            # The block is laid out upward from the stem, so a two-line detail
+            # grows away from the axis instead of across it.
+            ty = y0 - node_r - stem - block["height"] + t_size("node_label")
         else:
-            event_parts.append(f'<line x1="{x:.1f}" y1="{y0 + 10}" x2="{x:.1f}" y2="{y0 + 28}" '
-                         f'stroke="{color}" stroke-width="1.5" stroke-dasharray="3,2"/>')
-            ty = y0 + 42
+            event_parts.append(
+                f'<line x1="{x:.1f}" y1="{y0 + node_r:.1f}" x2="{x:.1f}" '
+                f'y2="{y0 + node_r + stem:.1f}" stroke="{color}" '
+                f'stroke-width="1.5" stroke-dasharray="3,2"/>')
+            ty = y0 + node_r + stem + t_size("node_label")
 
-        label = ev.get("label", "")
-        label_lines = wrap(label, 18)
-        event_parts.append(tlines(label_lines, x, ty, 13, S["accent"], "middle",
-                                  "700", role="node_label"))
+        event_parts.append(tlines(
+            block["label_lines"], x, ty, t_size("node_label"), S["accent"],
+            "middle", str(t_weight("node_label")), t_lh("node_label"),
+            role="node_label"))
+        ty += len(block["label_lines"]) * label_adv
 
-        date_str = ev.get("date", "")
-        if date_str:
-            dy = y0 + 28 if above else y0 - 20
-            event_parts.append(f'<text x="{x:.1f}" y="{dy}" font-size="10" '
-                         f'fill="{S["muted"]}" text-anchor="middle">{esc(date_str)}</text>')
+        if block["date"]:
+            event_parts.append(
+                f'<text x="{x:.1f}" y="{ty:.1f}" '
+                f'font-size="{t_size("footnote"):g}" '
+                f'data-style-role="footnote" fill="{S["muted"]}" '
+                f'text-anchor="middle">{esc(block["date"])}</text>')
+            ty += date_adv
 
-        detail = ev.get("detail", "")
-        if detail:
-            det_y = ty + len(label_lines) * 18 + 6
-            event_parts.append(tlines(wrap(detail, 20), x, det_y, 11, S["muted"],
-                                      "middle", role="caption"))
+        if block["detail_lines"]:
+            event_parts.append(tlines(
+                block["detail_lines"], x, ty, t_size("caption"), S["muted"],
+                "middle", str(t_weight("caption")), t_lh("caption"),
+                role="caption"))
 
         parts.append(f'<g data-pptx-role="group" data-node-id="event-{i}">\n    '
                     + "\n    ".join(event_parts) + '\n  </g>')

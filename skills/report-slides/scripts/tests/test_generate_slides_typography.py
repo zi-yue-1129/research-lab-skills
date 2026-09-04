@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 
 import pytest
+from lxml import etree
 
 import generate_slides as gs
 from design_tokens import TokenError
@@ -369,3 +370,297 @@ def test_line_chart_labels_its_series() -> None:
     assert fills == gs.S["chart_palette"][:2]
     assert "sparse" in markup
     assert "dense" in markup
+
+
+def test_table_cells_are_at_presentation_scale() -> None:
+    """Table header and body cells use node_label and body roles."""
+    markup = gs.render_table(
+        {"index": 1, "title": "Results",
+         "columns": ["config", "acc", "delta"],
+         "rows": [["baseline", "81.2", "-"], ["sparse", "83.4", "+2.2"]]},
+        {"footer": "4/8"},
+    )
+    sizes = _sizes(markup)
+    assert 18 in sizes
+    assert 21 in sizes
+    assert 13 not in sizes
+
+
+def test_table_rows_never_shrink_below_the_body_role() -> None:
+    """Row height accommodates the body role plus vertical padding."""
+    markup = gs.render_table(
+        {"index": 1, "title": "Results",
+         "columns": ["a", "b"],
+         "rows": [["1", "2"], ["3", "4"], ["5", "6"]]},
+        {},
+    )
+    heights = {
+        float(m) for m in re.findall(r'height="([0-9.]+)" fill="#', markup)
+    }
+    needed = gs.t_size("body") * gs.t_lh("body")
+    assert heights
+    assert min(heights) >= needed
+
+
+def test_table_raises_when_rows_cannot_fit() -> None:
+    """An over-long table is an error, not silently shrunken text."""
+    rows = [[f"row {i}", str(i)] for i in range(40)]
+    with pytest.raises(gs.SlideCapacityError) as excinfo:
+        gs.render_table(
+            {"index": 1, "title": "Results", "columns": ["name", "n"], "rows": rows},
+            {},
+        )
+    message = str(excinfo.value)
+    assert "40" in message
+    assert "split" in message.lower()
+
+
+def test_metric_cards_use_display_and_caption_roles() -> None:
+    """Metric labels, values, and changes all come from roles."""
+    markup = gs.render_metric_cards(
+        {"index": 2, "title": "Headline numbers",
+         "metrics": [{"label": "throughput", "value": "2.1x", "change": "+110%"},
+                     {"label": "memory", "value": "0.6x", "change": "-40%"}]},
+        {},
+    )
+    sizes = _sizes(markup)
+    assert 44 in sizes
+    assert 16 in sizes
+    assert 38 not in sizes
+    assert min(sizes) >= 12
+
+
+def test_metric_cards_raise_when_too_many_share_a_slide() -> None:
+    """Cards that cannot hold their three type roles are an error."""
+    metrics = [{"label": f"m{i}", "value": str(i), "change": "+1"}
+               for i in range(15)]
+    with pytest.raises(gs.SlideCapacityError, match="metric cards"):
+        gs.render_metric_cards({"index": 2, "title": "T", "metrics": metrics}, {})
+
+
+def test_two_column_headings_and_body_use_roles() -> None:
+    """Two-column headings use takeaway and body text uses body.
+
+    The panel heading key is `title`, as `SKILL.md` documents and every
+    fixture in the repository writes it. The plan's draft of this test used
+    `heading`, which no renderer has ever read: the assertion on the takeaway
+    role would then have failed because no heading was emitted at all, not
+    because the role was wrong.
+    """
+    markup = gs.render_two_column(
+        {"index": 3, "title": "Comparison",
+         "left": {"title": "Before", "content": "dense attention throughout"},
+         "right": {"title": "After", "content": "sparse above 4k context"}},
+        {},
+    )
+    sizes = _sizes(markup)
+    assert 26 in sizes
+    assert 21 in sizes
+    assert 13 not in sizes
+
+
+def test_two_column_body_stays_inside_its_panel() -> None:
+    """Wrapped body text is measured against the panel's inner width."""
+    long_text = ("Quadratic memory growth limits the usable context window to "
+                 "four thousand tokens on a single accelerator device.")
+    markup = gs.render_two_column(
+        {"index": 3, "title": "Comparison",
+         "left": {"title": "Before", "content": long_text},
+         "right": {"title": "After", "content": long_text}},
+        {},
+    )
+    panels = [float(m) for m in re.findall(r'<rect x="([0-9.]+)" y="[0-9.]+" '
+                                          r'width="[0-9.]+" height="[0-9.]+" '
+                                          r'rx=', markup)]
+    assert panels, "no panel rectangles rendered"
+    widest = max(
+        gs.measured_width(line, "body")
+        for line in gs._panel_lines(long_text, gs._panel_text_width())
+    )
+    assert widest <= gs._panel_text_width()
+
+
+def test_timeline_labels_use_node_and_caption_roles() -> None:
+    """Timeline labels, dates, and details use their roles."""
+    markup = gs.render_timeline(
+        {"index": 4, "title": "Schedule",
+         "events": [{"label": "kickoff", "date": "2026-01", "detail": "scope agreed"},
+                    {"label": "midpoint", "date": "2026-05", "detail": "first results"},
+                    {"label": "delivery", "date": "2026-09", "detail": "paper submitted"}]},
+        {},
+    )
+    sizes = _sizes(markup)
+    assert 18 in sizes
+    assert 16 in sizes
+    assert min(sizes) >= 12
+    assert 11 not in sizes
+
+
+def test_timeline_events_stay_inside_the_safe_area() -> None:
+    """Timeline text does not run past the safe area at the new sizes.
+
+    Baselines are accumulated through the `tspan` `dy` offsets rather than read
+    off the `<text>` element. The plan's draft matched `y=` on the `<text>`
+    only, which is the *first* line's baseline: a two-line detail block hanging
+    below the axis would have passed while its last line sat outside the safe
+    area.
+    """
+    markup = gs.render_timeline(
+        {"index": 4, "title": "Schedule",
+         "events": [{"label": f"milestone {i}", "date": f"2026-0{i}",
+                     "detail": "a reasonably long detail string"}
+                    for i in range(1, 6)]},
+        {},
+    )
+    root = etree.fromstring(gs.svg(markup).encode("utf-8"))
+    baselines = []
+    for elem in root.iter("{http://www.w3.org/2000/svg}text"):
+        y = float(elem.get("y"))
+        spans = list(elem.iter("{http://www.w3.org/2000/svg}tspan"))
+        if not spans:
+            baselines.append(y)
+            continue
+        for span in spans:
+            y += float(span.get("dy", 0))
+            baselines.append(y)
+    assert baselines
+    assert max(baselines) <= gs.S["h"] - gs.S["safe"]["bottom"]
+
+
+def test_timeline_raises_when_events_cannot_fit_across_the_axis() -> None:
+    """Overlapping labels are an error, not a rendering option."""
+    events = [{"label": f"a considerably wordy milestone number {i}",
+               "date": "2026-01", "detail": "detail"} for i in range(12)]
+    with pytest.raises(gs.SlideCapacityError, match="12"):
+        gs.render_timeline({"index": 4, "title": "T", "events": events}, {})
+
+
+_SWEEP_PAYLOADS = {
+    "title": {"title": "T", "subtitle": "S", "author": "A", "date": "D"},
+    "bullet_list": {"title": "T", "bullets": ["one", "two"]},
+    "bar_chart": {"index": 1, "title": "T", "categories": ["a", "b"],
+                  "series": [{"label": "s", "values": [1, 2]}], "y_max": 10,
+                  "note": "n"},
+    "line_chart": {"index": 2, "title": "T", "categories": ["a", "b"],
+                   "series": [{"label": "s", "values": [1, 2]}], "y_max": 10},
+    "pie_chart": {"index": 3, "title": "T", "categories": ["a", "b"],
+                  "values": [1, 2]},
+    "table": {"index": 4, "title": "T", "columns": ["c1", "c2"],
+              "rows": [["1", "2"]]},
+    "metric_cards": {"index": 5, "title": "T",
+                     "metrics": [{"label": "l", "value": "1", "change": "+1"}]},
+    "two_column": {"index": 6, "title": "T",
+                   "left": {"title": "L", "content": "lc"},
+                   "right": {"title": "R", "content": "rc"}},
+    "timeline": {"index": 7, "title": "T",
+                 "events": [{"label": "e", "date": "d", "detail": "x"}]},
+    "conclusion": {"index": 8, "title": "T", "conclusions": ["c"],
+                   "next_steps": ["n"]},
+}
+
+
+def test_the_sweep_covers_every_renderer() -> None:
+    """The two guards below are only as good as their payload coverage."""
+    assert set(_SWEEP_PAYLOADS) == set(gs.RENDERERS)
+
+
+def test_no_renderer_emits_type_below_the_footnote_floor() -> None:
+    """Every renderer's output respects the footnote floor of 12 units."""
+    for slide_type, payload in _SWEEP_PAYLOADS.items():
+        markup = gs.RENDERERS[slide_type](payload, {"footer": "f"})
+        sizes = [float(m) for m in _FONT_SIZE_RE.findall(markup)]
+        assert sizes, f"{slide_type} emitted no sized text"
+        assert min(sizes) >= 12, f"{slide_type} emitted {min(sizes)} unit text"
+
+
+def test_every_text_element_declares_a_known_style_role() -> None:
+    """No renderer may emit a `<text>` without naming its typography role.
+
+    Plan 2's linter reads `data-style-role` to decide which type floor, which
+    colour set, and which decorative exemption apply. An element without one is
+    not merely unstyled: `check_type_floor` and `check_token_color` skip it, so
+    those rules report clean on markup they never examined. The failure is
+    silent by construction, which is why it is asserted mechanically here rather
+    than left to review. A misspelt role produces the same silent skip as an
+    omission, so the value is checked against the token file too.
+    """
+    roles = set(gs._TOKENS.raw["typography"]["roles"])
+    for slide_type, payload in _SWEEP_PAYLOADS.items():
+        fragment = gs.RENDERERS[slide_type](payload, {"footer": "f"})
+        root = etree.fromstring(gs.svg(fragment).encode("utf-8"))
+        elements = list(root.iter("{http://www.w3.org/2000/svg}text"))
+        assert elements, f"{slide_type} emitted no text at all"
+        for elem in elements:
+            declared = elem.get("data-style-role")
+            assert declared, (
+                f"{slide_type} emitted <text> with no data-style-role: "
+                f"{etree.tostring(elem)[:120]!r}"
+            )
+            assert declared in roles, (
+                f"{slide_type} declared style role {declared!r}, which the "
+                f"token file does not define"
+            )
+
+
+_ONE_METRIC = {
+    "index": 2, "title": "Headline numbers",
+    "metrics": [{"label": "throughput", "value": "2.1x", "change": "+110%"}],
+}
+_THREE_METRICS = {
+    "index": 2, "title": "Headline numbers",
+    "metrics": [{"label": "throughput", "value": "2.1x", "change": "+110%"},
+                {"label": "peak memory", "value": "0.6x", "change": "-40%"},
+                {"label": "accuracy", "value": "83.4", "change": "+2.2"}],
+}
+_CARD_RE = re.compile(
+    r'<rect x="([0-9.]+)" y="([0-9.]+)" width="([0-9.]+)" '
+    r'height="([0-9.]+)" rx="12"'
+)
+
+
+def test_metric_cards_are_no_taller_than_their_content() -> None:
+    """A card's three roles must read as one metric, not float apart.
+
+    Stretching the card to the whole content band put the label at the top, the
+    value adrift in the middle, and the change stranded some four hundred units
+    below it. The three stopped reading as one number with its context.
+    """
+    markup = gs.render_metric_cards(_THREE_METRICS, {})
+    cards = _CARD_RE.findall(markup)
+    assert cards
+    natural = gs._metric_card_height()
+    band = gs.S["h"] - gs.content_top() - gs.S["safe"]["bottom"]
+    assert natural < band, "the fixture must not fill the band by coincidence"
+    for _, _, _, height in cards:
+        assert float(height) == pytest.approx(natural)
+
+
+def test_metric_cards_are_centred_in_the_content_band() -> None:
+    """A single row of cards sits in the band's middle, not pinned to the top."""
+    markup = gs.render_metric_cards(_THREE_METRICS, {})
+    cards = _CARD_RE.findall(markup)
+    assert cards
+    card_top = min(float(y) for _, y, _, _ in cards)
+    card_bottom = card_top + gs._metric_card_height()
+    above = card_top - gs.content_top()
+    below = (gs.S["h"] - gs.S["safe"]["bottom"]) - card_bottom
+    assert above == pytest.approx(below, abs=1.0)
+
+
+def test_metric_card_accent_bar_stays_inside_the_rounded_corner() -> None:
+    """The accent bar must not poke out of the card's rounded corner.
+
+    The bar spanned the full card width with `rx="4"` while the card carries the
+    card surface's radius of 12, so the bar's squarer top corners rendered
+    outside the card outline as a visible step on every card.
+    """
+    markup = gs.render_metric_cards(_ONE_METRIC, {})
+    cards = _CARD_RE.findall(markup)
+    bars = re.findall(
+        r'<rect x="([0-9.]+)" y="[0-9.]+" width="([0-9.]+)" height="5"', markup)
+    assert len(cards) == len(bars) == 1
+    radius = gs._TOKENS.surface("card")["radius"]
+    card_x, _, card_w, _ = cards[0]
+    bar_x, bar_w = bars[0]
+    assert float(bar_x) >= float(card_x) + radius
+    assert float(bar_x) + float(bar_w) <= float(card_x) + float(card_w) - radius

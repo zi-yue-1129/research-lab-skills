@@ -3193,7 +3193,7 @@ table across slides, or drop columns). This follows the repository's
 no-silent-failures rule: content that cannot be shown legibly is an error, not a
 rendering option.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `skills/report-slides/scripts/tests/test_generate_slides_typography.py`:
 
@@ -3300,12 +3300,12 @@ def test_timeline_events_stay_inside_the_safe_area() -> None:
     assert max(ys) <= gs.S["h"] - gs.S["safe"]["bottom"]
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_generate_slides_typography.py -v -k "table or metric or two_column or timeline"`
 Expected: FAIL — `AttributeError: module 'generate_slides' has no attribute 'SlideCapacityError'`.
 
-- [ ] **Step 3: Add the capacity error**
+- [x] **Step 3: Add the capacity error**
 
 In `skills/report-slides/scripts/generate_slides.py`, after the `TYPE`/`_TOKENS`
 declarations added in Task 6, add:
@@ -3320,7 +3320,7 @@ class SlideCapacityError(ValueError):
     """
 ```
 
-- [ ] **Step 4: Re-render the table**
+- [x] **Step 4: Re-render the table**
 
 In `render_table`, replace lines 439–455 with:
 
@@ -3364,7 +3364,7 @@ In the row loop, replace `ry = top_y + (ri + 1) * row_h` with
 `cy = ry + row_h * 0.66`, and change the cell text size at line 472 to
 `font-size="{t_size("body"):g}"`.
 
-- [ ] **Step 5: Re-render the metric cards**
+- [x] **Step 5: Re-render the metric cards**
 
 In `render_metric_cards`, replace lines 497–527 with:
 
@@ -3425,7 +3425,7 @@ In `render_metric_cards`, replace lines 497–527 with:
                          f'text-anchor="middle">{esc(change)}</text>')
 ```
 
-- [ ] **Step 6: Re-render the two-column and timeline slides**
+- [x] **Step 6: Re-render the two-column and timeline slides**
 
 First commit the checkpoint, so the two halves can be reviewed apart:
 
@@ -3461,12 +3461,12 @@ vertical offset from the role:
   If the events do not fit across the axis, raise `SlideCapacityError` naming the
   event count rather than letting labels overlap.
 
-- [ ] **Step 7: Run test to verify it passes**
+- [x] **Step 7: Run test to verify it passes**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_generate_slides_typography.py -v`
 Expected: PASS — all tests green.
 
-- [ ] **Step 8: Assert no small-type literal, and no unroled text, survives**
+- [x] **Step 8: Assert no small-type literal, and no unroled text, survives**
 
 Add this final guard test to the same file:
 
@@ -3541,7 +3541,7 @@ Expected: PASS — 2 passed. If a renderer fails the floor, fix that renderer �
 not lower the floor. If a renderer fails the role check, add the role from the
 `t_size(...)` call already on that line — never delete the assertion.
 
-- [ ] **Step 9: Render and inspect the pixels**
+- [x] **Step 9: Render and inspect the pixels**
 
 ```bash
 timeout 300 python3 -c "
@@ -3585,14 +3585,14 @@ Open each PNG and confirm: table cells are not clipped horizontally, metric valu
 dominate their cards without touching the edges, two-column body text does not
 overflow its panel, and timeline labels do not overlap. Fix geometry, never sizes.
 
-- [ ] **Step 10: Run the existing suite**
+- [x] **Step 10: Run the existing suite**
 
 Run: `timeout 900 python3 -m pytest skills/report-slides/scripts/tests/ -q`
 Expected: PASS. Any fixture with a table longer than the new capacity now raises
 `SlideCapacityError` by design; split that fixture across slides and say so in the
 commit message.
 
-- [ ] **Step 11: Commit**
+- [x] **Step 11: Commit**
 
 ```bash
 git add skills/report-slides/scripts/generate_slides.py \
