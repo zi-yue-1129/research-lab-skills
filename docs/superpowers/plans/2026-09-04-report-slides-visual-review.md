@@ -6,7 +6,7 @@
 
 **Architecture:** A new `visual_style/` package parses an authored SVG into a typed scene (boxes, text runs, connectors), then runs rule modules against the resolved token set, emitting findings with `error` or `warning` severity. `validate_visual_style.py` is the CLI gate. The existing `visual_quality_reviewer_agent` is renamed to `render_integrity_reviewer_agent` with its defect vocabulary unchanged, and a new `art_direction_reviewer_agent` judges the whole slide with authority to require re-layout. Generative illustration becomes opt-in, anchored to curated reference styles rather than adjective lists.
 
-**Tech Stack:** Python 3.8+, lxml, PyYAML, Pillow (font metrics via `fonts.py`), pytest.
+**Tech Stack:** Python 3.11 (`.github/workflows/pytest.yml` pins 3.11; existing modules such as `presentation_gates.py` already use 3.10+ syntax, so new code may too), lxml, PyYAML, Pillow (font metrics via `fonts.py`, and colour-name resolution in `visual_style/color.py`), pytest. The linter deliberately does **not** depend on python-pptx: it measures authored SVG, not exported PPTX.
 
 **Spec:** `docs/superpowers/specs/2026-09-04-report-slides-visual-quality-design.md`
 
@@ -49,20 +49,21 @@
 | `skills/report-slides/scripts/tests/test_visual_style_density.py` | Create | 2 |
 | `skills/report-slides/scripts/validate_visual_style.py` | Create | 3 |
 | `skills/report-slides/scripts/tests/test_validate_visual_style.py` | Create | 3 |
+| `skills/report-slides/scripts/tests/test_slide_archetypes.py` | Create | 3 |
 | `skills/report-slides/references/visual-review.md` | Modify (defer measurable checks to the linter) | 3 |
 | `skills/report-slides/SKILL.md` | Modify (Stage 10 gate, Stage 12 split) | 3, 4 |
 | `skills/report-slides/agents/visual_quality_reviewer_agent.md` | Rename → `render_integrity_reviewer_agent.md`, narrow remit | 4 |
 | `skills/report-slides/agents/art_direction_reviewer_agent.md` | Create | 4 |
 | `skills/report-slides/agents/scientific_visual_reviewer_agent.md` | Modify (line 12 cross-reference) | 4 |
 | `skills/report-slides/scripts/presentation_gates.py` | Modify (roles, finding kinds, completion predicate) | 4 |
-| `skills/report-slides/scripts/presentation_workflow.py` | Modify (route both branches through the predicate) | 4 |
+| `skills/report-slides/scripts/presentation_workflow.py` | Modify (separate slide and module completion predicates) | 4 |
 | `skills/report-slides/scripts/presentation_events.py` | Modify (next-action derivation) | 4 |
 | `skills/report-slides/scripts/validate_visual_review.py` | Modify (accept the art-direction finding kinds) | 4 |
 | `skills/report-slides/scripts/tests/test_reviewer_roles.py` | Create | 4 |
 | `skills/report-slides/scripts/tests/test_agent_persona_docs.py` | Modify (renamed and new personas) | 4, 5 |
 | `skills/report-slides/scripts/tests/test_presentation_state.py` | Modify (next-action label rename) | 4 |
 | `skills/report-slides/references/style-anchors/README.md` | Create | 5 |
-| `skills/report-slides/references/style-anchors/anchors.yaml` | Create | 5 |
+| `skills/report-slides/references/style-anchors/anchors.yaml` | Create (ships empty, per spec §D6) | 5 |
 | `skills/report-slides/scripts/style_anchors.py` | Create | 5 |
 | `skills/report-slides/scripts/tests/test_style_anchors.py` | Create | 5 |
 | `skills/report-slides/scripts/validate_generative_prompt.py` | Create | 5 |
@@ -74,6 +75,10 @@
 | `examples/report-slides/visual-authoring/assets/research-collaboration/WHY-THIS-FAILS.md` | Create | 5 |
 | `examples/report-slides/visual-authoring/assets/research-collaboration/{prompt.md,review.json,source.svg}` | Modify (counter-example record, downgrade) | 5 |
 | `examples/report-slides/visual-authoring/slides/*.svg` | Modify (remove the raster layer, bring onto tokens) | 5 |
+| `skills/report-slides/scripts/lint_evidence.py` | Create | 6 |
+| `skills/report-slides/scripts/tests/test_lint_evidence.py` | Create | 6 |
+| `skills/report-slides/scripts/validate_visual_style.py` | Modify (`--record` writes lint evidence) | 6 |
+| `skills/report-slides/scripts/presentation_gates.py` | Modify (require current lint evidence; retire `visual_quality` writes) | 4, 6 |
 
 ---
 
@@ -86,6 +91,7 @@
 | 3 | Linter CLI and workflow gate | 8 |
 | 4 | Review split and art direction | 9–10 |
 | 5 | Generative art direction | 11–13 |
+| 6 | Lint evidence and the enforced gate | 14 |
 
 ## Rule Inventory
 
@@ -167,17 +173,12 @@ Create `skills/report-slides/scripts/tests/test_visual_style_report.py`:
 
 ```python
 """Tests for the visual-style finding and report model."""
-from __future__ import annotations
 
-import sys
-from pathlib import Path
+from __future__ import annotations
 
 import pytest
 
-_SKILL_DIR = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(_SKILL_DIR / "scripts"))
-
-from visual_style.report import Finding, LintReport, RuleError  # noqa: E402
+from visual_style.report import Finding, LintReport, RuleError
 
 
 def test_finding_rejects_an_unknown_severity() -> None:
@@ -418,6 +419,7 @@ git commit -m "feat(report-slides): add visual-style finding and report model"
     `contains_point(px, py) -> bool`, `contains_box(other) -> bool`
   - `@dataclass(frozen=True) class TextRun` — `element_id`, `text`, `x`, `y`,
     `size`, `weight`, `fill`, `anchor`, `style_role`, `node_id`, `line_count`,
+    `ascent`, `descent`, `line_offset`,
     `width`; plus a `bbox() -> Box` method
   - `@dataclass(frozen=True) class Connector` — `element_id`, `x1`, `y1`, `x2`,
     `y2`, `stroke`, `stroke_width`, `has_head`, `has_tail`, `node_id`,
@@ -427,6 +429,8 @@ git commit -m "feat(report-slides): add visual-style finding and report model"
   - `@dataclass(frozen=True) class Scene` — `width`, `height`, `boxes`, `texts`,
     `connectors`, `polygons`, `font_family`; plus `nodes() -> Dict[str, List[Box]]`
   - `parse_scene(svg_path: Union[str, Path], font_family: str) -> Scene`
+  - `_is_connector(elem) -> bool` — internal, but the rule it encodes is part of
+    the authoring contract: a line joins nodes only when it says so
 
 **Design notes.**
 
@@ -446,6 +450,20 @@ git commit -m "feat(report-slides): add visual-style finding and report model"
   connector claims to join. They are what makes `connector-port-drift`
   falsifiable — without a declared intent, a drifted endpoint is
   indistinguishable from a deliberate one.
+- **Not every `<line>` is a connector.** Chart gridlines, column rules, and the
+  frame's own header rule (`generate_slides.py` draws
+  `<line x1="40" y1="54" x2="1160" y2="54">` on every slide) are lines that
+  join nothing. A line is admitted as a `Connector` only when it declares
+  `data-from`/`data-to`, carries `marker-start`/`marker-end`, or declares a
+  `data-style-role` beginning with `connector`. Everything else is a rule, and
+  rules are not linted for attachment. Without this, `connector-dangling` would
+  fire on every slide in the deck and the rule would be switched off within a
+  day.
+- The text box is measured in both axes. `ascent` and `descent` come from
+  `fonts.vertical_metrics`; `line_offset` sums the `dy` the renderer wrote onto
+  the tspans. No line-height or ascent constant appears in this module — a
+  guessed one is what let the shipped footer sit outside the safe area
+  undetected.
 - Text width is measured, never estimated. `line_count` counts `<tspan>` children,
   defaulting to 1.
 
@@ -455,20 +473,16 @@ Create `skills/report-slides/scripts/tests/test_visual_style_scene.py`:
 
 ```python
 """Tests for SVG scene extraction."""
+
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import pytest
 
-_SKILL_DIR = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(_SKILL_DIR / "scripts"))
-
-from visual_style.scene import Box, parse_scene  # noqa: E402
+from visual_style.scene import Box, parse_scene
 
 _FAMILY = "DejaVu Sans"
-
 _SCENE_SVG = """\
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675">
   <rect width="1200" height="675" fill="#ffffff"/>
@@ -488,6 +502,7 @@ _SCENE_SVG = """\
   </g>
   <line x1="300" y1="145" x2="500" y2="145" stroke="#475569" stroke-width="2"
         marker-end="url(#arrow)" data-from="n1" data-to="n2"/>
+  <line x1="40" y1="54" x2="1160" y2="54" stroke="#e2e8f0" stroke-width="1.5"/>
   <polygon points="700,145 720,140 720,150" fill="#475569"/>
 </svg>"""
 
@@ -542,6 +557,54 @@ def test_text_bbox_respects_the_anchor(scene) -> None:
     bbox = run.bbox()
     assert bbox.x == pytest.approx(200 - run.width / 2, abs=0.5)
     assert bbox.right == pytest.approx(200 + run.width / 2, abs=0.5)
+
+
+def test_text_bbox_is_measured_vertically(scene) -> None:
+    """The box spans the face's real ascent and descent, not a guessed 0.8 em.
+
+    DejaVu Sans at size 18 reports ascent 17 and descent 5. A model that assumed
+    0.8 em of ascent and a full 1.2 em line-height below the baseline would put
+    the box at top 135.6 with bottom 157.2 -- 2.6 units too low at the top and
+    2.2 too low at the bottom, which is exactly the error that let a footer
+    baseline on the safe-area boundary look compliant.
+    """
+    run = next(t for t in scene.texts if t.text == "Encoder")
+    assert (run.ascent, run.descent, run.line_offset) == (17.0, 5.0, 0.0)
+    bbox = run.bbox()
+    assert bbox.y == pytest.approx(133.0)
+    assert bbox.bottom == pytest.approx(155.0)
+
+
+def test_multiline_text_measures_the_dy_the_renderer_wrote(
+    tmp_path: Path,
+) -> None:
+    """Line spacing is read from the markup, not reconstructed from a constant.
+
+    `generate_slides.tlines` writes `dy="0"` on the first span and
+    `dy="{size * lh:.1f}"` on the rest, so the distance between the first and
+    last baseline is already in the file.
+    """
+    markup = (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675">\n'
+        '  <text x="100" y="200" font-size="20" fill="#374151">'
+        '<tspan x="100" dy="0">one</tspan>'
+        '<tspan x="100" dy="29.0">two</tspan>'
+        '<tspan x="100" dy="29.0">three</tspan></text>\n'
+        '</svg>'
+    )
+    path = tmp_path / "multiline.svg"
+    path.write_text(markup, encoding="utf-8")
+    run = parse_scene(path, _FAMILY).texts[0]
+    assert run.line_count == 3
+    assert run.line_offset == pytest.approx(58.0)
+    ascent, descent = run.ascent, run.descent
+    assert run.bbox().h == pytest.approx(ascent + 58.0 + descent)
+
+
+def test_a_plain_rule_is_not_a_connector(scene) -> None:
+    """The frame's header rule joins nothing and must not be linted as a link."""
+    assert len(scene.connectors) == 1
+    assert all(conn.y1 != 54 for conn in scene.connectors)
 
 
 def test_connectors_record_their_arrowheads(scene) -> None:
@@ -633,7 +696,7 @@ from typing import Dict, List, Optional, Tuple, Union
 
 from lxml import etree
 
-from fonts import text_width
+from fonts import text_width, vertical_metrics
 
 _CANVAS_TOLERANCE = 0.5
 
@@ -797,6 +860,11 @@ class TextRun:
         style_role: The `data-style-role` token role, when declared.
         node_id: The enclosing group's `data-node-id`, when inside one.
         line_count: Number of rendered lines.
+        ascent: Measured distance from the baseline to the top of the em box.
+        descent: Measured distance from the baseline to the bottom of it.
+        line_offset: Summed `dy` of the element's `<tspan>` children, i.e. the
+            distance from the first baseline to the last. Measured from the
+            markup, not derived from a line-height constant.
         width: Measured advance width of the widest line.
     """
 
@@ -812,6 +880,9 @@ class TextRun:
     node_id: Optional[str]
     line_count: int
     width: float
+    ascent: float
+    descent: float
+    line_offset: float
 
     def bbox(self) -> Box:
         """Return the run's bounding box, honouring its anchor.
@@ -825,9 +896,14 @@ class TextRun:
             left = self.x - self.width
         else:
             left = self.x
-        # Baseline sits roughly 0.8 of the em above the descender.
-        top = self.y - self.size * 0.8
-        height = self.size * self.line_count * 1.2
+        # Every term here is measured. `ascent`/`descent` come from the face
+        # via Pillow, and `line_offset` is the sum of the `dy` the renderer
+        # actually wrote onto the tspans. A guessed 0.8 em ascent with no
+        # descent term understates the top of the box and overstates its bottom
+        # by most of a line, which is how the shipped footer slipped past this
+        # rule while genuinely hanging outside the safe area.
+        top = self.y - self.ascent
+        height = self.ascent + self.line_offset + self.descent
         return Box(self.element_id, "text", left, top, self.width, height,
                    self.fill, None, 0.0, 0.0, self.style_role, self.node_id,
                    False)
@@ -952,6 +1028,27 @@ def _line_count(elem) -> int:
     return len(spans) or 1
 
 
+def _line_offset(elem) -> float:
+    """Sum the `dy` offsets of a text element's `<tspan>` children.
+
+    This is the distance from the first baseline to the last, read from the
+    markup the renderer produced rather than reconstructed from a line-height
+    constant. `generate_slides.tlines` writes `dy="0"` on the first span and
+    `dy="{size * lh:.1f}"` on each one after it.
+
+    Args:
+        elem: The `<text>` element.
+
+    Returns:
+        The total offset in SVG units; 0.0 for single-line text.
+    """
+    total = 0.0
+    for child in elem:
+        if _local_tag(child) == "tspan":
+            total += _number(child.get("dy"), 0.0)
+    return total
+
+
 def _widest_line(elem, family: str, size: float, weight: int) -> Tuple[str, float]:
     """Measure a text element's widest rendered line.
 
@@ -1064,13 +1161,17 @@ def parse_scene(svg_path: Union[str, Path], font_family: str) -> Scene:
                 size = _number(child.get("font-size"), 0.0)
                 weight = _weight_of(child.get("font-weight"))
                 content, measured = _widest_line(child, font_family, size, weight)
+                ascent, descent = vertical_metrics(font_family, size)
                 texts.append(TextRun(
                     element_id, content,
                     _number(child.get("x")), _number(child.get("y")),
                     size, weight, child.get("fill") or "#000000",
                     child.get("text-anchor") or "start",
-                    role, child_node, _line_count(child), measured))
+                    role, child_node, _line_count(child), measured,
+                    ascent, descent, _line_offset(child)))
             elif tag == "line":
+                if not _is_connector(child):
+                    continue
                 connectors.append(Connector(
                     element_id,
                     _number(child.get("x1")), _number(child.get("y1")),
@@ -1084,6 +1185,8 @@ def parse_scene(svg_path: Union[str, Path], font_family: str) -> Scene:
                 if tag == "polygon":
                     polygons.append(Polygon(
                         element_id, points, child.get("fill"), child_node))
+                elif not _is_connector(child):
+                    continue
                 else:
                     for start, end in zip(points, points[1:]):
                         connectors.append(Connector(
@@ -1115,6 +1218,28 @@ def _marker_requested(value: Optional[str]) -> bool:
     return bool(text) and text != "none"
 
 
+def _is_connector(elem) -> bool:
+    """Return whether a line-like element is a semantic connector.
+
+    Chart gridlines, column rules, and the frame's header rule are lines that
+    join nothing. Linting them for attachment would fire on every slide, so a
+    line must declare its intent to be treated as a connector.
+
+    Args:
+        elem: The `<line>` or `<polyline>` element.
+
+    Returns:
+        True when the element declares endpoints, an arrowhead, or a connector
+        style role.
+    """
+    if elem.get("data-from") or elem.get("data-to"):
+        return True
+    if _marker_requested(elem.get("marker-start")) or _marker_requested(
+            elem.get("marker-end")):
+        return True
+    return (elem.get("data-style-role") or "").startswith("connector")
+
+
 def _parse_points(raw: str) -> Tuple[Tuple[float, float], ...]:
     """Parse an SVG points list.
 
@@ -1142,7 +1267,7 @@ def _parse_points(raw: str) -> Tuple[Tuple[float, float], ...]:
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_visual_style_scene.py -v`
-Expected: PASS — 11 passed.
+Expected: PASS — 14 passed.
 
 - [ ] **Step 5: Commit**
 
@@ -1197,20 +1322,17 @@ Create `skills/report-slides/scripts/tests/test_visual_style_geometry.py`:
 
 ```python
 """Tests for the geometry rules."""
+
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 from typing import Optional
 
 import pytest
 
-_SKILL_DIR = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(_SKILL_DIR / "scripts"))
-
-from design_tokens import DEFAULT_TOKENS_PATH, DesignTokens  # noqa: E402
-from visual_style import geometry  # noqa: E402
-from visual_style.scene import Box, Scene, TextRun  # noqa: E402
+from design_tokens import DEFAULT_TOKENS_PATH, DesignTokens
+from fonts import vertical_metrics
+from visual_style import geometry
+from visual_style.scene import Box, Scene, TextRun
 
 
 @pytest.fixture(scope="module")
@@ -1229,8 +1351,9 @@ def _box(element_id: str, x: float, y: float, w: float, h: float,
 def _text(element_id: str, x: float, y: float, width: float,
           node_id: Optional[str] = None, size: float = 18) -> TextRun:
     """Build a pre-measured text run for rule testing."""
+    ascent, descent = vertical_metrics("DejaVu Sans", size)
     return TextRun(element_id, "Label", x, y, size, 600, "#374151", "start",
-                   "node.label", node_id, 1, width)
+                   "node.label", node_id, 1, width, ascent, descent, 0.0)
 
 
 def _scene(boxes=(), texts=()) -> Scene:
@@ -1357,6 +1480,13 @@ def test_grid_tolerance_absorbs_small_drift(tokens: DesignTokens) -> None:
     """A 2-unit deviation is within tolerance and does not warn."""
     scene = _scene(boxes=[_box("b1", 102, 100, 200, 88)])
     assert geometry.check_grid(scene, tokens) == []
+
+
+def test_data_marks_are_exempt_from_the_grid(tokens: DesignTokens) -> None:
+    """A bar's height encodes a value; the grid does not apply to it."""
+    bar = Box("bar1", "rect", 103, 100, 40, 137, "#1e3a5f", None, 0, 0,
+              "chart.bar", None, False)
+    assert geometry.check_grid(_scene(boxes=[bar]), tokens) == []
 
 
 def test_check_runs_every_geometry_rule(tokens: DesignTokens) -> None:
@@ -1632,6 +1762,23 @@ def check_node_padding(scene: Scene, tokens: DesignTokens) -> List[Finding]:
     return findings
 
 
+def _is_data_mark(box: Box) -> bool:
+    """Return whether a box is a data mark rather than a laid-out element.
+
+    A bar's height and a marker's position come from the value they encode, not
+    from the layout grid. Holding them to `canvas.grid` would emit a warning per
+    bar on every chart slide.
+
+    Args:
+        box: The box to classify.
+
+    Returns:
+        True for boxes whose style role marks them as chart geometry.
+    """
+    role = box.style_role or ""
+    return role.startswith("chart") or role.startswith("mark")
+
+
 def _grid_delta(value: float, grid: float) -> float:
     """Return the distance from a value to the nearest grid multiple.
 
@@ -1659,7 +1806,7 @@ def check_grid(scene: Scene, tokens: DesignTokens) -> List[Finding]:
     grid = float(tokens.raw["canvas"]["grid"])
     findings: List[Finding] = []
     for box in scene.boxes:
-        if box.bleed:
+        if box.bleed or _is_data_mark(box):
             continue
         offenders = [
             f"{name}={value:g} (off by {_grid_delta(value, grid):g})"
@@ -1698,7 +1845,7 @@ def check(scene: Scene, tokens: DesignTokens) -> List[Finding]:
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_visual_style_geometry.py -v`
-Expected: PASS — 16 passed.
+Expected: PASS — 17 passed.
 
 - [ ] **Step 5: Commit**
 
@@ -1747,20 +1894,17 @@ Create `skills/report-slides/scripts/tests/test_visual_style_typography.py`:
 
 ```python
 """Tests for the typography rules."""
+
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 from typing import Optional
 
 import pytest
 
-_SKILL_DIR = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(_SKILL_DIR / "scripts"))
-
-from design_tokens import DEFAULT_TOKENS_PATH, DesignTokens  # noqa: E402
-from visual_style import typography  # noqa: E402
-from visual_style.scene import Scene, TextRun  # noqa: E402
+from design_tokens import DEFAULT_TOKENS_PATH, DesignTokens
+from fonts import vertical_metrics
+from visual_style import typography
+from visual_style.scene import Scene, TextRun
 
 
 @pytest.fixture(scope="module")
@@ -1772,8 +1916,10 @@ def tokens() -> DesignTokens:
 def _text(element_id: str, size: float, role: Optional[str] = "body",
           lines: int = 1, content: str = "Label") -> TextRun:
     """Build a pre-measured text run for rule testing."""
+    ascent, descent = vertical_metrics("DejaVu Sans", size)
     return TextRun(element_id, content, 100, 200, size, 400, "#374151",
-                   "start", role, None, lines, 120.0)
+                   "start", role, None, lines, 120.0,
+                   ascent, descent, size * 1.45 * (lines - 1))
 
 
 def _scene(texts) -> Scene:
@@ -2129,20 +2275,17 @@ Create `skills/report-slides/scripts/tests/test_visual_style_color.py`:
 
 ```python
 """Tests for the colour and contrast rules."""
+
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 from typing import Optional
 
 import pytest
 
-_SKILL_DIR = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(_SKILL_DIR / "scripts"))
-
-from design_tokens import DEFAULT_TOKENS_PATH, DesignTokens  # noqa: E402
-from visual_style import color  # noqa: E402
-from visual_style.scene import Box, Scene, TextRun  # noqa: E402
+from design_tokens import DEFAULT_TOKENS_PATH, DesignTokens
+from fonts import vertical_metrics
+from visual_style import color
+from visual_style.scene import Box, Scene, TextRun
 
 
 @pytest.fixture(scope="module")
@@ -2161,8 +2304,9 @@ def _box(element_id: str, fill: Optional[str], stroke: Optional[str] = None,
 def _text(element_id: str, fill: str, size: float = 21,
           weight: int = 400, x: float = 120, y: float = 150) -> TextRun:
     """Build a text run with the given paint for rule testing."""
+    ascent, descent = vertical_metrics("DejaVu Sans", size)
     return TextRun(element_id, "Label", x, y, size, weight, fill, "start",
-                   "body", None, 1, 80.0)
+                   "body", None, 1, 80.0, ascent, descent, 0.0)
 
 
 def _scene(boxes=(), texts=()) -> Scene:
@@ -2178,12 +2322,25 @@ def test_contrast_ratio_matches_the_wcag_formula() -> None:
     assert color.contrast_ratio("#ffffff", "#374151") == pytest.approx(10.31, abs=0.01)
 
 
-def test_normalize_hex_expands_shorthand_and_rejects_junk() -> None:
-    """Shorthand hex expands; names and gradients are not colours here."""
+def test_normalize_hex_expands_shorthand_and_resolves_names() -> None:
+    """Shorthand expands and CSS names resolve; non-colours return None."""
     assert color.normalize_hex("#FFF") == "#ffffff"
     assert color.normalize_hex("#1E3A5F") == "#1e3a5f"
+    assert color.normalize_hex("white") == "#ffffff"
+    assert color.normalize_hex("WHITE") == "#ffffff"
     assert color.normalize_hex("none") is None
+    assert color.normalize_hex("transparent") is None
     assert color.normalize_hex("url(#grad1)") is None
+
+
+def test_named_white_text_is_still_contrast_checked(
+    tokens: DesignTokens,
+) -> None:
+    """fill="white" on a white ground must not slip through as "not a colour"."""
+    scene = _scene(texts=[_text("t1", "white")])
+    findings = color.check_text_contrast(scene, tokens)
+    assert [f.rule for f in findings] == ["text-contrast"]
+    assert "1.00" in findings[0].message
 
 
 def test_color_role_reverse_maps_a_hex(tokens: DesignTokens) -> None:
@@ -2315,8 +2472,9 @@ Create `skills/report-slides/scripts/visual_style/color.py`:
 """Colour rules: WCAG contrast floors and design-system palette conformance."""
 from __future__ import annotations
 
-import re
 from typing import Dict, List, Optional, Tuple
+
+from PIL import ImageColor
 
 from design_tokens import DesignTokens
 
@@ -2325,7 +2483,7 @@ from .scene import Box, Scene
 
 RULES: Tuple[str, ...] = ("text-contrast", "graphic-contrast", "token-color")
 
-_HEX_RE = re.compile(r"^#(?:[0-9a-f]{3}|[0-9a-f]{6})$")
+_NON_COLOURS = frozenset({"none", "transparent", "currentcolor"})
 _LARGE_SIZE = 24.0
 _LARGE_BOLD_SIZE = 18.66
 _BOLD_WEIGHT = 700
@@ -2334,20 +2492,33 @@ _BOLD_WEIGHT = 700
 def normalize_hex(value: Optional[str]) -> Optional[str]:
     """Normalise an SVG paint value to a six-digit lowercase hex.
 
+    Named colours are resolved, because the existing SVG in this repository uses
+    `fill="white"` freely. Treating a named colour as "not a colour" would
+    silently exempt it from every contrast rule, which is the failure mode this
+    linter exists to remove. Pillow's `ImageColor` is used rather than the
+    converter's `CSS_COLORS` table so that the linter does not acquire a
+    python-pptx dependency; Pillow is already required for font metrics.
+
     Args:
-        value: The raw paint value, such as `#FFF`, `none`, or `url(#g)`.
+        value: The raw paint value, such as `#FFF`, `white`, `rgb(0,0,0)`,
+            `none`, or `url(#g)`.
 
     Returns:
-        The normalised hex, or None when the value is not a literal colour.
+        The normalised hex, or None when the value names no literal colour —
+        `none`, `transparent`, `currentColor`, or a paint-server reference.
     """
     if not value:
         return None
     text = value.strip().lower()
-    if not _HEX_RE.match(text):
+    if text in _NON_COLOURS:
         return None
-    if len(text) == 4:
-        return "#" + "".join(channel * 2 for channel in text[1:])
-    return text
+    try:
+        rgb = ImageColor.getrgb(text)
+    except ValueError:
+        # A paint-server reference such as url(#grad1) names no single colour;
+        # gradient conformance is out of this rule's scope by design.
+        return None
+    return "#{:02x}{:02x}{:02x}".format(*rgb[:3])
 
 
 def _channel_luminance(channel: float) -> float:
@@ -2678,20 +2849,16 @@ Create `skills/report-slides/scripts/tests/test_visual_style_connectors.py`:
 
 ```python
 """Tests for the connector rules."""
+
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 from typing import Optional
 
 import pytest
 
-_SKILL_DIR = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(_SKILL_DIR / "scripts"))
-
-from design_tokens import DEFAULT_TOKENS_PATH, DesignTokens  # noqa: E402
-from visual_style import connectors  # noqa: E402
-from visual_style.scene import Box, Connector, Polygon, Scene  # noqa: E402
+from design_tokens import DEFAULT_TOKENS_PATH, DesignTokens
+from visual_style import connectors
+from visual_style.scene import Box, Connector, Polygon, Scene
 
 
 @pytest.fixture(scope="module")
@@ -3346,7 +3513,7 @@ def check(scene: Scene, tokens: DesignTokens) -> List[Finding]:
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_visual_style_connectors.py -v`
-Expected: PASS — 16 passed.
+Expected: PASS — 17 passed.
 
 - [ ] **Step 5: Commit**
 
@@ -3398,20 +3565,17 @@ Create `skills/report-slides/scripts/tests/test_visual_style_density.py`:
 
 ```python
 """Tests for the density and consistency rules."""
+
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 from typing import Optional
 
 import pytest
 
-_SKILL_DIR = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(_SKILL_DIR / "scripts"))
-
-from design_tokens import DEFAULT_TOKENS_PATH, DesignTokens  # noqa: E402
-from visual_style import density  # noqa: E402
-from visual_style.scene import Box, Scene, TextRun  # noqa: E402
+from design_tokens import DEFAULT_TOKENS_PATH, DesignTokens
+from fonts import vertical_metrics
+from visual_style import density
+from visual_style.scene import Box, Scene, TextRun
 
 
 @pytest.fixture(scope="module")
@@ -3433,8 +3597,9 @@ def _label(element_id: str, x: float, y: float, size: float = 18,
            node_id: Optional[str] = None,
            role: str = "node.label") -> TextRun:
     """Build a label for rule testing."""
+    ascent, descent = vertical_metrics("DejaVu Sans", size)
     return TextRun(element_id, "Label", x, y, size, 600, "#374151", "start",
-                   role, node_id, 1, 60.0)
+                   role, node_id, 1, 60.0, ascent, descent, 0.0)
 
 
 def _scene(boxes=(), texts=()) -> Scene:
@@ -3905,6 +4070,7 @@ git commit -m "feat(report-slides): add density and component-consistency rules"
 **Files:**
 - Create: `skills/report-slides/scripts/validate_visual_style.py`
 - Test: `skills/report-slides/scripts/tests/test_validate_visual_style.py`
+- Test: `skills/report-slides/scripts/tests/test_slide_archetypes.py`
 - Modify: `skills/report-slides/SKILL.md` — end of `### 10. Visual integration`
   (currently `SKILL.md:687-693`)
 - Modify: `skills/report-slides/references/visual-review.md` — `## Complete-slide
@@ -3923,6 +4089,14 @@ git commit -m "feat(report-slides): add density and component-consistency rules"
     warnings_as_errors: bool = False) -> Dict[str, Any]`
   - `main() -> None`
 
+This task also carries the only test in either plan that runs the linter over
+markup the renderer actually produced. Keep it even when it looks redundant
+against the fixture tests: those use hand-written SVG, plan 1's renderer tests
+assert on strings, and neither can detect that the two plans disagree about
+where a text box is. That disagreement is exactly what put the footer baseline
+on the safe-area boundary. It adds `generate_slides.{apply_tokens, frame, svg,
+S}` (plan 1, Task 6) to this task's consumed interfaces.
+
 **Why the stage numbering does not change.** `SKILL.md` advertises a 15-stage
 pipeline and the design spec, the agent docs, and `presentation_module_lineage.py`
 all reference those numbers. The gate is therefore added as a blocking step at
@@ -3940,6 +4114,7 @@ Create `skills/report-slides/scripts/tests/test_validate_visual_style.py`:
 
 ```python
 """Tests for the visual-style linter CLI."""
+
 from __future__ import annotations
 
 import json
@@ -3949,15 +4124,12 @@ from pathlib import Path
 
 import pytest
 
+from design_tokens import DEFAULT_TOKENS_PATH
+from validate_visual_style import RULE_MODULES, lint_paths
+
 _SKILL_DIR = Path(__file__).resolve().parents[2]
 _SCRIPTS = _SKILL_DIR / "scripts"
-sys.path.insert(0, str(_SCRIPTS))
-
-from design_tokens import DEFAULT_TOKENS_PATH  # noqa: E402
-from validate_visual_style import RULE_MODULES, lint_paths  # noqa: E402
-
 _CLI = _SCRIPTS / "validate_visual_style.py"
-
 _CLEAN_SVG = """\
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675">
   <rect width="1200" height="675" fill="#ffffff"/>
@@ -3976,7 +4148,6 @@ _CLEAN_SVG = """\
   <line x1="440" y1="280" x2="640" y2="280" stroke="#475569" stroke-width="2"
         marker-end="url(#arrow)" data-from="n1" data-to="n2"/>
 </svg>"""
-
 _DIRTY_SVG = """\
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675">
   <rect width="1200" height="675" fill="#ffffff"/>
@@ -3994,6 +4165,55 @@ def _write(tmp_path: Path, name: str, body: str) -> Path:
     path = tmp_path / name
     path.write_text(body, encoding="utf-8")
     return path
+
+
+def test_a_real_generated_frame_passes_the_linter(tmp_path: Path) -> None:
+    """The renderer's own output must satisfy the rules that lint it.
+
+    Every other test in this plan lints a hand-written fixture, and every test in
+    plan 1 asserts on a rendered string. Nothing joined the two, which is how a
+    footer baseline placed exactly on the safe-area boundary shipped: plan 1
+    thought it was inside, plan 2's `safe-area` rule would have reported it on
+    every slide in the deck, and no test could see both.
+
+    This is the joint. It must stay in the suite even if it looks redundant
+    against the fixture tests -- it is the only one that fails when the two
+    plans' models of a text box drift apart.
+    """
+    import generate_slides as gs
+
+    gs.apply_tokens(DEFAULT_TOKENS_PATH)
+    markup = gs.svg(gs.frame("Method Overview", footer="Internal draft, 2026"))
+    path = tmp_path / "slide01.svg"
+    path.write_text(markup, encoding="utf-8")
+
+    result = lint_paths([path], DEFAULT_TOKENS_PATH)
+    findings = result["files"][0]["findings"]
+    errors = [f for f in findings if f["severity"] == "error"]
+    assert errors == [], [f"{f['rule']}: {f['message']}" for f in errors]
+    assert result["valid"] is True
+
+
+def test_a_generated_frame_footer_sits_inside_the_safe_area(
+    tmp_path: Path,
+) -> None:
+    """Pin the specific geometry, so a regression names itself.
+
+    `canvas.h` 675 minus `safe_area.bottom` 36 is 639. The footnote role is size
+    12, for which DejaVu Sans reports descent 3, so the baseline belongs at 636
+    and the box bottom lands on 639 exactly.
+    """
+    import generate_slides as gs
+    from visual_style.scene import parse_scene
+
+    gs.apply_tokens(DEFAULT_TOKENS_PATH)
+    path = tmp_path / "slide01.svg"
+    path.write_text(
+        gs.svg(gs.frame("T", footer="f")), encoding="utf-8")
+    scene = parse_scene(path, gs.S["font_resolved"])
+    footer = next(run for run in scene.texts if run.text == "f")
+    assert footer.y == pytest.approx(636.0)
+    assert footer.bbox().bottom == pytest.approx(639.0)
 
 
 def test_rule_modules_cover_every_declared_rule() -> None:
@@ -4253,14 +4473,97 @@ if __name__ == "__main__":
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `timeout 600 python3 -m pytest skills/report-slides/scripts/tests/test_validate_visual_style.py -v`
-Expected: PASS — 14 passed.
+Expected: PASS — 16 passed.
 
 If `test_a_clean_slide_reports_valid` fails on `occupancy`, that is the rule
 working: the fixture is deliberately sparse. `occupancy` is a *warning*, so it
 must not affect `valid`; if it does, the bug is in `lint_paths`, not the fixture.
 Do not relax the fixture to make the assertion pass.
 
-- [ ] **Step 5: Wire the gate into the workflow**
+- [ ] **Step 5: Lint six real slide archetypes and record what they say**
+
+Every rule so far was written against a fixture built to exercise it. None has
+been run over a whole realistic slide, so nothing yet establishes what this rule
+set actually says about the layouts users produce. Turning twenty-two blocking
+rules on without knowing that is how a linter loses its authority in its first
+week: the first hard error nobody believes gets the rule relaxed, and a relaxed
+rule does not come back.
+
+Render one slide of each archetype with `generate_slides.py` on the default
+tokens, lint it, and record the result. Create
+`skills/report-slides/scripts/tests/test_slide_archetypes.py`:
+
+```python
+"""What the rule set says about six realistic slides.
+
+These are not tests of one rule. They are the record of what the whole suite
+reports about the layouts this skill produces, and they exist so that a change
+to any rule shows up as a change to a slide that a person can look at.
+
+A finding recorded here is not thereby endorsed. An entry in `_EXPECTED` with a
+comment saying "false positive, rule too strict" is a legitimate state and is
+better than the alternative, which is not knowing.
+"""
+_ARCHETYPES = (
+    "bullets", "bar_chart", "two_column", "timeline", "table", "architecture",
+)
+
+# rule ids the suite reports on each archetype, error and warning alike.
+_EXPECTED: Dict[str, Set[str]] = {
+    "bullets": set(),
+    "bar_chart": set(),
+    "two_column": set(),
+    "timeline": set(),
+    "table": set(),
+    "architecture": set(),
+}
+
+
+@pytest.mark.parametrize("archetype", _ARCHETYPES)
+def test_the_rule_set_says_what_it_is_recorded_as_saying(
+        archetype: str, tmp_path: Path) -> None:
+    """Lint a rendered archetype and compare against the recorded findings."""
+    svg = _render_archetype(archetype, tmp_path)
+    report = lint_svg(svg, DesignTokens.load(DEFAULT_TOKENS_PATH),
+                      resolve_font_stack("sans-serif"))
+    assert {finding.rule for finding in report.findings} == _EXPECTED[archetype]
+
+
+@pytest.mark.parametrize("archetype", _ARCHETYPES)
+def test_no_archetype_carries_a_hard_error(archetype: str,
+                                           tmp_path: Path) -> None:
+    """A slide this skill renders from its own defaults must build.
+
+    If a renderer's own output fails a hard rule, the defect is in the renderer
+    or in the rule -- not in the user's deck. Fix whichever is wrong and say
+    which in the commit body. Do not downgrade the rule to a warning to make
+    this pass; that is the failure this whole task exists to prevent.
+    """
+    svg = _render_archetype(archetype, tmp_path)
+    report = lint_svg(svg, DesignTokens.load(DEFAULT_TOKENS_PATH),
+                      resolve_font_stack("sans-serif"))
+    errors = [f.rule for f in report.findings if f.severity == "error"]
+    assert errors == [], f"{archetype} fails: {errors}"
+```
+
+`_render_archetype` writes a `slide_data.json` for that slide type into
+`tmp_path`, runs `generate_slides.py` over it, and returns the SVG path. Reuse
+the `slide_data.json` shapes documented in `SKILL.md` § "Generate slides"; one
+representative slide each, not a corpus.
+
+Fill `_EXPECTED` with what the suite actually reports on the first run, then read
+every entry. For each one decide, and write down in a comment beside it, whether
+it is a real defect in the renderer, a real defect in the token defaults, or a
+false positive. Fix the first two. Leave the third recorded with its reason —
+`{"occupancy"}` on a section divider is honest and useful; an empty set you never
+verified is neither.
+
+Run: `timeout 600 python3 -m pytest skills/report-slides/scripts/tests/test_slide_archetypes.py -v`
+Expected: PASS — 12 passed (two tests parametrised six ways each). The first run
+will not pass; it is how you learn what to write into `_EXPECTED` and which
+renderers or defaults need fixing.
+
+- [ ] **Step 6: Wire the gate into the workflow**
 
 In `skills/report-slides/SKILL.md`, append to `### 10. Visual integration`
 (after the paragraph ending "per §5 of the design spec)."):
@@ -4315,12 +4618,12 @@ answer is recorded in the review.
 Leave the "The following conditions always fail the gate:" list in place; it
 still names defects that require pixels to see.
 
-- [ ] **Step 6: Verify the docs still validate**
+- [ ] **Step 7: Verify the docs still validate**
 
 Run: `timeout 600 python3 -m pytest skills/report-slides/scripts/tests/ -v`
 Expected: PASS — the whole suite, including the doc-consistency tests.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add skills/report-slides/scripts/validate_visual_style.py \
@@ -4367,10 +4670,18 @@ recorded before this change still reach `passed`.
 - Consumes: nothing new.
 - Produces, used by Task 10:
   - `presentation_gates.SLIDE_REVIEW_ROLE_SETS: Tuple[FrozenSet[str], ...]` —
-    the accepted complete role sets, most current first
+    the accepted complete role sets for a **slide**, most current first
+  - `presentation_gates.MODULE_REVIEW_ROLE_SETS: Tuple[FrozenSet[str], ...]` —
+    the same for a **module**. Identical to the slide sets today; they diverge in
+    Task 10, and naming them apart now is what stops that divergence from
+    silently stalling every module
+  - `presentation_gates.module_reviews_complete(roles: AbstractSet[str]) -> bool`
+  - `presentation_gates.SLIDE_REVIEW_ROLE_ORDER: Tuple[str, ...]` — the current
+    roles in the order the workflow runs them, so a "what next" suggestion
+    follows the pipeline rather than the alphabet
   - `presentation_gates.slide_reviews_complete(roles: AbstractSet[str]) -> bool`
   - `presentation_gates.missing_slide_review_roles(roles: AbstractSet[str])
-    -> FrozenSet[str]` — what the current role set still needs
+    -> Tuple[str, ...]` — the outstanding roles, in workflow order
 
 - [ ] **Step 1: Write the failing test**
 
@@ -4378,16 +4689,14 @@ Create `skills/report-slides/scripts/tests/test_reviewer_roles.py`:
 
 ```python
 """Tests for the reviewer-role contract shared by the review stages."""
+
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
+import presentation_gates as gates
+
 _SKILL_DIR = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(_SKILL_DIR / "scripts"))
-
-import presentation_gates as gates  # noqa: E402
-
 _AGENTS = _SKILL_DIR / "agents"
 
 
@@ -4414,6 +4723,14 @@ def test_legacy_role_set_still_completes_a_slide() -> None:
     assert gates.slide_reviews_complete({"scientific", "visual_quality"})
 
 
+def test_module_completion_matches_slide_completion_today() -> None:
+    """The two predicates agree until Task 10 deliberately parts them."""
+    for roles in ({"scientific", "render_integrity"},
+                  {"scientific", "visual_quality"}):
+        assert gates.module_reviews_complete(roles)
+    assert not gates.module_reviews_complete({"scientific"})
+
+
 def test_a_partial_role_set_does_not_complete_a_slide() -> None:
     """One passing reviewer is not a complete review."""
     assert not gates.slide_reviews_complete({"scientific"})
@@ -4421,12 +4738,13 @@ def test_a_partial_role_set_does_not_complete_a_slide() -> None:
     assert not gates.slide_reviews_complete(set())
 
 
-def test_missing_roles_names_what_is_outstanding() -> None:
+def test_missing_roles_names_what_is_outstanding_in_workflow_order() -> None:
     """The caller can tell the user which review to run next."""
-    assert gates.missing_slide_review_roles({"scientific"}) == frozenset(
-        {"render_integrity"})
+    assert gates.missing_slide_review_roles({"scientific"}) == (
+        "render_integrity",)
+    assert gates.missing_slide_review_roles({}) == gates.SLIDE_REVIEW_ROLE_ORDER
     assert gates.missing_slide_review_roles(
-        {"scientific", "render_integrity"}) == frozenset()
+        {"scientific", "render_integrity"}) == ()
 
 
 def test_the_renamed_agent_doc_exists_and_the_old_one_does_not() -> None:
@@ -4505,10 +4823,35 @@ _FINDING_ROLE_KINDS = {
     "render_integrity": _RENDERING_KINDS,
 }
 
+# Workflow order, not alphabetical order: a "what next" suggestion should send
+# the operator to the next stage, and `art_direction` sorts before `scientific`.
+SLIDE_REVIEW_ROLE_ORDER: tuple[str, ...] = (
+    "scientific", "render_integrity",
+)
 SLIDE_REVIEW_ROLE_SETS: tuple[frozenset[str], ...] = (
+    frozenset(SLIDE_REVIEW_ROLE_ORDER),
+    frozenset({"scientific", "visual_quality"}),
+)
+# A module is a fragment, not a composition. Spec D5 scopes the art-direction
+# review to the complete slide, so the module set never gains that role. The two
+# tuples are equal today and are deliberately kept separate: making them one
+# name is how a module ends up waiting on a gate nothing will ever dispatch.
+MODULE_REVIEW_ROLE_SETS: tuple[frozenset[str], ...] = (
     frozenset({"scientific", "render_integrity"}),
     frozenset({"scientific", "visual_quality"}),
 )
+
+
+def module_reviews_complete(roles: AbstractSet[str]) -> bool:
+    """Return whether a module's passing reviewer roles complete its review.
+
+    Args:
+        roles: Reviewer roles that have recorded a passing review.
+
+    Returns:
+        True when any accepted module role set is satisfied.
+    """
+    return any(roles >= required for required in MODULE_REVIEW_ROLE_SETS)
 
 
 def slide_reviews_complete(roles: AbstractSet[str]) -> bool:
@@ -4525,19 +4868,19 @@ def slide_reviews_complete(roles: AbstractSet[str]) -> bool:
     return any(roles >= required for required in SLIDE_REVIEW_ROLE_SETS)
 
 
-def missing_slide_review_roles(roles: AbstractSet[str]) -> frozenset[str]:
-    """Return the roles still outstanding under the current role set.
+def missing_slide_review_roles(roles: AbstractSet[str]) -> tuple[str, ...]:
+    """Return the roles still outstanding, in the order the workflow runs them.
 
     Args:
         roles: Reviewer roles that have recorded a passing review.
 
     Returns:
-        The unmet roles of ``SLIDE_REVIEW_ROLE_SETS[0]``, or an empty set when
+        The unmet roles of ``SLIDE_REVIEW_ROLE_ORDER``, or an empty tuple when
         the review is complete under any accepted set.
     """
     if slide_reviews_complete(roles):
-        return frozenset()
-    return frozenset(SLIDE_REVIEW_ROLE_SETS[0] - roles)
+        return ()
+    return tuple(role for role in SLIDE_REVIEW_ROLE_ORDER if role not in roles)
 ```
 
 Add `AbstractSet` to the module's `typing` import at the top of the file.
@@ -4551,17 +4894,32 @@ occurrences of:
             if roles >= {"scientific", "visual_quality"}:
 ```
 
-with:
+The two branches take **different** predicates. In the `subject_type == "slide"`
+branch (line 519):
 
 ```python
             if _gates().slide_reviews_complete(roles):
 ```
 
+and in the module branch (line 525):
+
+```python
+            if _gates().module_reviews_complete(roles):
+```
+
 Use whichever accessor the surrounding code already uses to reach
 `presentation_gates`; if the module is imported directly, call
-`presentation_gates.slide_reviews_complete(roles)`. The rule must exist in one
-place — it is currently duplicated on lines 519 and 525, which is how the two
-branches would drift.
+`presentation_gates.slide_reviews_complete(roles)`.
+
+**Why two predicates and not one.** The literal set is currently duplicated on
+lines 519 and 525, which is how the two branches drift. Collapsing them to a
+single predicate removes that risk and creates a worse one: Task 10 adds
+`art_direction` to the slide set, and spec §D5 scopes that reviewer to the
+"**complete slide**, not isolated modules". A single shared predicate would then
+demand a whole-slide art-direction review of a fragment, and since nothing
+dispatches that reviewer for a module, every module would stop at `in_review`
+permanently. Two named predicates state the difference once; one predicate hides
+it until Task 10 turns it into a deadlock.
 
 In `skills/report-slides/scripts/presentation_events.py`, replace:
 
@@ -4575,12 +4933,16 @@ In `skills/report-slides/scripts/presentation_events.py`, replace:
 with:
 
 ```python
-        rendering_recorded = roles & {"visual_quality", "render_integrity"}
-        if "scientific" in roles and not rendering_recorded:
-            return ["record_render_integrity_review"]
-        if rendering_recorded and "scientific" not in roles:
-            return ["record_scientific_review"]
+        outstanding = _gates_missing_slide_review_roles(roles)
+        if outstanding and roles:
+            return [f"record_{outstanding[0]}_review"]
 ```
+
+where `_gates_missing_slide_review_roles` is
+`presentation_gates.missing_slide_review_roles`, imported the same way the
+module already reaches its siblings. The `and roles` guard preserves the
+existing behaviour that a slide with no recorded review at all falls through to
+the later checks rather than being reported as awaiting a specific reviewer.
 
 Update `skills/report-slides/scripts/tests/test_presentation_state.py:614` from
 `["record_visual_quality_review"]` to `["record_render_integrity_review"]`, and
@@ -4680,9 +5042,10 @@ git commit -m "refactor(report-slides): rename the rendering reviewer and centra
 **Interfaces:**
 - Consumes: `presentation_gates.{SLIDE_REVIEW_ROLE_SETS,
   slide_reviews_complete, missing_slide_review_roles}` (Task 9).
-- Produces: the `art_direction` reviewer role and the finding kinds
-  `hierarchy-absent`, `claim-not-stated`, `generic-imagery`,
-  `illegible-at-distance`, `meaning-by-color-only`, `motif-drift`.
+- Produces: the `art_direction` reviewer role and the eight finding kinds spec
+  §D5 names: `visual-cliche`, `decorative-noise`, `style-drift`,
+  `synthetic-detail`, `meaningless-interface`, `stock-ai-composition`,
+  `weak-hierarchy`, `undifferentiated-repetition`.
 
 **Why new finding kinds rather than `other`.** Spec §2.12 records that the
 current vocabulary has no word for the defect the user actually reported — the
@@ -4690,14 +5053,36 @@ output looks generically "AI". A defect with no name is a defect that cannot be
 tracked, counted, or fixed on purpose. Each kind below is falsifiable by looking
 at the slide.
 
+**The vocabulary is the spec's, verbatim.** Spec §D5 names these eight kinds.
+Do not add to the list, rename an entry, or substitute a synonym: the reviewer
+persona, `presentation_gates`, `validate_visual_review.py`, and the spec must
+agree on one string per defect, or a finding recorded under one name cannot be
+counted under another.
+
 | Kind | The reviewer can point at |
 |---|---|
-| `hierarchy-absent` | Nothing on the slide is visually first; every element competes equally |
-| `claim-not-stated` | The visual decorates the title rather than showing what it asserts |
-| `generic-imagery` | Illustration that would suit any technical deck: glowing networks, abstract data cities, anonymous figures at laptops |
-| `illegible-at-distance` | Fails at projection distance or thumbnail size although each measurement passed |
-| `meaning-by-color-only` | Removing colour removes a distinction the slide relies on |
-| `motif-drift` | This slide's visual language does not match the rest of the deck |
+| `visual-cliche` | A composition the field has seen a thousand times: glowing brains, neural globes, ambient circuitry, flowing data streams |
+| `decorative-noise` | Elements carrying no information — gradient washes, floating translucent panels, ornamental glyphs, background texture |
+| `style-drift` | This slide's visual language does not match the rest of the deck: different radii, icon language, or illustration style |
+| `synthetic-detail` | Detail that was rendered rather than drawn — fake specular highlights, invented UI microcopy, texture with no referent |
+| `meaningless-interface` | A depicted screen, dashboard, or console whose contents say nothing and cannot be read |
+| `stock-ai-composition` | The framing itself is a generator default: centred hero object, teal-orange haze, lens flare, isometric server city, anonymous person at a laptop |
+| `weak-hierarchy` | Nothing on the slide is visually first; every element competes equally |
+| `undifferentiated-repetition` | The same card, shape, or icon repeated without the repetition encoding anything |
+
+**Three kinds an earlier draft of this plan proposed are deliberately absent**,
+because spec §D5 does not name them and §D5 also freezes the `render_integrity`
+vocabulary, so they cannot be moved there either:
+
+- `claim-not-stated` — "the visual decorates the title rather than showing what
+  it asserts" is the scientific reviewer's remit; it records `unsupported-claim`.
+- `illegible-at-distance` — the deterministic linter's `type-floor` and
+  `text-contrast` rules (Tasks 3–5) measure this before any reviewer is
+  dispatched, and `render_integrity` keeps `unreadably-small-text`.
+- `meaning-by-color-only` — **this concern currently has no owner.** Neither the
+  linter nor either reviewer covers "removing colour removes a distinction the
+  slide relies on". Do not smuggle it in under `other`: raise it as a spec
+  amendment so it gets a name, an owner, and a rubric.
 
 **The linter's warnings arrive as context.** `occupancy`,
 `equal-card-repetition`, `spacing-variance`, and `connector-crossing` are
@@ -4717,10 +5102,10 @@ def test_art_direction_is_an_accepted_review_role() -> None:
 def test_art_direction_owns_its_own_finding_vocabulary() -> None:
     """The art-direction kinds are not shared with the rendering gate."""
     art = gates._FINDING_ROLE_KINDS["art_direction"]
-    assert "generic-imagery" in art
-    assert "hierarchy-absent" in art
+    assert "visual-cliche" in art
+    assert "weak-hierarchy" in art
     assert "clipping" not in art
-    assert "generic-imagery" not in gates._FINDING_ROLE_KINDS["render_integrity"]
+    assert "visual-cliche" not in gates._FINDING_ROLE_KINDS["render_integrity"]
 
 
 def test_all_three_roles_are_now_required() -> None:
@@ -4735,10 +5120,12 @@ def test_legacy_role_set_is_still_accepted() -> None:
     assert gates.slide_reviews_complete({"scientific", "visual_quality"})
 
 
-def test_missing_roles_reports_the_current_set() -> None:
+def test_missing_roles_reports_the_current_set_in_order() -> None:
     """The outstanding roles are named against the current expectation."""
     assert gates.missing_slide_review_roles(
-        {"scientific", "render_integrity"}) == frozenset({"art_direction"})
+        {"scientific", "render_integrity"}) == ("art_direction",)
+    assert gates.missing_slide_review_roles({"scientific"}) == (
+        "render_integrity", "art_direction")
 
 
 def test_the_art_direction_agent_doc_states_its_remit() -> None:
@@ -4748,9 +5135,7 @@ def test_the_art_direction_agent_doc_states_its_remit() -> None:
     assert "name: art_direction_reviewer_agent" in text
     assert "reviewer_role: art_direction" in text
     assert "render_integrity_reviewer_agent" in text
-    for kind in ("hierarchy-absent", "claim-not-stated", "generic-imagery",
-                 "illegible-at-distance", "meaning-by-color-only",
-                 "motif-drift"):
+    for kind in gates._ART_DIRECTION_KINDS - {"other"}:
         assert kind in text, f"missing finding kind: {kind}"
 ```
 
@@ -4771,9 +5156,10 @@ def test_art_direction_reviewer_agent_names_stage_and_finding_kinds() -> None:
     assert "Stage 12" in text
     assert "Stage Boundary" in text
     assert "validate_visual_style.py" in text
-    for kind in ("hierarchy-absent", "claim-not-stated", "generic-imagery",
-                 "illegible-at-distance", "meaning-by-color-only",
-                 "motif-drift"):
+    for kind in ("visual-cliche", "decorative-noise", "style-drift",
+                 "synthetic-detail", "meaningless-interface",
+                 "stock-ai-composition", "weak-hierarchy",
+                 "undifferentiated-repetition"):
         assert kind in text, f"missing finding kind: {kind}"
 ```
 
@@ -4786,12 +5172,14 @@ new doc.
 - [ ] **Step 3: Register the role and its finding kinds**
 
 In `skills/report-slides/scripts/presentation_gates.py`, extend `_FINDING_KINDS`
-with the six new kinds, then replace the role tables:
+with the eight new kinds, then replace the role tables:
 
 ```python
+# Spec D5, verbatim and in the spec's order, plus the repository-wide "other".
 _ART_DIRECTION_KINDS = frozenset({
-    "hierarchy-absent", "claim-not-stated", "generic-imagery",
-    "illegible-at-distance", "meaning-by-color-only", "motif-drift", "other",
+    "visual-cliche", "decorative-noise", "style-drift",
+    "synthetic-detail", "meaningless-interface", "stock-ai-composition",
+    "weak-hierarchy", "undifferentiated-repetition", "other",
 })
 _FINDING_KINDS = frozenset(_FINDING_KINDS | _ART_DIRECTION_KINDS)
 _REVIEW_ROLES = frozenset({
@@ -4810,52 +5198,70 @@ _FINDING_ROLE_KINDS = {
     "art_direction": _ART_DIRECTION_KINDS,
 }
 
+SLIDE_REVIEW_ROLE_ORDER: tuple[str, ...] = (
+    "scientific", "render_integrity", "art_direction",
+)
 SLIDE_REVIEW_ROLE_SETS: tuple[frozenset[str], ...] = (
-    frozenset({"scientific", "render_integrity", "art_direction"}),
+    frozenset(SLIDE_REVIEW_ROLE_ORDER),
     frozenset({"scientific", "visual_quality"}),
 )
 ```
 
 Define `_ART_DIRECTION_KINDS` and the widened `_FINDING_KINDS` *before*
 `_RENDERING_KINDS`, so the subtraction removes the art-direction kinds from the
-rendering set. Keep `slide_reviews_complete` and `missing_slide_review_roles`
-from Task 9 unchanged — they read `SLIDE_REVIEW_ROLE_SETS`, which is the whole
-point of routing both branches through them.
+rendering set. Keep `slide_reviews_complete`, `module_reviews_complete`, and
+`missing_slide_review_roles` from Task 9 unchanged — they read
+`SLIDE_REVIEW_ROLE_ORDER`, `SLIDE_REVIEW_ROLE_SETS`, and
+`MODULE_REVIEW_ROLE_SETS`, which is the whole point of routing the branches
+through them. Extending the pipeline to a fourth slide gate later is then a
+one-line change to the order tuple.
 
-In `skills/report-slides/scripts/validate_visual_review.py`, add the six kinds
+**`MODULE_REVIEW_ROLE_SETS` does not change in this task.** This is the point
+where the slide and module sets part, and the reason is spec §D5: the
+art-direction reviewer "judges the **complete slide**, not isolated modules".
+Adding `art_direction` to the module set — or, equivalently, pointing the module
+branch of `presentation_workflow.py` at `slide_reviews_complete` — puts every
+visual module into a permanent `in_review` state, because no dispatcher ever
+requests an art-direction review of a fragment. The regression test below is the
+guard.
+
+```python
+def test_modules_are_not_held_to_the_art_direction_gate() -> None:
+    """Spec D5 scopes art direction to the complete slide, not a fragment."""
+    assert gates.module_reviews_complete({"scientific", "render_integrity"})
+    assert "art_direction" not in set().union(*gates.MODULE_REVIEW_ROLE_SETS)
+    assert not gates.slide_reviews_complete({"scientific", "render_integrity"})
+```
+
+The last assertion is the pair to the first: the same role set that completes a
+module must *not* complete a slide after this task, or the art-direction gate is
+not actually gating anything.
+
+In `skills/report-slides/scripts/validate_visual_review.py`, add the eight kinds
 to `_ALLOWED_FINDING_KINDS` with a comment naming their owner:
 
 ```python
     # Art-direction finding kinds (art_direction_reviewer_agent, Stage 12).
-    "hierarchy-absent",
-    "claim-not-stated",
-    "generic-imagery",
-    "illegible-at-distance",
-    "meaning-by-color-only",
-    "motif-drift",
+    "visual-cliche",
+    "decorative-noise",
+    "style-drift",
+    "synthetic-detail",
+    "meaningless-interface",
+    "stock-ai-composition",
+    "weak-hierarchy",
+    "undifferentiated-repetition",
 ```
 
 - [ ] **Step 4: Route the next action**
 
-In `skills/report-slides/scripts/presentation_events.py`, replace the block
-Task 9 introduced with one driven by the predicate, so the three-way case is not
-hand-enumerated:
-
-```python
-        outstanding = _gates_missing_slide_review_roles(roles)
-        if outstanding:
-            return [f"record_{sorted(outstanding)[0]}_review"]
-```
-
-where `_gates_missing_slide_review_roles` is
-`presentation_gates.missing_slide_review_roles`, imported the same way the
-module already reaches its siblings. Deterministic ordering (`sorted`) keeps the
-suggested next action stable across runs; the labels become
-`record_art_direction_review`, `record_render_integrity_review`, and
-`record_scientific_review`.
-
-Update `skills/report-slides/scripts/tests/test_presentation_state.py:614` to
-the label this produces for its fixture.
+`presentation_events.py` needs no further change: the block Task 9 introduced
+already reads `missing_slide_review_roles`, and extending
+`SLIDE_REVIEW_ROLE_ORDER` with `art_direction` extends the suggestion chain
+automatically. Confirm the fixture at
+`skills/report-slides/scripts/tests/test_presentation_state.py:614` still
+expects `record_render_integrity_review` — a slide with only `scientific`
+recorded is still sent to the rendering review next, because the order is the
+workflow's, not the alphabet's.
 
 - [ ] **Step 5: Write the agent doc**
 
@@ -4915,20 +5321,31 @@ review.
 
 - **Hierarchy** — Look at the slide for two seconds. What did you see first? If
   the answer is "nothing in particular" or "the decoration", that is
-  `hierarchy-absent`.
-- **Claim** — Read the slide's title, then cover it. Does the visual still
-  assert that claim? If the visual merely illustrates the topic, that is
-  `claim-not-stated`.
+  `weak-hierarchy`.
 - **Specificity** — Would this imagery serve an unrelated deck without change?
-  Glowing neural spheres, abstract data cities, light ribbons, and anonymous
-  figures at laptops are the signature of `generic-imagery`.
-- **Legibility at distance** — View the render at thumbnail size. What survives?
-  If the structure collapses although every measurement passed, that is
-  `illegible-at-distance`.
-- **Colour independence** — Convert the render to greyscale, or read it as if
-  colour-blind. If a distinction disappears, that is `meaning-by-color-only`.
+  Glowing neural spheres, abstract data cities, light ribbons, ambient
+  circuitry, and flowing data streams are the signature of `visual-cliche`.
+- **Framing** — Ask where the composition came from rather than what it shows. A
+  centred hero object on a teal-orange haze, a lens flare, an isometric server
+  city, or an anonymous person at a laptop is `stock-ai-composition`: the
+  *framing* is the generator's default, whatever the subject.
+- **Information density** — Point at each element and say what it tells the
+  reader. Gradient washes, floating translucent panels, ornamental glyphs, and
+  background texture that survive this question unanswered are
+  `decorative-noise`.
+- **Drawn or rendered** — Look for detail nobody decided on: fake specular
+  highlights, invented UI microcopy, texture with no referent. That is
+  `synthetic-detail`, and it is the most reliable tell that an image was
+  generated rather than authored.
+- **Depicted interfaces** — If the slide shows a screen, dashboard, or console,
+  read it. If its contents say nothing, or cannot be read at all, that is
+  `meaningless-interface`. A screenshot that carries no information is worse
+  than no screenshot.
+- **Repetition** — Count the repeated cards, shapes, or icons, then ask what the
+  repetition encodes. If the answer is "nothing, there were four points", that
+  is `undifferentiated-repetition`.
 - **Deck coherence** — Compare with the neighbouring slides. Different corner
-  radii, icon language, or illustration style across the deck is `motif-drift`.
+  radii, icon language, or illustration style across the deck is `style-drift`.
 
 ## Output Format
 
@@ -4942,7 +5359,7 @@ linter_warnings_answered:
   - rule: occupancy | equal-card-repetition | spacing-variance | connector-crossing
     answer: <string, why the warning is or is not a defect here>
 findings:
-  - kind: hierarchy-absent | claim-not-stated | generic-imagery | illegible-at-distance | meaning-by-color-only | motif-drift | other
+  - kind: visual-cliche | decorative-noise | style-drift | synthetic-detail | meaningless-interface | stock-ai-composition | weak-hierarchy | undifferentiated-repetition | other
     description: <string, specific and falsifiable, naming what you looked at and what you saw>
     remedy: <string, the change you are asking for, at the level of layout or art direction>
     source: svg-preview | pptx-render
@@ -5011,28 +5428,58 @@ discouraged.
 - Produces, used by Tasks 12 and 13:
   - `ANCHORS_PATH: Path`
   - `class AnchorError(ValueError)`
+  - `@dataclass(frozen=True) class ReferenceImage` — `path: Path`,
+    `sha256: str`
   - `@dataclass(frozen=True) class StyleAnchor` — `anchor_id`, `name`,
     `summary`, `applies_to`, `composition`, `line_treatment`, `palette_roles`,
-    `forbidden`, `reference_image`
+    `forbidden`, `reference_images: Tuple[ReferenceImage, ...]` (never empty)
   - `load_anchors(path: Union[str, Path] = ANCHORS_PATH)
-    -> Dict[str, StyleAnchor]`
+    -> Dict[str, StyleAnchor]` — returns `{}` for the shipped empty registry
   - `get_anchor(anchor_id: str, path: Union[str, Path] = ANCHORS_PATH)
     -> StyleAnchor`
+  - `anchor_available(path: Union[str, Path] = ANCHORS_PATH) -> bool` — whether
+    the generative route is open at all
+  - `CANDIDATE_COUNT: int = 3` — spec D6's blind-ranking width, so Task 12
+    validates against one constant rather than a literal
   - `BANNED_MOTIFS: Tuple[Tuple[str, Tuple[str, ...]], ...]` — `(motif_id,
     trigger phrases)`
   - `scan_for_banned_motifs(text: str) -> List[str]`
   - `prompt_fragment(anchor: StyleAnchor, tokens: DesignTokens) -> str`
 
-**Why anchors instead of adjectives.** An adjective list ("clean, modern,
-professional") converges on the model's prior for "technical illustration",
-which is precisely the look being rejected. A style anchor names a concrete,
-bounded visual language — what is drawn, how lines behave, which token colours
-are allowed — so two illustrations produced weeks apart belong to the same deck.
+**An anchor is a reference image, not a description.** Spec §D6 is explicit:
+the registry holds styles "each identified by **actual reference images with
+recorded digests** — not adjective lists". §2.1 is the evidence for that
+wording. The prompt behind the shipped counter-example already excluded `busy
+background`, `excessive glow`, and `photorealistic faces`, and still produced a
+lab-coated figure at a laptop under a glowing neural sphere. Adjectives — even
+negative ones — are read by the model as a region of its own prior, and that
+prior *is* the look being rejected. An image is not.
+
+So `reference_images` is a required, non-empty field, and each entry records a
+SHA-256 digest that `load_anchors` verifies against the file on disk. A digest
+mismatch is an error, not a warning: an anchor whose reference has been swapped
+underneath it is no longer the anchor the deck's earlier illustrations were
+ranked against, and `style-drift` is precisely the finding that produces.
+
+The prose fields stay — `composition`, `line_treatment`, `palette_roles`,
+`forbidden` — but they are *subordinate* to the images. They say what to attend
+to in the reference and bind the anchor to the token palette. They are not the
+anchor's identity, and an entry that carries only prose is refused.
+
+**The registry ships empty.** Spec §D6: "Populating the anchor registry with
+reference images is a human action; this design specifies the mechanism and
+ships the registry empty with a documented procedure." That is not a gap in this
+task, it is the task's contract. Until a human curates references, `get_anchor`
+raises and the generative route is closed — which routes every module to the
+native editorial composition, exactly as D6's last clause requires. Do **not**
+seed the registry with prose anchors to make the route work: that reinstates the
+failure this phase exists to remove, and the test below asserts the registry is
+empty on a fresh checkout.
 
 **What the scan can and cannot do.** `scan_for_banned_motifs` reads *prompt
 text*. It catches an author asking for a glowing neural sphere; it cannot catch
 a model producing one unasked. That residual case is the art-direction
-reviewer's `generic-imagery` finding (Task 10). Both are needed; neither is
+reviewer's `visual-cliche` finding (Task 10). Both are needed; neither is
 sufficient. Do not present the scan as a guarantee.
 
 - [ ] **Step 1: Write the failing test**
@@ -5041,20 +5488,23 @@ Create `skills/report-slides/scripts/tests/test_style_anchors.py`:
 
 ```python
 """Tests for the style-anchor registry and the banned-motif scan."""
+
 from __future__ import annotations
 
-import sys
+import hashlib
+import io
 from pathlib import Path
+from typing import Tuple
 
 import pytest
+import yaml
+from PIL import Image
 
-_SKILL_DIR = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(_SKILL_DIR / "scripts"))
-
-from design_tokens import DEFAULT_TOKENS_PATH, DesignTokens  # noqa: E402
-from style_anchors import (  # noqa: E402
-    ANCHORS_PATH, AnchorError, BANNED_MOTIFS, get_anchor, load_anchors,
-    prompt_fragment, scan_for_banned_motifs,
+from design_tokens import DEFAULT_TOKENS_PATH, DesignTokens
+from style_anchors import (
+    ANCHORS_PATH, CANDIDATE_COUNT, AnchorError, BANNED_MOTIFS,
+    anchor_available, get_anchor, load_anchors, prompt_fragment,
+    scan_for_banned_motifs,
 )
 
 
@@ -5064,44 +5514,155 @@ def tokens() -> DesignTokens:
     return DesignTokens.load(DEFAULT_TOKENS_PATH)
 
 
-def test_the_registry_ships_with_anchors() -> None:
-    """An empty registry would make the anchor requirement unsatisfiable."""
-    anchors = load_anchors()
-    assert len(anchors) >= 3
+def _write_reference(directory: Path, name: str) -> Tuple[Path, str]:
+    """Write a small PNG and return its path and digest.
+
+    A four-pixel image is enough: the registry checks file integrity, not
+    picture content. The digest is computed here rather than hard-coded, because
+    a literal would pin this test to one Pillow release's PNG encoder.
+
+    Args:
+        directory: Where to write the file.
+        name: File name to use.
+
+    Returns:
+        `(path, sha256_hex)`.
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / name
+    buffer = io.BytesIO()
+    Image.new("RGB", (4, 4), (30, 58, 95)).save(buffer, format="PNG")
+    path.write_bytes(buffer.getvalue())
+    return path, hashlib.sha256(buffer.getvalue()).hexdigest()
+
+
+def _registry(tmp_path: Path, **overrides: object) -> Path:
+    """Write a one-anchor registry with a real reference image.
+
+    Args:
+        tmp_path: Test temporary directory.
+        **overrides: Entry fields to replace or, when the value is None, drop.
+
+    Returns:
+        Path to the written `anchors.yaml`.
+    """
+    reference, digest = _write_reference(tmp_path / "refs", "schematic-01.png")
+    entry = {
+        "id": "technical-schematic",
+        "name": "Technical schematic",
+        "summary": "A flat drafted diagram in the manner of a paper figure.",
+        "applies_to": ["system architectures"],
+        "composition": "Orthogonal arrangement on a single plane.",
+        "line_treatment": "Uniform-weight outlines, flat fills.",
+        "palette_roles": ["primary", "body", "line", "bg"],
+        "forbidden": ["glow or bloom", "photographic texture"],
+        "reference_images": [
+            {"path": reference.name, "sha256": digest},
+        ],
+    }
+    for key, value in overrides.items():
+        if value is None:
+            entry.pop(key, None)
+        else:
+            entry[key] = value
+    path = tmp_path / "refs" / "anchors.yaml"
+    path.write_text(yaml.safe_dump({"anchors": [entry]}), encoding="utf-8")
+    return path
+
+
+def test_the_shipped_registry_is_empty_by_design() -> None:
+    """Spec D6 ships the registry empty; populating it is a human action.
+
+    Seeding it with prose anchors is what this phase exists to prevent, so the
+    emptiness is asserted rather than left to convention. If this test fails
+    because someone added an anchor with real curated references, that is the
+    intended workflow -- update the test in the same commit and say whose
+    references were added.
+    """
     assert ANCHORS_PATH.is_file()
+    assert load_anchors() == {}
+    assert anchor_available() is False
 
 
-def test_every_anchor_declares_its_full_contract() -> None:
+def test_an_empty_registry_closes_the_generative_route() -> None:
+    """With no anchor, `get_anchor` refuses and names the procedure."""
+    with pytest.raises(AnchorError) as excinfo:
+        get_anchor("technical-schematic")
+    message = str(excinfo.value)
+    assert "empty" in message
+    assert "style-anchors/README.md" in message
+
+
+def test_a_populated_anchor_declares_its_full_contract(tmp_path: Path) -> None:
     """A partial anchor cannot direct an illustration."""
-    for anchor_id, anchor in load_anchors().items():
-        assert anchor.anchor_id == anchor_id
-        assert anchor.summary
-        assert anchor.composition
-        assert anchor.line_treatment
-        assert anchor.applies_to
-        assert anchor.palette_roles
-        assert anchor.forbidden
+    anchors = load_anchors(_registry(tmp_path))
+    anchor = anchors["technical-schematic"]
+    assert anchor.anchor_id == "technical-schematic"
+    assert anchor.summary
+    assert anchor.composition
+    assert anchor.line_treatment
+    assert anchor.applies_to
+    assert anchor.palette_roles
+    assert anchor.forbidden
+    assert anchor.reference_images
+
+
+def test_an_anchor_without_reference_images_is_rejected(
+    tmp_path: Path,
+) -> None:
+    """Prose alone is the adjective list spec D6 refuses."""
+    with pytest.raises(AnchorError) as excinfo:
+        load_anchors(_registry(tmp_path, reference_images=None))
+    assert "reference_images" in str(excinfo.value)
+
+
+def test_an_empty_reference_image_list_is_rejected(tmp_path: Path) -> None:
+    """An empty list is the same defect as a missing field."""
+    with pytest.raises(AnchorError):
+        load_anchors(_registry(tmp_path, reference_images=[]))
+
+
+def test_a_missing_reference_file_is_rejected(tmp_path: Path) -> None:
+    """A registry may not cite a reference that is not on disk."""
+    path = _registry(tmp_path)
+    (tmp_path / "refs" / "schematic-01.png").unlink()
+    with pytest.raises(AnchorError) as excinfo:
+        load_anchors(path)
+    assert "schematic-01.png" in str(excinfo.value)
+
+
+def test_a_stale_reference_digest_is_rejected(tmp_path: Path) -> None:
+    """A reference swapped underneath the anchor is a different anchor.
+
+    Two illustrations ranked against different references do not belong to the
+    same deck, which is exactly the `style-drift` finding the art-direction
+    reviewer reports. Failing closed here is cheaper than finding it at review.
+    """
+    path = _registry(tmp_path)
+    reference = tmp_path / "refs" / "schematic-01.png"
+    buffer = io.BytesIO()
+    Image.new("RGB", (4, 4), (200, 30, 30)).save(buffer, format="PNG")
+    reference.write_bytes(buffer.getvalue())
+    with pytest.raises(AnchorError) as excinfo:
+        load_anchors(path)
+    message = str(excinfo.value)
+    assert "digest" in message
+    assert "schematic-01.png" in message
 
 
 def test_anchor_palette_roles_exist_in_the_token_file(
-    tokens: DesignTokens,
+    tokens: DesignTokens, tmp_path: Path,
 ) -> None:
     """An anchor may only name colour roles the design system defines."""
-    for anchor in load_anchors().values():
+    for anchor in load_anchors(_registry(tmp_path)).values():
         for role in anchor.palette_roles:
             assert tokens.color(role)
 
 
-def test_get_anchor_returns_a_known_anchor() -> None:
-    """Lookup by id works."""
-    anchor = get_anchor("technical-schematic")
-    assert anchor.name
-
-
-def test_get_anchor_rejects_an_unknown_id() -> None:
+def test_get_anchor_rejects_an_unknown_id(tmp_path: Path) -> None:
     """An unknown anchor fails loudly rather than falling back to a default."""
     with pytest.raises(AnchorError) as excinfo:
-        get_anchor("vibes")
+        get_anchor("vibes", _registry(tmp_path))
     assert "vibes" in str(excinfo.value)
 
 
@@ -5112,6 +5673,11 @@ def test_a_malformed_registry_is_rejected(tmp_path: Path) -> None:
                    encoding="utf-8")
     with pytest.raises(AnchorError):
         load_anchors(bad)
+
+
+def test_the_candidate_count_matches_the_spec() -> None:
+    """Spec D6 requires three candidates ranked blind; Task 12 reads this."""
+    assert CANDIDATE_COUNT == 3
 
 
 def test_banned_motifs_name_the_documented_failure_mode() -> None:
@@ -5148,21 +5714,40 @@ def test_a_specific_prompt_passes_the_scan() -> None:
 
 
 def test_prompt_fragment_binds_the_anchor_to_the_tokens(
-    tokens: DesignTokens,
+    tokens: DesignTokens, tmp_path: Path,
 ) -> None:
     """The generated fragment carries concrete hex values, not role names."""
-    fragment = prompt_fragment(get_anchor("technical-schematic"), tokens)
+    anchor = get_anchor("technical-schematic", _registry(tmp_path))
+    fragment = prompt_fragment(anchor, tokens)
     assert "technical-schematic" in fragment
     assert "#" in fragment
-    for role in get_anchor("technical-schematic").palette_roles:
+    for role in anchor.palette_roles:
         assert tokens.color(role) in fragment
-    for forbidden in get_anchor("technical-schematic").forbidden:
+    for forbidden in anchor.forbidden:
         assert forbidden in fragment
 
 
-def test_prompt_fragment_is_itself_clean(tokens: DesignTokens) -> None:
+def test_prompt_fragment_cites_the_reference_images(
+    tokens: DesignTokens, tmp_path: Path,
+) -> None:
+    """The fragment must point at the reference, not only describe it.
+
+    A prompt that carries the prose but drops the reference is the adjective
+    list again. The digest travels with it so the record says which reference
+    the illustration was directed against.
+    """
+    anchor = get_anchor("technical-schematic", _registry(tmp_path))
+    fragment = prompt_fragment(anchor, tokens)
+    for reference in anchor.reference_images:
+        assert reference.path.name in fragment
+        assert reference.sha256[:12] in fragment
+
+
+def test_prompt_fragment_is_itself_clean(
+    tokens: DesignTokens, tmp_path: Path,
+) -> None:
     """The registry must not smuggle a banned motif into its own output."""
-    for anchor in load_anchors().values():
+    for anchor in load_anchors(_registry(tmp_path)).values():
         assert scan_for_banned_motifs(
             prompt_fragment(anchor, tokens)) == []
 ```
@@ -5179,75 +5764,36 @@ Create `skills/report-slides/references/style-anchors/anchors.yaml`:
 ```yaml
 # Style anchors for generative illustration.
 #
-# An anchor is a bounded visual language, not a mood. Each one states what is
-# drawn, how lines behave, which design-token colour roles may appear, and what
-# is refused. Prompts cite an anchor by id; they do not assemble adjectives.
-anchors:
-  - id: technical-schematic
-    name: Technical schematic
-    summary: >-
-      A flat, drafted diagram in the manner of a paper figure: the mechanism
-      drawn plainly, with nothing rendered that is not part of the mechanism.
-    applies_to:
-      - system architectures
-      - data or processing pipelines
-      - model or protocol structure
-    composition: >-
-      Orthogonal arrangement on a single plane, one dominant flow direction,
-      generous empty margin, no perspective and no depth cues.
-    line_treatment: >-
-      Uniform-weight outlines, flat fills, no gradients, no glow, no drop
-      shadows, no bevels.
-    palette_roles: [primary, body, line, card, bg]
-    forbidden:
-      - glow or bloom
-      - three-dimensional perspective
-      - photographic texture
-      - decorative particles
-    reference_image: null
+# THIS REGISTRY SHIPS EMPTY, BY DESIGN. Spec D6: "Populating the anchor registry
+# with reference images is a human action; this design specifies the mechanism
+# and ships the registry empty with a documented procedure."
+#
+# While it is empty, `scripts/style_anchors.py` refuses every anchor lookup and
+# the generative illustration route is closed: modules downgrade to a native
+# editorial composition. That is the intended state, not a defect.
+#
+# An anchor is identified by ACTUAL REFERENCE IMAGES with recorded digests, not
+# by an adjective list. See README.md for the procedure and for the three
+# candidate anchors this deck expects to curate first.
+#
+# Entry shape:
+#
+#   - id: technical-schematic
+#     name: Technical schematic
+#     summary: >-
+#       One sentence saying what the anchor is.
+#     applies_to: [system architectures, data pipelines]
+#     composition: >-
+#       What to attend to in the frame arrangement of the references.
+#     line_treatment: >-
+#       How lines, fills, and light behave in the references.
+#     palette_roles: [primary, body, line, bg]   # roles the token file defines
+#     forbidden: [glow or bloom, photographic texture]
+#     reference_images:                          # required, never empty
+#       - path: technical-schematic/01-retrieval-pipeline.png
+#         sha256: <64 hex characters, verified on load>
 
-  - id: annotated-specimen
-    name: Annotated specimen
-    summary: >-
-      One concrete object or sample drawn accurately and labelled, in the
-      manner of a scientific plate.
-    applies_to:
-      - materials, devices, or physical apparatus
-      - biological or geological subjects
-      - a single artefact under discussion
-    composition: >-
-      One centred subject at consistent scale, callout lines to a small number
-      of labelled parts, plain ground.
-    line_treatment: >-
-      Fine contour lines with restrained flat shading, no ambient glow, no
-      rim lighting.
-    palette_roles: [primary, body, muted, line, bg]
-    forbidden:
-      - abstract background scenery
-      - motion streaks
-      - stylised lighting effects
-    reference_image: null
-
-  - id: quantitative-abstract
-    name: Quantitative abstract
-    summary: >-
-      A non-figurative composition built only from the quantities under
-      discussion, so that every mark carries information.
-    applies_to:
-      - conceptual relationships between measured quantities
-      - distributions, thresholds, or trade-offs
-      - a slide whose claim is comparative rather than structural
-    composition: >-
-      Composed from the marks of the data itself, one clear reading order, no
-      surrounding illustration.
-    line_treatment: >-
-      Flat marks and rules only, no texture, no illumination.
-    palette_roles: [primary, positive, warn, danger, line, bg]
-    forbidden:
-      - human figures
-      - imaginary interfaces
-      - background scenery
-    reference_image: null
+anchors: []
 ```
 
 Create `skills/report-slides/references/style-anchors/README.md`:
@@ -5255,33 +5801,77 @@ Create `skills/report-slides/references/style-anchors/README.md`:
 ```markdown
 # Style anchors
 
-A style anchor is the visual language an illustration must belong to. Prompts
-cite one by id; they do not assemble adjectives, because adjective lists
-converge on the image model's prior for "technical illustration" and that prior
-is the look this deck rejects.
+A style anchor is the visual language an illustration must belong to, and it is
+identified by **reference images**, not by words. Spec §D6 requires this, and
+§2.1 is the evidence: the prompt behind this deck's own failed illustration
+already excluded `busy background`, `excessive glow`, and `photorealistic
+faces`, and still produced a lab-coated figure at a laptop beneath a glowing
+neural sphere. Adjective lists — even lists of exclusions — name a region of the
+image model's prior, and that prior is the look being rejected. An image is not.
 
-## Choosing one
+## This registry ships empty
 
-| The slide is about | Anchor |
-|---|---|
-| How a system is structured or how data moves through it | `technical-schematic` |
-| A concrete object, sample, or apparatus | `annotated-specimen` |
-| A relationship between measured quantities | `quantitative-abstract` |
+`anchors.yaml` contains `anchors: []`. While it is empty:
 
-If no anchor fits, that is a signal that the slide may not need a generative
-illustration at all. Reach for a deterministic diagram first; see
+- `style_anchors.get_anchor(...)` raises `AnchorError`;
+- `anchor_available()` returns `False`;
+- `scripts/validate_generative_prompt.py` rejects every generative record;
+- every module that would have used generative illustration downgrades to a
+  native editorial composition, per spec §D6's final clause.
+
+That is the designed resting state. **Do not seed the registry with prose-only
+entries to reopen the route** — an entry without `reference_images` is refused
+by the loader, and `tests/test_style_anchors.py` asserts the shipped registry is
+empty.
+
+## Procedure for adding an anchor
+
+1. **Curate 3–5 reference images.** They must be images this project is licensed
+   to keep, and they must agree with one another: an anchor whose references
+   disagree cannot rank a candidate. Do not use generated images as references —
+   that closes the loop this registry exists to open.
+2. **Commit them** under
+   `references/style-anchors/<anchor-id>/`, using stable, descriptive names.
+3. **Record each digest**:
+   `sha256sum references/style-anchors/<anchor-id>/*.png`
+4. **Write the entry** in `anchors.yaml` with every required field, listing each
+   reference under `reference_images` with its `path` (relative to
+   `references/style-anchors/`) and `sha256`.
+5. **Write the prose fields against the images.** `composition` and
+   `line_treatment` say what to attend to *in those references*; they do not
+   stand in for them. `palette_roles` must name roles the design-token file
+   defines; `forbidden` names what the anchor refuses.
+6. **Update `test_the_shipped_registry_is_empty_by_design`** in the same commit,
+   and say in the commit body whose references were added and under what
+   licence.
+7. Run `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_style_anchors.py -v`.
+
+A digest mismatch is a hard error on load. If a reference is legitimately
+replaced, update its digest in the same commit — an anchor whose references
+changed silently is a different anchor, and every illustration ranked against
+the old one now belongs to a different deck. That is the `style-drift` finding.
+
+## Candidate anchors to curate first
+
+These are the three visual languages this deck's subject matter calls for. They
+are recorded here as *briefs for a curator*, deliberately not as registry
+entries: without reference images they would be exactly the adjective lists §D6
+refuses.
+
+| The slide is about | Candidate anchor | What the references should show |
+|---|---|---|
+| How a system is structured, or how data moves through it | `technical-schematic` | Flat drafted diagrams in the manner of a paper figure: orthogonal arrangement on one plane, a single dominant flow direction, generous margin, uniform-weight outlines, flat fills, no perspective, no glow, no shadow |
+| A concrete object, sample, or apparatus | `annotated-specimen` | Scientific plates: one centred subject at consistent scale, callout lines to a few labelled parts, plain ground, fine contour lines with restrained flat shading, no rim lighting, no background scenery |
+| A relationship between measured quantities | `quantitative-abstract` | Non-figurative compositions built only from the quantities under discussion, one clear reading order, flat marks and rules, no texture, no illumination, no human figures, no imaginary interfaces |
+
+If no candidate fits a slide, that is a signal the slide may not need a
+generative illustration at all. Reach for a deterministic diagram first; see
 `references/diagram-patterns.md`.
 
-## Adding one
-
-An anchor is admitted only when it names all of: `applies_to`, `composition`,
-`line_treatment`, `palette_roles` (which must be roles the design-token file
-defines), and `forbidden`. `scripts/style_anchors.py` enforces this, and
-`tests/test_style_anchors.py` enforces that the shipped registry satisfies it.
-
-Anchors are deck-wide. Adding one is a design-system decision, not a per-slide
-convenience: two anchors that overlap will produce a deck that drifts, which is
-exactly the `motif-drift` finding the art-direction reviewer reports.
+Anchors are deck-wide, and spec §D6 allows **at most one generative style per
+deck**. Adding a second is a design-system decision, not a per-slide
+convenience: two overlapping anchors produce a deck that drifts, which is the
+`style-drift` finding the art-direction reviewer reports.
 
 ## Banned motifs
 
@@ -5292,8 +5882,8 @@ at laptops, and their neighbours. `scan_for_banned_motifs` refuses a prompt that
 asks for one.
 
 The scan reads prompts, not images. A model can still produce a banned motif
-unasked; that case is caught at review as a `generic-imagery` finding. The scan
-is a floor, not a guarantee.
+unasked; that case is caught at review as a `visual-cliche` or
+`stock-ai-composition` finding. The scan is a floor, not a guarantee.
 ```
 
 - [ ] **Step 4: Write the loader**
@@ -5305,10 +5895,11 @@ Create `skills/report-slides/scripts/style_anchors.py`:
 """Style-anchor registry and banned-motif scan for generative illustration."""
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Tuple, Union
+from typing import Any, Dict, List, Mapping, Tuple, Union
 
 import yaml
 
@@ -5318,7 +5909,15 @@ ANCHORS_PATH = (Path(__file__).resolve().parent.parent
                 / "references" / "style-anchors" / "anchors.yaml")
 
 _REQUIRED_FIELDS = ("id", "name", "summary", "applies_to", "composition",
-                    "line_treatment", "palette_roles", "forbidden")
+                    "line_treatment", "palette_roles", "forbidden",
+                    "reference_images")
+
+# Spec D6: "Three candidates are generated and ranked blind against the anchor."
+# Task 12 validates the generative record against this constant rather than a
+# literal, so the width is stated once.
+CANDIDATE_COUNT: int = 3
+
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 BANNED_MOTIFS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     ("glowing-neural-sphere",
@@ -5355,19 +5954,37 @@ class AnchorError(ValueError):
 
 
 @dataclass(frozen=True)
+class ReferenceImage:
+    """One curated reference image, pinned by content.
+
+    Attributes:
+        path: Resolved path to the image on disk.
+        sha256: The digest recorded in the registry, verified on load.
+    """
+
+    path: Path
+    sha256: str
+
+
+@dataclass(frozen=True)
 class StyleAnchor:
     """One bounded visual language an illustration must belong to.
+
+    The anchor's identity is `reference_images`. The prose fields say what to
+    attend to in those references and bind the anchor to the token palette; they
+    do not stand in for the images. Spec D6 requires this: an anchor described
+    only in words is the adjective list that produced the failure in spec 2.1.
 
     Attributes:
         anchor_id: Stable identifier cited by prompts.
         name: Human-readable name.
         summary: What the anchor is, in one sentence.
         applies_to: Subject kinds this anchor suits.
-        composition: How the frame is arranged.
-        line_treatment: How lines, fills, and light behave.
+        composition: What to attend to in the references' frame arrangement.
+        line_treatment: How lines, fills, and light behave in the references.
         palette_roles: Colour roles from the design-token file that may appear.
         forbidden: What this anchor refuses.
-        reference_image: Path to a curated reference, or None.
+        reference_images: The curated references. Never empty.
     """
 
     anchor_id: str
@@ -5378,7 +5995,62 @@ class StyleAnchor:
     line_treatment: str
     palette_roles: Tuple[str, ...]
     forbidden: Tuple[str, ...]
-    reference_image: Union[str, None]
+    reference_images: Tuple[ReferenceImage, ...]
+
+
+def _load_reference_images(entry: Mapping[str, Any], anchor_id: str,
+                           base_dir: Path) -> Tuple[ReferenceImage, ...]:
+    """Resolve and verify one anchor's reference images.
+
+    Args:
+        entry: The raw registry entry.
+        anchor_id: The anchor being loaded, for error messages.
+        base_dir: Directory the registry's relative paths resolve against.
+
+    Returns:
+        The verified references, in registry order.
+
+    Raises:
+        AnchorError: If the list is empty or malformed, a digest is not a
+            64-character hex string, a file is missing, or a file's content does
+            not match its recorded digest.
+    """
+    raw = entry.get("reference_images")
+    if not isinstance(raw, list) or not raw:
+        raise AnchorError(
+            f"anchor {anchor_id!r} must list at least one entry under "
+            f"'reference_images'; an anchor described only in prose is the "
+            f"adjective list spec D6 refuses")
+    references: List[ReferenceImage] = []
+    for position, item in enumerate(raw):
+        if not isinstance(item, dict) or not item.get("path") \
+                or not item.get("sha256"):
+            raise AnchorError(
+                f"anchor {anchor_id!r} reference {position} must be a mapping "
+                f"with 'path' and 'sha256'")
+        digest = str(item["sha256"]).strip().lower()
+        if not _SHA256_RE.match(digest):
+            raise AnchorError(
+                f"anchor {anchor_id!r} reference {item['path']!r} records "
+                f"{digest!r}, which is not a SHA-256 digest")
+        image_path = (base_dir / str(item["path"])).resolve()
+        try:
+            content = image_path.read_bytes()
+        except OSError as exc:
+            raise AnchorError(
+                f"anchor {anchor_id!r} cites reference {item['path']!r} which "
+                f"cannot be read at {image_path}: {exc}") from exc
+        actual = hashlib.sha256(content).hexdigest()
+        if actual != digest:
+            raise AnchorError(
+                f"anchor {anchor_id!r} reference {item['path']!r} has digest "
+                f"{actual} but the registry records {digest}. A reference "
+                f"swapped underneath an anchor is a different anchor: every "
+                f"illustration ranked against the old one now belongs to a "
+                f"different deck. Update the digest deliberately, in the same "
+                f"commit as the replacement.")
+        references.append(ReferenceImage(path=image_path, sha256=digest))
+    return tuple(references)
 
 
 def load_anchors(path: Union[str, Path] = ANCHORS_PATH
@@ -5392,8 +6064,9 @@ def load_anchors(path: Union[str, Path] = ANCHORS_PATH
         A mapping from anchor id to anchor.
 
     Raises:
-        AnchorError: If the file is missing, unparsable, or an entry omits a
-            required field.
+        AnchorError: If the file is missing, unparsable, an entry omits a
+            required field, or a reference image is missing or does not match
+            its recorded digest.
     """
     registry_path = Path(path)
     try:
@@ -5431,12 +6104,30 @@ def load_anchors(path: Union[str, Path] = ANCHORS_PATH
             line_treatment=str(entry["line_treatment"]).strip(),
             palette_roles=tuple(str(item) for item in entry["palette_roles"]),
             forbidden=tuple(str(item) for item in entry["forbidden"]),
-            reference_image=(str(entry["reference_image"])
-                             if entry.get("reference_image") else None),
+            reference_images=_load_reference_images(
+                entry, anchor_id, registry_path.parent),
         )
-    if not anchors:
-        raise AnchorError(f"{registry_path} declares no anchors")
+    # An empty registry is the shipped state, not an error: spec D6 ships it
+    # empty and makes populating it a human action. `get_anchor` is where that
+    # state becomes a refusal, so the caller learns it at the point of use.
     return anchors
+
+
+def anchor_available(path: Union[str, Path] = ANCHORS_PATH) -> bool:
+    """Return whether any anchor is registered.
+
+    Args:
+        path: Path to the registry.
+
+    Returns:
+        True when at least one anchor is curated. False means the generative
+        illustration route is closed and modules downgrade to a native
+        editorial composition.
+
+    Raises:
+        AnchorError: If the registry exists but is malformed.
+    """
+    return bool(load_anchors(path))
 
 
 def get_anchor(anchor_id: str,
@@ -5456,6 +6147,13 @@ def get_anchor(anchor_id: str,
             unanchored prompt this registry exists to prevent.
     """
     anchors = load_anchors(path)
+    if not anchors:
+        raise AnchorError(
+            f"the style-anchor registry at {Path(path)} is empty, so the "
+            f"generative illustration route is closed and this module must "
+            f"downgrade to a native editorial composition. Populating the "
+            f"registry with curated reference images is a human action: see "
+            f"references/style-anchors/README.md.")
     if anchor_id not in anchors:
         raise AnchorError(
             f"unknown style anchor {anchor_id!r}; registered anchors: "
@@ -5490,8 +6188,9 @@ def prompt_fragment(anchor: StyleAnchor, tokens: DesignTokens) -> str:
         tokens: The resolved token set, used to expand palette roles into hex.
 
     Returns:
-        A prompt fragment naming the anchor, its composition and line treatment,
-        its concrete palette, and what it refuses.
+        A prompt fragment naming the anchor, the reference images the candidate
+        will be ranked against, its composition and line treatment, its concrete
+        palette, and what it refuses.
 
     Raises:
         TokenError: If the anchor names a colour role the token file lacks.
@@ -5499,9 +6198,16 @@ def prompt_fragment(anchor: StyleAnchor, tokens: DesignTokens) -> str:
     palette = ", ".join(
         f"{role} {tokens.color(role)}" for role in anchor.palette_roles)
     refusals = "; ".join(anchor.forbidden)
+    # The references are named, with a digest prefix, so the recorded prompt
+    # says which images the candidate was directed against. A fragment carrying
+    # only the prose is the adjective list again.
+    references = "; ".join(
+        f"{reference.path.name} ({reference.sha256[:12]})"
+        for reference in anchor.reference_images)
     return (
         f"style_anchor: {anchor.anchor_id} ({anchor.name}). "
         f"{anchor.summary} "
+        f"Match these reference images: {references}. "
         f"Composition: {anchor.composition} "
         f"Line treatment: {anchor.line_treatment} "
         f"Palette, and no colour outside it: {palette}. "
@@ -5512,7 +6218,7 @@ def prompt_fragment(anchor: StyleAnchor, tokens: DesignTokens) -> str:
 - [ ] **Step 5: Run test to verify it passes**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_style_anchors.py -v`
-Expected: PASS — 12 passed.
+Expected: PASS — 18 passed.
 
 `test_prompt_fragment_is_itself_clean` is the sharp one: if an anchor's own
 `forbidden` list phrases a refusal using a banned trigger — writing "no glowing
@@ -5573,25 +6279,81 @@ Create `skills/report-slides/scripts/tests/test_validate_generative_prompt.py`:
 
 ```python
 """Tests for the generative prompt-record contract."""
+
 from __future__ import annotations
 
+import hashlib
+import io
 import json
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import pytest
+import yaml
+from PIL import Image
 
-_SKILL_DIR = Path(__file__).resolve().parents[2]
-_SCRIPTS = _SKILL_DIR / "scripts"
-sys.path.insert(0, str(_SCRIPTS))
-
-from validate_generative_prompt import (  # noqa: E402
+from style_anchors import CANDIDATE_COUNT
+from validate_generative_prompt import (
     parse_prompt_record, validate_prompt_record,
 )
 
+_SKILL_DIR = Path(__file__).resolve().parents[2]
+_SCRIPTS = _SKILL_DIR / "scripts"
 _CLI = _SCRIPTS / "validate_generative_prompt.py"
+
+
+@pytest.fixture()
+def anchors(tmp_path: Path) -> Path:
+    """Write a one-anchor registry with a real reference image.
+
+    The shipped registry is empty by design (spec D6), so a test that needs a
+    resolvable anchor must supply one. Building it here also keeps the test
+    independent of whichever anchors a human later curates.
+    """
+    directory = tmp_path / "anchors"
+    directory.mkdir()
+    buffer = io.BytesIO()
+    Image.new("RGB", (4, 4), (30, 58, 95)).save(buffer, format="PNG")
+    (directory / "schematic-01.png").write_bytes(buffer.getvalue())
+    registry = directory / "anchors.yaml"
+    registry.write_text(yaml.safe_dump({"anchors": [{
+        "id": "technical-schematic",
+        "name": "Technical schematic",
+        "summary": "A flat drafted diagram in the manner of a paper figure.",
+        "applies_to": ["system architectures"],
+        "composition": "Orthogonal arrangement on a single plane.",
+        "line_treatment": "Uniform-weight outlines, flat fills.",
+        "palette_roles": ["primary", "body", "line", "bg"],
+        "forbidden": ["glow or bloom"],
+        "reference_images": [{
+            "path": "schematic-01.png",
+            "sha256": hashlib.sha256(buffer.getvalue()).hexdigest(),
+        }],
+    }]}), encoding="utf-8")
+    return registry
+
+
+def _candidates(count: int = CANDIDATE_COUNT,
+                matching: int = 1) -> List[Dict[str, Any]]:
+    """Build a ranked candidate list.
+
+    Args:
+        count: How many candidates to produce.
+        matching: How many of them match the anchor, taken from the top rank
+            downwards.
+
+    Returns:
+        Candidate entries in rank order.
+    """
+    return [
+        {"id": f"c{index + 1}",
+         "asset": f"renders/candidate-{index + 1:02d}.png",
+         "rank": index + 1,
+         "matches_anchor": index < matching}
+        for index in range(count)
+    ]
 
 
 def _record(**overrides: Any) -> Dict[str, Any]:
@@ -5612,58 +6374,128 @@ def _record(**overrides: Any) -> Dict[str, Any]:
         "aspect_ratio": "16:9",
         "references": [],
         "changed_regions": [],
+        "candidates": _candidates(),
+        "ranking": {"blinded": True, "ranked_by": "art_direction"},
+        "selected": "c1",
     }
     record.update(overrides)
     return record
 
 
-def test_a_complete_record_validates() -> None:
+def test_a_complete_record_validates(anchors: Path) -> None:
     """The reference record passes."""
-    assert validate_prompt_record(_record()) == []
+    assert validate_prompt_record(_record(), anchors) == []
 
 
-def test_a_missing_style_anchor_is_rejected() -> None:
+def test_a_missing_style_anchor_is_rejected(anchors: Path) -> None:
     """An unanchored prompt is the failure mode; it cannot be optional."""
     record = _record()
     del record["style_anchor"]
-    errors = validate_prompt_record(record)
+    errors = validate_prompt_record(record, anchors)
     assert any("style_anchor" in error for error in errors)
 
 
-def test_an_unknown_style_anchor_is_rejected() -> None:
+def test_an_unknown_style_anchor_is_rejected(anchors: Path) -> None:
     """Citing an anchor that does not exist is not anchoring."""
-    errors = validate_prompt_record(_record(style_anchor="vibes"))
+    errors = validate_prompt_record(_record(style_anchor="vibes"), anchors)
     assert any("vibes" in error for error in errors)
 
 
-def test_a_missing_rationale_is_rejected() -> None:
+def test_an_empty_registry_rejects_every_record() -> None:
+    """With no curated anchor the generative route is closed, not permissive."""
+    errors = validate_prompt_record(_record())
+    assert errors
+    assert any("empty" in error for error in errors)
+
+
+def test_a_missing_rationale_is_rejected(anchors: Path) -> None:
     """The generative route must be justified, not merely chosen."""
     record = _record()
     del record["illustration_rationale"]
-    errors = validate_prompt_record(record)
+    errors = validate_prompt_record(record, anchors)
     assert any("illustration_rationale" in error for error in errors)
 
 
-def test_a_banned_motif_anywhere_in_the_record_is_rejected() -> None:
+def test_a_banned_motif_anywhere_in_the_record_is_rejected(
+    anchors: Path,
+) -> None:
     """The scan reads the whole record, not just one field."""
     errors = validate_prompt_record(_record(
-        subject="A glowing neural network sphere above a data city."))
+        subject="A glowing neural network sphere above a data city."), anchors)
     assert any("glowing-neural-sphere" in error for error in errors)
     assert any("abstract-data-city" in error for error in errors)
 
 
-def test_the_shipped_examples_prompt_would_now_be_rejected() -> None:
+def test_the_shipped_examples_prompt_would_now_be_rejected(
+    anchors: Path,
+) -> None:
     """The documented failure must not be able to recur through this path."""
     errors = validate_prompt_record(_record(
         composition=("One focal researcher in a lab coat at left, a glowing "
-                     "neural network sphere at right, flowing light above.")))
+                     "neural network sphere at right, flowing light above.")),
+        anchors)
     assert errors
 
 
-def test_required_exclusions_must_be_present() -> None:
+def test_required_exclusions_must_be_present(anchors: Path) -> None:
     """The pre-existing exclusion contract is still enforced."""
-    errors = validate_prompt_record(_record(exclusions=["prose"]))
+    errors = validate_prompt_record(_record(exclusions=["prose"]), anchors)
     assert any("exclusions" in error for error in errors)
+
+
+def test_fewer_than_three_candidates_is_rejected(anchors: Path) -> None:
+    """Spec D6 requires three candidates, not the first image that arrived."""
+    errors = validate_prompt_record(
+        _record(candidates=_candidates(count=2)), anchors)
+    assert any("candidates" in error and "3" in error for error in errors)
+
+
+def test_unblinded_ranking_is_rejected(anchors: Path) -> None:
+    """A ranker who knows which candidate is which is not ranking blind.
+
+    This is the assertion that carries the requirement. Without it the field is
+    documentation: a record could set `blinded: false` and still validate, and
+    "ranked blind" would mean whatever the author felt it meant.
+    """
+    errors = validate_prompt_record(
+        _record(ranking={"blinded": False, "ranked_by": "art_direction"}),
+        anchors)
+    assert any("blinded" in error for error in errors)
+
+
+def test_duplicate_or_gapped_ranks_are_rejected(anchors: Path) -> None:
+    """Ranks must be a permutation of 1..n, or the ordering means nothing."""
+    broken = _candidates()
+    broken[1]["rank"] = 1
+    errors = validate_prompt_record(_record(candidates=broken), anchors)
+    assert any("rank" in error for error in errors)
+
+
+def test_selecting_a_candidate_that_does_not_match_is_rejected(
+    anchors: Path,
+) -> None:
+    """Spec D6: "Accepting the least-bad image is prohibited."
+
+    When the top-ranked candidate still does not match the anchor, the module
+    downgrades. Selecting it anyway is the exact behaviour the spec forbids, so
+    it must fail validation rather than depend on the author's restraint.
+    """
+    errors = validate_prompt_record(
+        _record(candidates=_candidates(matching=0)), anchors)
+    assert any("downgrade" in error for error in errors)
+
+
+def test_a_clean_downgrade_validates(anchors: Path) -> None:
+    """No candidate matched, and the record says so instead of selecting one."""
+    record = _record(candidates=_candidates(matching=0), selected=None,
+                     downgraded_to="native-editorial")
+    assert validate_prompt_record(record, anchors) == []
+
+
+def test_selecting_an_unknown_candidate_id_is_rejected(anchors: Path) -> None:
+    """`selected` must name one of the candidates that were actually ranked."""
+    errors = validate_prompt_record(_record(selected="c9"), anchors)
+    assert any("c9" in error for error in errors)
 
 
 def test_parse_reads_the_yaml_block_from_a_prompt_markdown(
@@ -5732,12 +6564,14 @@ from typing import Any, Dict, List, Mapping, Union
 
 import yaml
 
-_SCRIPTS = Path(__file__).resolve().parent
-if str(_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS))
+from style_anchors import (
+    ANCHORS_PATH, CANDIDATE_COUNT, AnchorError, get_anchor,
+    scan_for_banned_motifs,
+)
 
-from style_anchors import ANCHORS_PATH, AnchorError, get_anchor, scan_for_banned_motifs
-
+# `candidates`, `ranking`, and `selected` are deliberately absent here and
+# checked by `_candidate_errors` instead: a valid downgrade record sets
+# `selected: null`, which this list's truthiness test would reject.
 REQUIRED_FIELDS = (
     "purpose", "illustration_rationale", "style_anchor", "composition",
     "subject", "palette", "lighting", "empty_annotation_regions",
@@ -5808,6 +6642,86 @@ def _record_text(record: Mapping[str, Any]) -> str:
     return " ".join(parts)
 
 
+def _candidate_errors(record: Mapping[str, Any]) -> List[str]:
+    """Check spec D6's three-candidate blind-ranking requirement.
+
+    Spec D6 requires that "Three candidates are generated and ranked blind
+    against the anchor", and that "If no candidate matches the anchor, the
+    module downgrades to a native editorial composition. Accepting the least-bad
+    image is prohibited."
+
+    Both halves are checked here rather than left to the author, because a
+    record that merely *describes* a blind ranking is indistinguishable from one
+    that accepted the first image the model returned -- and that is the
+    behaviour spec 2.1 documents failing.
+
+    Args:
+        record: The parsed prompt record.
+
+    Returns:
+        Human-readable errors; empty when the record satisfies D6.
+    """
+    errors: List[str] = []
+    candidates = record.get("candidates")
+    if not isinstance(candidates, list):
+        return ["candidates must be a list of "
+                f"{CANDIDATE_COUNT} ranked entries"]
+    if len(candidates) != CANDIDATE_COUNT:
+        errors.append(
+            f"candidates must hold exactly {CANDIDATE_COUNT} entries; "
+            f"found {len(candidates)}. Spec D6 requires three candidates "
+            f"ranked blind against the anchor.")
+
+    ranks: List[Any] = []
+    identifiers: List[str] = []
+    matching: List[str] = []
+    for position, candidate in enumerate(candidates):
+        if not isinstance(candidate, dict):
+            errors.append(f"candidate {position} is not a mapping")
+            continue
+        if not candidate.get("id"):
+            errors.append(f"candidate {position} omits 'id'")
+            continue
+        identifier = str(candidate["id"])
+        identifiers.append(identifier)
+        ranks.append(candidate.get("rank"))
+        if candidate.get("matches_anchor") is True:
+            matching.append(identifier)
+
+    if len(identifiers) == len(candidates):
+        expected = list(range(1, len(candidates) + 1))
+        if sorted(rank for rank in ranks if isinstance(rank, int)) != expected:
+            errors.append(
+                f"candidate 'rank' values must be a permutation of "
+                f"{expected}; found {ranks}")
+
+    ranking = record.get("ranking")
+    if not isinstance(ranking, dict):
+        errors.append("ranking must be a mapping with 'blinded' and 'ranked_by'")
+    elif ranking.get("blinded") is not True:
+        errors.append(
+            "ranking.blinded must be true: spec D6 requires the candidates be "
+            "ranked blind against the anchor, and a ranker who knows which "
+            "candidate is which is not ranking blind")
+
+    selected = record.get("selected")
+    if selected is None:
+        if record.get("downgraded_to") != "native-editorial":
+            errors.append(
+                "a record that selects no candidate must set "
+                "downgraded_to: native-editorial")
+    elif str(selected) not in identifiers:
+        errors.append(
+            f"selected {str(selected)!r} is not one of the ranked candidates: "
+            f"{', '.join(identifiers) or '(none)'}")
+    elif str(selected) not in matching:
+        errors.append(
+            f"selected candidate {str(selected)!r} does not match the anchor. "
+            f"Spec D6: accepting the least-bad image is prohibited; downgrade "
+            f"to a native editorial composition instead.")
+    return errors
+
+
 def validate_prompt_record(record: Mapping[str, Any],
                            anchors_path: Path = ANCHORS_PATH) -> List[str]:
     """Validate one prompt record against the generative contract.
@@ -5830,6 +6744,8 @@ def validate_prompt_record(record: Mapping[str, Any],
             get_anchor(str(anchor_id), anchors_path)
         except AnchorError as exc:
             errors.append(str(exc))
+
+    errors.extend(_candidate_errors(record))
 
     exclusions = record.get("exclusions") or []
     if isinstance(exclusions, (list, tuple)):
@@ -5876,7 +6792,7 @@ if __name__ == "__main__":
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_validate_generative_prompt.py -v`
-Expected: PASS — 11 passed.
+Expected: PASS — 18 passed.
 
 - [ ] **Step 5: Invert the route default**
 
@@ -5903,7 +6819,17 @@ with:
    of the module; it is the route correcting itself. A generative asset that
    survives is one that earned its place.
 
-   Every generative prompt record must name a registered style anchor and pass:
+   **The registry may be empty, and that is a valid answer.** Spec D6 ships the
+   style-anchor registry unpopulated, because curating reference images is a
+   human action. While it is empty, every generative record is refused and the
+   module downgrades to a native editorial composition. Do not add a prose-only
+   anchor to reopen the route: `style_anchors.load_anchors` refuses an entry
+   without verified `reference_images`. See
+   `references/style-anchors/README.md` for the population procedure.
+
+   Every generative prompt record must name a registered style anchor, carry
+   three candidates ranked blind against that anchor's reference images, and
+   pass:
 
    ```bash
    timeout 120 python3 "$SCRIPTS/validate_generative_prompt.py" \
@@ -5978,7 +6904,38 @@ exclusions:
 aspect_ratio: 16:9
 references: []
 changed_regions: []
+
+# Spec D6: three candidates, ranked blind against the anchor's reference images.
+# `matches_anchor` is the ranker's verdict, not the author's preference. If the
+# top-ranked candidate does not match, set `selected: null` and
+# `downgraded_to: native-editorial` -- accepting the least-bad image is
+# prohibited, and validate_generative_prompt.py refuses it.
+candidates:
+  - id: c1
+    asset: renders/candidate-01.png
+    rank: 1
+    matches_anchor: true
+  - id: c2
+    asset: renders/candidate-02.png
+    rank: 2
+    matches_anchor: false
+  - id: c3
+    asset: renders/candidate-03.png
+    rank: 3
+    matches_anchor: false
+ranking:
+  blinded: true
+  ranked_by: art_direction
+selected: c1
 ```
+
+**On "ranked blind".** The ranker must not know which candidate came from which
+generation attempt, which prompt variant produced it, or which one the author
+prefers. Present the three renders in a shuffled order against the anchor's
+reference images and record the verdict. `ranking.blinded: false` is refused
+rather than merely noted: an unblinded ranking of three images the author
+already has an opinion about is a rationalisation, not a ranking, and it would
+let the exact failure in spec §2.1 through with three times the paperwork.
 
 Add immediately below it:
 
@@ -5995,7 +6952,7 @@ The validator refuses a record that omits a required field, cites an
 unregistered anchor, drops a required exclusion, or asks anywhere in its text
 for a banned motif. It reads the prompt, not the produced image: a model may
 still return a banned motif unasked, and that case is caught at review as an
-`art_direction` `generic-imagery` finding.
+`art_direction` `visual-cliche` finding.
 ````
 
 - [ ] **Step 7: Update the persona test**
@@ -6075,7 +7032,7 @@ the verdict in the Task 10 vocabulary.
 **A limitation this task makes visible.** The shipped prompt never asked for a
 lab coat, yet the delivered image contains one. `scan_for_banned_motifs` reads
 prompts and would not have caught it; only the art-direction reviewer's
-`generic-imagery` finding would. Record that in `WHY-THIS-FAILS.md` rather than
+`visual-cliche` finding would. Record that in `WHY-THIS-FAILS.md` rather than
 overstating what the scan buys.
 
 - [ ] **Step 1: Write the failing test**
@@ -6084,24 +7041,21 @@ Create `skills/report-slides/scripts/tests/test_shipped_examples.py`:
 
 ```python
 """The shipped examples must satisfy the gates this skill enforces."""
+
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 import pytest
 
-_REPO = Path(__file__).resolve().parents[4]
-_SKILL_DIR = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(_SKILL_DIR / "scripts"))
-
-from design_tokens import DEFAULT_TOKENS_PATH  # noqa: E402
-from validate_generative_prompt import (  # noqa: E402
+from design_tokens import DEFAULT_TOKENS_PATH
+from validate_generative_prompt import (
     parse_prompt_record, validate_prompt_record,
 )
-from validate_visual_style import lint_paths  # noqa: E402
+from validate_visual_style import lint_paths
 
+_REPO = Path(__file__).resolve().parents[4]
 _EXAMPLE = _REPO / "examples/report-slides/visual-authoring"
 _COUNTER = _EXAMPLE / "assets/research-collaboration"
 
@@ -6123,8 +7077,9 @@ def test_the_counter_example_prompt_is_rejected() -> None:
 def test_the_counter_example_is_documented_as_one() -> None:
     """A retained failure must say why it is retained."""
     text = (_COUNTER / "WHY-THIS-FAILS.md").read_text(encoding="utf-8")
-    assert "generic-imagery" in text
-    assert "claim-not-stated" in text
+    assert "visual-cliche" in text
+    assert "stock-ai-composition" in text
+    assert "decorative-noise" in text
     assert "downgrade" in text.lower()
 
 
@@ -6134,7 +7089,8 @@ def test_the_counter_example_review_records_the_failure() -> None:
     assert review["status"] == "failed"
     kinds = {finding["kind"]
              for finding in review["art_direction"]["findings"]}
-    assert {"generic-imagery", "claim-not-stated"} <= kinds
+    assert {"visual-cliche", "stock-ai-composition",
+            "decorative-noise"} <= kinds
 
 
 def test_the_raster_layer_was_downgraded_out_of_the_deck() -> None:
@@ -6187,13 +7143,18 @@ in blue, teal, and amber. Its `review.json` recorded `"status": "passed"` with a
 single finding, and that finding was about CairoSVG's external-resource policy —
 a rendering note, not a judgement about the picture.
 
-## The verdict under the current vocabulary
+## The verdict under the art-direction vocabulary
 
-- **`generic-imagery`** — every element of the illustration would serve any deck
-  about any AI system. Nothing in it is specific to this deck's subject.
-- **`claim-not-stated`** — the slide's factual content lived entirely in the SVG
-  overlay. The bitmap asserted nothing; the asset's own `review.json` said so,
-  recording that "the bitmap is illustrative atmosphere only".
+- **`visual-cliche`** — the glowing neural sphere, the flowing light ribbons,
+  and the abstract data-city skyline would serve any deck about any AI system.
+  Nothing in them is specific to this deck's subject.
+- **`stock-ai-composition`** — the framing is a generator default. "Anonymous
+  person at a laptop" is on the banned-motif list in spec §D6 by name, and the
+  lab coat was never asked for: the model supplied it because that is what its
+  prior returns for "researcher".
+- **`decorative-noise`** — the slide's factual content lived entirely in the SVG
+  overlay. The bitmap carried no information, and the asset's own `review.json`
+  said so, recording that "the bitmap is illustrative atmosphere only".
 
 ## What was done about it
 
@@ -6237,7 +7198,7 @@ In `assets/research-collaboration/review.json`:
     "round": 3,
     "findings": [
       {
-        "kind": "generic-imagery",
+        "kind": "visual-cliche",
         "description": "The illustration is a lab-coated figure at a laptop with a glowing neural sphere, light ribbons, and an abstract data-city skyline; every element would serve any deck about any AI system.",
         "remedy": "Downgrade to the deterministic SVG overlay, which already carries every factual mark.",
         "source": "svg-preview",
@@ -6245,8 +7206,16 @@ In `assets/research-collaboration/review.json`:
         "disposition": "fixed"
       },
       {
-        "kind": "claim-not-stated",
-        "description": "The bitmap asserts nothing; this record's own remaining_raster_layers entry described it as illustrative atmosphere only.",
+        "kind": "stock-ai-composition",
+        "description": "The framing is a generator default: an anonymous person at a laptop, a motif spec D6 bans by name. The lab coat was never requested; the model supplied it.",
+        "remedy": "Downgrade to the deterministic SVG overlay.",
+        "source": "svg-preview",
+        "artifact_path": "renders/source.png",
+        "disposition": "fixed"
+      },
+      {
+        "kind": "decorative-noise",
+        "description": "The bitmap carries no information; this record's own remaining_raster_layers entry described it as illustrative atmosphere only.",
         "remedy": "Remove the raster layer from the slide.",
         "source": "svg-preview",
         "artifact_path": "renders/source.png",
@@ -6353,6 +7322,719 @@ tokens so the shipped examples satisfy the gate users' decks are held to."
 
 ---
 
+## Phase 6: Lint Evidence and the Enforced Gate
+
+### Task 14: Persist the lint result and bind the gate to it
+
+Task 8 built the linter and documented it as blocking. It is not blocking.
+`SKILL.md` tells an agent to run `validate_visual_style.py` and treat a non-zero
+exit as a hard failure, but nothing in `presentation_gates.py`,
+`presentation_events.py`, or `presentation_workflow.py` reads that exit code. A
+slide can be recorded as passed by three reviewers without the linter ever
+having run, and a slide that passed the linter yesterday still counts as passed
+after its SVG is rewritten today.
+
+That is exactly the defect spec §2.11 exists to remove: a gate that lives in
+prose, where compliance is asserted rather than shown. Shipping a 22-rule linter
+behind a prose gate reproduces the problem with more machinery.
+
+The same gap makes `linter_warnings_answered` decorative.
+`art_direction_reviewer_agent.md` says an art-direction review is incomplete
+until every linter warning is answered, and Task 10 validates nothing of the
+kind: a review passes with the field absent, or with answers to warnings that no
+run ever produced. Both ends of that contract need the same missing thing — a
+persisted lint result with a digest — so they are fixed in one task.
+
+**Files:**
+- Create: `skills/report-slides/scripts/lint_evidence.py`
+- Test: `skills/report-slides/scripts/tests/test_lint_evidence.py`
+- Modify: `skills/report-slides/scripts/validate_visual_style.py` — `main`, from
+  Task 8
+- Modify: `skills/report-slides/scripts/presentation_gates.py` —
+  `review_result_blockers` (currently line 529) and `assert_slide_passable`
+  (currently line 615)
+- Modify: `skills/report-slides/SKILL.md` — the Stage 10 gate paragraph Task 8
+  wrote
+
+**Interfaces:**
+- Consumes: `visual_style.report.LintReport` (Task 1);
+  `validate_visual_style.lint_svg` (Task 8);
+  `presentation_events.{append_event, load_events, load_artifacts}`;
+  `presentation_artifact_provenance.{MODULE_ARTIFACT_KINDS, SLIDE_ARTIFACT_KINDS}`.
+- Produces:
+  - `LINT_EVENT_TYPE: str` — `"visual_style_lint"`
+  - `record_lint_evidence(project_root: Path, subject_type: str,
+    subject_id: str, artifact_sha256: str, tokens_sha256: str,
+    report: LintReport) -> Dict[str, Any]`
+  - `current_lint_evidence(project_root: Path, subject_type: str,
+    subject_id: str, artifact_sha256: str, tokens_sha256: str)
+    -> Optional[Dict[str, Any]]`
+  - `current_svg_digest(project_root: Path, subject_type: str,
+    subject_id: str) -> Optional[str]`
+  - `lint_blockers(project_root: Path, subject_type: str, subject_id: str,
+    tokens_sha256: str) -> List[Dict[str, Any]]`
+  - `unanswered_warnings(evidence: Mapping[str, Any],
+    review: Mapping[str, Any]) -> List[str]`
+
+- [ ] **Step 1: Write the failing tests**
+
+Create `skills/report-slides/scripts/tests/test_lint_evidence.py`:
+
+```python
+"""Lint results are evidence, not console output.
+
+A gate that reads a shell exit code enforces nothing: the exit code is gone by
+the time anything decides whether a slide may pass. These tests pin the three
+properties that make the linter an actual gate -- the result is persisted, it is
+bound to the exact bytes it examined, and a review cannot claim to have answered
+warnings that no run produced.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any, Dict, Tuple
+
+import pytest
+
+import lint_evidence as le
+import presentation_events as events
+from visual_style.report import Finding, LintReport
+
+
+@pytest.fixture()
+def project(tmp_path: Path) -> Path:
+    """An empty project root, which is already an admissible event target.
+
+    `presentation_evidence_workflow.require_schema_v2` -- which `append_event`
+    calls first -- collects the schema markers of the state documents that
+    exist and returns without complaint when there are none. A fresh directory
+    is therefore a valid schema-v2 project, and no initialiser call is needed.
+    """
+    return tmp_path
+
+
+def _publish_svg(project_root: Path, slide_id: str, sha256: str) -> None:
+    """Record a slide-svg artifact so the gate has bytes to reason about."""
+    events.create_artifact_record(
+        project_root, deck_id="dk-1", artifact_kind="slide-svg",
+        artifact_path=f"slides/{slide_id}.svg", sha256=sha256,
+        producer_id="test", slide_id=slide_id)
+
+
+def _report(errors: int = 0, warnings: Tuple[str, ...] = ()) -> LintReport:
+    """Build a report with the requested error count and warning rules."""
+    findings = [
+        Finding(rule="safe-area", severity="error", message=f"e{index}",
+                element_id=f"e{index}", location=(0.0, 0.0))
+        for index in range(errors)
+    ]
+    findings.extend(
+        Finding(rule=rule, severity="warning", message=rule,
+                element_id=rule, location=(0.0, 0.0))
+        for rule in warnings
+    )
+    return LintReport(path=Path("slide-01.svg"), findings=findings)
+
+
+def test_a_recorded_result_is_found_again_by_its_digests(project: Path) -> None:
+    """The evidence is keyed by what it examined, not by when it ran."""
+    le.record_lint_evidence(project, "slide", "sl-1", "a" * 64, "b" * 64,
+                            _report())
+    found = le.current_lint_evidence(project, "slide", "sl-1", "a" * 64,
+                                     "b" * 64)
+    assert found is not None
+    assert found["errors"] == []
+
+
+def test_a_result_for_different_bytes_is_not_current(project: Path) -> None:
+    """Editing the SVG invalidates the evidence, silently or not at all."""
+    le.record_lint_evidence(project, "slide", "sl-1", "a" * 64, "b" * 64,
+                            _report())
+    assert le.current_lint_evidence(project, "slide", "sl-1", "c" * 64,
+                                    "b" * 64) is None
+
+
+def test_a_result_for_different_tokens_is_not_current(project: Path) -> None:
+    """A token change re-opens every colour and type question on the slide."""
+    le.record_lint_evidence(project, "slide", "sl-1", "a" * 64, "b" * 64,
+                            _report())
+    assert le.current_lint_evidence(project, "slide", "sl-1", "a" * 64,
+                                    "d" * 64) is None
+
+
+def test_the_latest_result_for_one_digest_pair_wins(project: Path) -> None:
+    """A re-run after a fix supersedes the failing result it replaces."""
+    le.record_lint_evidence(project, "slide", "sl-1", "a" * 64, "b" * 64,
+                            _report(errors=2))
+    le.record_lint_evidence(project, "slide", "sl-1", "a" * 64, "b" * 64,
+                            _report())
+    found = le.current_lint_evidence(project, "slide", "sl-1", "a" * 64,
+                                     "b" * 64)
+    assert found is not None and found["errors"] == []
+
+
+def test_no_evidence_at_all_is_a_blocker(project: Path) -> None:
+    """The default is refusal. A linter nobody ran must not read as a pass."""
+    _publish_svg(project, "sl-1", "a" * 64)
+    reasons = {b["reason"] for b in
+               le.lint_blockers(project, "slide", "sl-1", "b" * 64)}
+    assert reasons == {"lint_evidence_missing"}
+
+
+def test_evidence_for_older_bytes_is_a_blocker(project: Path) -> None:
+    """Stale evidence is worse than none: it looks like a pass."""
+    le.record_lint_evidence(project, "slide", "sl-1", "0" * 64, "b" * 64,
+                            _report())
+    _publish_svg(project, "sl-1", "a" * 64)
+    reasons = {b["reason"] for b in
+               le.lint_blockers(project, "slide", "sl-1", "b" * 64)}
+    assert reasons == {"lint_evidence_stale"}
+
+
+def test_a_failing_result_is_a_blocker(project: Path) -> None:
+    """A hard error blocks the slide whatever the three reviewers concluded."""
+    _publish_svg(project, "sl-1", "a" * 64)
+    le.record_lint_evidence(project, "slide", "sl-1", "a" * 64, "b" * 64,
+                            _report(errors=1))
+    blockers = le.lint_blockers(project, "slide", "sl-1", "b" * 64)
+    assert [b["reason"] for b in blockers] == ["lint_failed"]
+    assert blockers[0]["rules"] == ["safe-area"]
+
+
+def test_a_passing_result_blocks_nothing(project: Path) -> None:
+    """Warnings are for the art director to answer, not for the gate."""
+    _publish_svg(project, "sl-1", "a" * 64)
+    le.record_lint_evidence(project, "slide", "sl-1", "a" * 64, "b" * 64,
+                            _report(warnings=("occupancy",)))
+    assert le.lint_blockers(project, "slide", "sl-1", "b" * 64) == []
+
+
+def test_unanswered_warnings_are_named(project: Path) -> None:
+    """The reviewer must answer the warnings this run produced."""
+    evidence = le.record_lint_evidence(
+        project, "slide", "sl-1", "a" * 64, "b" * 64,
+        _report(warnings=("occupancy", "equal-card-repetition")))
+    review: Dict[str, Any] = {
+        "reviewer_role": "art_direction", "status": "passed",
+        "linter_warnings_answered": [
+            {"rule": "occupancy", "answer": "the slide is a section divider"},
+        ],
+    }
+    assert le.unanswered_warnings(evidence, review) == ["equal-card-repetition"]
+
+
+def test_answering_a_warning_that_was_not_raised_is_unanswered(
+        project: Path) -> None:
+    """Answers copied from another slide do not discharge this slide's warnings.
+
+    Without this, `linter_warnings_answered` degrades into a field that is
+    filled in because it is required, which is the failure mode the whole task
+    exists to remove.
+    """
+    evidence = le.record_lint_evidence(
+        project, "slide", "sl-1", "a" * 64, "b" * 64,
+        _report(warnings=("occupancy",)))
+    review: Dict[str, Any] = {
+        "reviewer_role": "art_direction", "status": "passed",
+        "linter_warnings_answered": [
+            {"rule": "connector-crossing", "answer": "deliberate"},
+        ],
+    }
+    assert le.unanswered_warnings(evidence, review) == ["occupancy"]
+
+
+def test_an_empty_answer_does_not_count(project: Path) -> None:
+    """A blank string is not an answer."""
+    evidence = le.record_lint_evidence(
+        project, "slide", "sl-1", "a" * 64, "b" * 64,
+        _report(warnings=("occupancy",)))
+    review: Dict[str, Any] = {
+        "reviewer_role": "art_direction", "status": "passed",
+        "linter_warnings_answered": [{"rule": "occupancy", "answer": "  "}],
+    }
+    assert le.unanswered_warnings(evidence, review) == ["occupancy"]
+
+
+def test_a_module_is_linted_under_its_own_subject_type(project: Path) -> None:
+    """Modules and slides do not share an evidence namespace."""
+    le.record_lint_evidence(project, "module", "sl-1", "a" * 64, "b" * 64,
+                            _report())
+    assert le.current_lint_evidence(project, "slide", "sl-1", "a" * 64,
+                                    "b" * 64) is None
+```
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_lint_evidence.py -v`
+Expected: FAIL at collection — `ModuleNotFoundError: No module named 'lint_evidence'`.
+
+- [ ] **Step 3: Write `lint_evidence.py`**
+
+Create `skills/report-slides/scripts/lint_evidence.py`:
+
+```python
+"""Persisted evidence that the visual-style linter ran, and on what.
+
+The linter's exit code is not a gate. It exists for the length of one shell
+command, in a process nothing else observes, and by the time
+`assert_slide_passable` decides whether a slide may pass, the only honest answer
+available to it is "no idea". This module gives that question an answer that
+survives: an append-only event recording which rules fired, over which bytes,
+under which token set.
+
+Binding the result to both digests is the point. A lint result is a statement
+about a specific SVG under a specific token file; change either and the
+statement is not false, it is about something else. Evidence that no longer
+matches is therefore treated as absent -- and reported distinctly, because
+"nobody linted this" and "this was linted before it was rewritten" call for
+different actions from the person reading the blocker.
+"""
+from __future__ import annotations
+
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Mapping, Optional
+
+import presentation_events as events
+from visual_style.report import LintReport
+
+LINT_EVENT_TYPE = "visual_style_lint"
+
+_ARTIFACT_KIND_FOR_SUBJECT = {"slide": "slide-svg", "module": "module-svg"}
+
+
+def record_lint_evidence(
+    project_root: Path,
+    subject_type: str,
+    subject_id: str,
+    artifact_sha256: str,
+    tokens_sha256: str,
+    report: LintReport,
+) -> Dict[str, Any]:
+    """Persist one lint result as an immutable event.
+
+    Args:
+        project_root: Project root owning the presentation state.
+        subject_type: `slide` or `module`.
+        subject_id: The subject's generated identifier.
+        artifact_sha256: Digest of the exact SVG bytes that were linted.
+        tokens_sha256: Digest of the resolved token file the rules read.
+        report: The result of `validate_visual_style.lint_svg`.
+
+    Returns:
+        The persisted event mapping.
+
+    Raises:
+        ValueError: If `subject_type` is not a linted subject type.
+    """
+    if subject_type not in _ARTIFACT_KIND_FOR_SUBJECT:
+        raise ValueError(
+            f"subject_type must be slide or module, got {subject_type!r}")
+    event: Dict[str, Any] = {
+        "event": LINT_EVENT_TYPE,
+        "id": f"lint-{uuid.uuid4().hex[:12]}",
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "subject_type": subject_type,
+        "subject_id": subject_id,
+        "artifact_sha256": artifact_sha256,
+        "tokens_sha256": tokens_sha256,
+        "errors": sorted(
+            {f.rule for f in report.findings if f.severity == "error"}),
+        "warnings": sorted(
+            {f.rule for f in report.findings if f.severity == "warning"}),
+    }
+    events.append_event(project_root, event)
+    return event
+
+
+def current_lint_evidence(
+    project_root: Path,
+    subject_type: str,
+    subject_id: str,
+    artifact_sha256: str,
+    tokens_sha256: str,
+) -> Optional[Dict[str, Any]]:
+    """Return the most recent evidence matching both digests exactly.
+
+    Args:
+        project_root: Project root owning the presentation state.
+        subject_type: `slide` or `module`.
+        subject_id: The subject's generated identifier.
+        artifact_sha256: Digest of the SVG as it stands now.
+        tokens_sha256: Digest of the token file as it stands now.
+
+    Returns:
+        The latest matching event, or `None` when the subject has never been
+        linted in this exact configuration.
+    """
+    matches = [
+        event
+        for event in events.load_events(project_root, event_type=LINT_EVENT_TYPE)
+        if event.get("subject_type") == subject_type
+        and event.get("subject_id") == subject_id
+        and event.get("artifact_sha256") == artifact_sha256
+        and event.get("tokens_sha256") == tokens_sha256
+    ]
+    # `load_events` returns chronological order, so the last match is current.
+    return matches[-1] if matches else None
+
+
+def current_svg_digest(
+    project_root: Path, subject_type: str, subject_id: str
+) -> Optional[str]:
+    """Return the digest of the subject's current published SVG artifact.
+
+    Args:
+        project_root: Project root owning the presentation state.
+        subject_type: `slide` or `module`.
+        subject_id: The subject's generated identifier.
+
+    Returns:
+        The `sha256` of the most recent `slide-svg` or `module-svg` artifact
+        record for this subject, or `None` if none has been published.
+    """
+    kind = _ARTIFACT_KIND_FOR_SUBJECT.get(subject_type)
+    if kind is None:
+        return None
+    key = "slide_id" if subject_type == "slide" else "module_id"
+    records = [
+        record for record in events.load_artifacts(project_root).values()
+        if record.get("artifact_kind") == kind and record.get(key) == subject_id
+    ]
+    if not records:
+        return None
+    latest = max(records, key=lambda record: str(record.get("created_at", "")))
+    digest = latest.get("sha256")
+    return str(digest) if digest else None
+
+
+def lint_blockers(
+    project_root: Path, subject_type: str, subject_id: str, tokens_sha256: str
+) -> List[Dict[str, Any]]:
+    """Report why the linter does not currently clear this subject.
+
+    Args:
+        project_root: Project root owning the presentation state.
+        subject_type: `slide` or `module`.
+        subject_id: The subject's generated identifier.
+        tokens_sha256: Digest of the token file the subject is held to.
+
+    Returns:
+        Machine-readable blockers; empty means the linter passes on the current
+        bytes. `lint_artifact_missing` means no SVG has been published at all,
+        `lint_evidence_missing` that it has never been linted,
+        `lint_evidence_stale` that the evidence predates the current bytes or
+        token set, and `lint_failed` that hard errors are outstanding.
+    """
+    artifact_sha256 = current_svg_digest(project_root, subject_type, subject_id)
+    if artifact_sha256 is None:
+        return [{"reason": "lint_artifact_missing"}]
+    evidence = current_lint_evidence(
+        project_root, subject_type, subject_id, artifact_sha256, tokens_sha256)
+    if evidence is None:
+        prior = [
+            event
+            for event in events.load_events(
+                project_root, event_type=LINT_EVENT_TYPE)
+            if event.get("subject_type") == subject_type
+            and event.get("subject_id") == subject_id
+        ]
+        reason = "lint_evidence_stale" if prior else "lint_evidence_missing"
+        return [{"reason": reason}]
+    if evidence["errors"]:
+        return [{"reason": "lint_failed", "rules": list(evidence["errors"])}]
+    return []
+
+
+def unanswered_warnings(
+    evidence: Mapping[str, Any], review: Mapping[str, Any]
+) -> List[str]:
+    """Return the warning rules this review has not answered.
+
+    A warning is answered only by a non-empty answer naming that exact rule.
+    Answers naming rules the run did not raise are ignored rather than credited:
+    otherwise a reviewer could discharge every warning by pasting the answers
+    from a different slide.
+
+    Args:
+        evidence: A lint event from `current_lint_evidence`.
+        review: A Review Result mapping.
+
+    Returns:
+        The unanswered warning rules, sorted.
+    """
+    answered = {
+        str(entry.get("rule"))
+        for entry in review.get("linter_warnings_answered", [])
+        if isinstance(entry, Mapping) and str(entry.get("answer", "")).strip()
+    }
+    return sorted(set(evidence.get("warnings", [])) - answered)
+```
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_lint_evidence.py -v`
+Expected: PASS — 12 passed.
+
+- [ ] **Step 5: Record evidence from the CLI**
+
+`validate_visual_style.py` currently prints and exits. Give it the option to
+write down what it found. In `main`, add to the argument parser, beside the
+existing `--tokens` and `--warnings-as-errors`:
+
+```python
+    parser.add_argument(
+        "--record", type=Path, default=None, metavar="PROJECT_ROOT",
+        help="persist each result as lint evidence under this project root")
+    parser.add_argument(
+        "--subject-type", choices=("slide", "module"), default="slide",
+        help="the subject kind the linted files belong to")
+    parser.add_argument(
+        "--subject-id", default=None,
+        help="the generated subject id; required with --record")
+```
+
+and, after the report for one path is built and before the exit code is
+computed:
+
+```python
+    if args.record is not None:
+        if args.subject_id is None:
+            parser.error("--record requires --subject-id")
+        record_lint_evidence(
+            args.record, args.subject_type, args.subject_id,
+            _sha256_of(svg_path), _sha256_of(tokens_path), report)
+```
+
+`_sha256_of` is a four-line helper reading the file in binary and returning
+`hashlib.sha256(data).hexdigest()`; put it beside `main`. Recording is opt-in
+because the linter is also run outside a project, on a scratch file, while
+authoring — but Stage 10 always passes `--record`.
+
+- [ ] **Step 6: Write the failing gate tests**
+
+Append to `skills/report-slides/scripts/tests/test_reviewer_roles.py`, the file
+Task 9 created:
+
+```python
+def test_a_slide_cannot_pass_without_a_current_lint_result(
+        project: Path) -> None:
+    """Three passing reviewers do not substitute for a measurement.
+
+    This is the property that distinguishes a gate from a paragraph. Before it,
+    `validate_visual_style.py` could have been deleted and every deck would
+    still have completed.
+    """
+    slide_id = _slide_with_three_passing_reviews(project)
+    with pytest.raises(gates.ReviewGateError) as caught:
+        gates.assert_slide_passable(project, slide_id)
+    assert any(b["reason"].startswith("lint_") for b in caught.value.blockers)
+
+
+def test_an_art_direction_pass_must_answer_the_warnings(project: Path) -> None:
+    """`linter_warnings_answered` is checked against the warnings raised."""
+    slide_id = _slide_with_three_passing_reviews(project, answer_warnings=False)
+    _lint_clean_with_warnings(project, slide_id, ("occupancy",))
+    with pytest.raises(gates.ReviewGateError) as caught:
+        gates.assert_slide_passable(project, slide_id)
+    reasons = [b["reason"] for b in caught.value.blockers]
+    assert "art_direction:linter_warnings_unanswered" in reasons
+
+
+def test_a_slide_with_answered_warnings_and_clean_errors_passes(
+        project: Path) -> None:
+    """The gate is passable. A gate nothing can satisfy is not a gate."""
+    slide_id = _slide_with_three_passing_reviews(project, answer_warnings=True)
+    _lint_clean_with_warnings(project, slide_id, ("occupancy",))
+    passed = gates.assert_slide_passable(project, slide_id)
+    assert passed["slide"]["id"] == slide_id
+
+
+def test_a_new_visual_quality_review_is_refused(project: Path) -> None:
+    """The legacy role is grandfathered for replay, not for new writes.
+
+    `SLIDE_REVIEW_ROLE_SETS` still accepts `{scientific, visual_quality}` so
+    decks recorded before the split can complete. Without this check, that
+    concession is permanent and universal: any new deck could submit the legacy
+    pair and skip both `render_integrity` and `art_direction` forever, which
+    would make the entire art-direction gate optional by omission.
+    """
+    review = _review("visual_quality", "passed")
+    fresh = gates.review_result_blockers(project, "slide", "sl-1", review, None)
+    assert {"reason": "retired_reviewer_role"} in fresh
+    replayed = gates.review_result_blockers(
+        project, "slide", "sl-1", review, "ev-legacy-1")
+    assert {"reason": "retired_reviewer_role"} not in replayed
+```
+
+Write `_slide_with_three_passing_reviews`, `_lint_clean_with_warnings`, and
+`_review` as helpers in the same file, following the fixtures Task 9 already
+established there; `answer_warnings` controls whether the `art_direction` review
+carries a `linter_warnings_answered` entry for `occupancy`.
+
+- [ ] **Step 7: Run them to verify they fail**
+
+Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_reviewer_roles.py -v`
+Expected: FAIL — `assert_slide_passable` returns normally in the first three,
+and `review_result_blockers` reports no `retired_reviewer_role` in the fourth.
+
+- [ ] **Step 8: Wire the gate**
+
+In `presentation_gates.py`, add beside the other module-level constants:
+
+```python
+# `visual_quality` remains in `_REVIEW_ROLES` so persisted pre-split events stay
+# admissible on replay. It must not be writable: a new deck that could still
+# submit the legacy role pair would bypass both `render_integrity` and
+# `art_direction`, which is the whole of this plan.
+_RETIRED_REVIEW_ROLES = frozenset({"visual_quality"})
+```
+
+In `review_result_blockers`, immediately after the existing role check at
+line 548:
+
+```python
+    if role in _RETIRED_REVIEW_ROLES and persisted_id is None:
+        blockers.append({"reason": "retired_reviewer_role"})
+```
+
+and, at the end of the same function, the warning check:
+
+```python
+    if role == "art_direction" and review.get("status") == "passed":
+        digest = current_svg_digest(project_root, subject_type, subject_id)
+        evidence = None if digest is None else current_lint_evidence(
+            project_root, subject_type, subject_id, digest,
+            _tokens_digest(project_root))
+        if evidence is None:
+            blockers.append({"reason": "art_direction:lint_evidence_missing"})
+        else:
+            unanswered = unanswered_warnings(evidence, review)
+            if unanswered:
+                blockers.append({
+                    "reason": "art_direction:linter_warnings_unanswered",
+                    "rules": unanswered,
+                })
+```
+
+In `assert_slide_passable`, after the role loop and before the status check:
+
+```python
+    blockers.extend(lint_blockers(
+        project_root, "slide", slide_id, _tokens_digest(project_root)))
+```
+
+`_tokens_digest(project_root)` returns the digest of the deck's *effective*
+token set — the `_effective.tokens.yaml` plan 1 Task 16 writes, which is the
+composition of the token file and the deck's style Markdown, not the file passed
+to `--tokens`. Resolve it through the same `style_tokens_ref` path
+`validate_style_tokens_resolvable` uses in plan 1 Task 4, and return
+`DesignTokens.load(path).digest`. Raise rather than defaulting if it cannot be
+resolved: a gate that falls back to a built-in token set when it cannot find the
+deck's own is comparing the slide against the wrong contract, which is worse
+than refusing.
+
+Import `current_lint_evidence`, `current_svg_digest`, `lint_blockers`, and
+`unanswered_warnings` from `lint_evidence` at the top of the module.
+
+- [ ] **Step 9: Run the tests to verify they pass**
+
+Run: `timeout 900 python3 -m pytest skills/report-slides/scripts/tests/ -v`
+Expected: PASS — the whole suite.
+
+Existing tests that call `assert_slide_passable` on a fixture with no artifact
+and no lint evidence will now fail with `lint_artifact_missing`. Give those
+fixtures a published `slide-svg` artifact and a recorded clean lint result;
+do not relax the gate to accommodate a fixture that predates it. If a test
+existed specifically to assert that three reviews are sufficient, its claim has
+changed and it should be rewritten to assert the new rule, with the reason
+stated in the commit body.
+
+- [ ] **Step 10: Say so in `SKILL.md`**
+
+Replace the Stage 10 paragraph Task 8 wrote with the enforced version:
+
+````markdown
+Run the visual-style linter over every slide SVG, recording the result:
+
+```bash
+python3 "$SCRIPTS/validate_visual_style.py" "$SLIDES_DIR"/*.svg \
+    --tokens "$STYLE_TOKENS_REF" \
+    --record "$PROJECT_ROOT" --subject-type slide --subject-id "$SLIDE_ID"
+```
+
+The exit code is not the gate; the recorded result is. `assert_slide_passable`
+refuses a slide with no lint evidence, with evidence older than the current SVG
+or token file, or with outstanding hard errors — so re-running the linter after
+every edit is not diligence, it is the only way the slide ever passes.
+
+Warnings do not block. They are handed to the art-direction reviewer, who must
+answer each one by rule id in `linter_warnings_answered`; an `art_direction`
+review that passes with a warning unanswered is refused.
+````
+
+- [ ] **Step 11: Re-verify the shipped example under the enforced gate**
+
+Task 13 rebuilt `examples/report-slides/visual-authoring` and verified it with
+the linter alone — which, at the time, was all there was. The example deck is
+what a user reads to learn what "good" means here, so it must satisfy the gate
+their own decks are held to, not a weaker one.
+
+For each of the three example slides:
+
+1. Publish its `slide-svg` artifact, so `current_svg_digest` has bytes to name.
+2. Run `validate_visual_style.py` with `--record`, so there is current evidence.
+3. Record an `art_direction` review that answers every warning that run raised,
+   by rule id, in `linter_warnings_answered`. Answer them from the slide, not
+   from Task 13's commit message: an answer that does not describe the slide in
+   front of you is the failure mode this field exists to expose.
+4. Assert the whole thing:
+
+```python
+@pytest.mark.parametrize("slide_id", _EXAMPLE_SLIDE_IDS)
+def test_every_shipped_slide_passes_the_enforced_gate(
+        slide_id: str, example_project: Path) -> None:
+    """The example deck clears the gate a user's deck must clear.
+
+    Task 13 verified these slides with the linter alone. That was the strongest
+    check available then and is not the check users face now: an example that
+    passes a weaker gate than the product teaches the wrong thing twice over --
+    once about the slide, once about what counts as done.
+    """
+    assert gates.assert_slide_passable(example_project, slide_id)
+```
+
+Add it to `skills/report-slides/scripts/tests/test_shipped_examples.py`, the
+file Task 13 created. If a slide cannot clear the gate, that is a finding about
+Task 13's redesign or about the token defaults — say which, and fix it. Do not
+record an art-direction pass to make this green.
+
+- [ ] **Step 12: Commit**
+
+```bash
+git add skills/report-slides/scripts/lint_evidence.py \
+        skills/report-slides/scripts/tests/test_lint_evidence.py \
+        skills/report-slides/scripts/tests/test_reviewer_roles.py \
+        skills/report-slides/scripts/validate_visual_style.py \
+        skills/report-slides/scripts/presentation_gates.py \
+        skills/report-slides/scripts/tests/test_shipped_examples.py \
+        skills/report-slides/SKILL.md
+git commit -m "feat(report-slides): make the visual-style linter an enforced gate
+
+The linter was documented as blocking and enforced nothing: its exit code was
+gone before any gate ran, so a slide could pass three reviews without it. Lint
+results are now persisted as events bound to the SVG and token digests they
+examined, assert_slide_passable requires a current passing result, and an
+art-direction pass must answer every warning that result raised by rule id.
+
+Also refuses new visual_quality reviews. The legacy role pair stays admissible
+on replay so pre-split decks complete, but a new deck submitting it would have
+bypassed both render_integrity and art_direction permanently."
+```
+
+---
+
 ## Final Verification
 
 - [ ] **Whole suite**
@@ -6429,6 +8111,36 @@ replaced by a pair covering both accepted record forms, because the shipped
 counter-example is a plain YAML document and had to be validatable in place.
 Both changes are stated in the tasks that make them, with the reason.
 
+**Two spec requirements the first draft got wrong, and how they are now read.**
+§D5 names eight art-direction finding kinds; the first draft invented six of its
+own. The spec's eight are now used verbatim, in `presentation_gates.py`, in the
+reviewer persona, and in the re-reading of the shipped counter-example. §D6 says
+the registry "ships empty" and that anchors are "identified by actual reference
+images with recorded digests — not adjective lists"; the first draft shipped
+three prose anchors with `reference_image: null`. The registry is now empty,
+`reference_images` is mandatory and SHA-256-verified, and the three prose
+descriptions live in the README as briefs for whoever curates the images. While
+the registry is empty every generative record is refused and every conceptual
+module downgrades to a native editorial composition — which is the spec's
+intended default, not a gap.
+
+**Scope of the art-direction gate.** §D5 scopes that reviewer to the "complete
+slide, not isolated modules". `SLIDE_REVIEW_ROLE_SETS` and
+`MODULE_REVIEW_ROLE_SETS` are therefore separate, and
+`presentation_workflow.py`'s two completion branches take different predicates.
+Collapsing them — which the first draft did — would have left every module at
+`in_review` permanently the moment Task 10 added `art_direction` to the slide
+set, because nothing dispatches that reviewer for a fragment.
+`test_modules_are_not_held_to_the_art_direction_gate` pins this.
+
+**Measurement.** `TextRun.bbox()` is `ascent + line_offset + descent`, where the
+first and last come from `fonts.vertical_metrics` — plan 1 Task 5, the same
+function the renderer uses — and `line_offset` sums the `dy` the renderer
+actually wrote onto the tspans. Nothing here estimates a text box from an em
+fraction. Task 8's end-to-end test renders a real frame with `generate_slides`
+and lints the result, which is what caught the footer sitting three units below
+the safe area on every slide that has one.
+
 **Ordering constraints.** Task 3 must precede Tasks 6 and 7 (`node_bounds`).
 Tasks 1 and 2 precede everything. Task 8 needs Tasks 3–7. Task 10 needs Task 9's
 `SLIDE_REVIEW_ROLE_SETS`. Task 12 needs Task 11's registry. Task 13 needs
@@ -6443,3 +8155,31 @@ in Tasks 2, 3, and 6 passes all thirteen. `Connector` carries eleven fields plus
 `from_node` and `to_node`, both defaulted, and the two construction sites in
 Task 2 pass them explicitly.
 
+---
+
+## Revision, after review
+
+Reviewed together with plan 1; that document carries the shared findings and the
+rejections. What follows is this plan's own.
+
+**Defects fixed in this plan:**
+
+| Defect | Evidence | Where it landed |
+|---|---|---|
+| The linter was documented as blocking and enforced nothing | Task 8's Files block touched the linter, its tests, `SKILL.md`, and `visual-review.md` — no `presentation_*` file. A shell exit code is gone by the time `assert_slide_passable` runs, so a slide could pass three reviews with the linter never having run, and a slide that passed yesterday still counted as passed after its SVG was rewritten | **Task 14** |
+| `linter_warnings_answered` was decorative | The art-director persona said an unanswered warning makes a review incomplete; nothing validated the field, bound it to a run, or noticed it was absent | Task 14 Step 8 |
+| The legacy role pair was a permanent bypass | `SLIDE_REVIEW_ROLE_SETS` accepts `{scientific, visual_quality}` with no version gate, so a new deck could submit it forever and skip both `render_integrity` and `art_direction` — the whole of this plan. `review_result_blockers` already takes `persisted_id`, which distinguishes a replay from a new write | `_RETIRED_REVIEW_ROLES`, Task 14 |
+| The art-direction vocabulary contradicted the spec | Spec §D5 names eight kinds: `visual-cliche`, `decorative-noise`, `style-drift`, `synthetic-detail`, `meaningless-interface`, `stock-ai-composition`, `weak-hierarchy`, `undifferentiated-repetition`. This plan had invented six others | Task 10, and the counter-example re-read in Task 13 |
+| The style-anchor registry was the thing the spec rejects | §D6 requires anchors "identified by actual reference images with recorded digests — not adjective lists", and says the design "ships the registry empty with a documented procedure". The plan shipped three prose anchors with `reference_image: null` and asserted `len(anchors) >= 3` | Task 11 |
+| §D6's three-candidate blind ranking was documented nowhere and enforced nowhere | The spec requires three candidates ranked blind against the anchor, and prohibits accepting the least-bad image | Task 12's `_candidate_errors` |
+| Modules would have been held to a whole-slide art-direction gate | §D5 scopes that reviewer to the "complete slide, not isolated modules". Task 9 replaced *both* completion branches with one predicate; once Task 10 added `art_direction`, every module would have stopped at `in_review` permanently, because nothing dispatches that reviewer for a fragment | `MODULE_REVIEW_ROLE_SETS`, Task 9 |
+| The text box was modelled from guessed constants | `bbox()` used `y − 0.8 · size` and `size · line_count · 1.2`. It is now `ascent + line_offset + descent`, from the same `fonts.vertical_metrics` the renderer uses, with `line_offset` summing the `dy` the renderer wrote onto the tspans | Task 2 |
+| Nothing ran the linter over markup the renderer produced | Every linter test used hand-written fixtures and every renderer test asserted on strings, so plan 1's footer defect was invisible to both plans | Task 8's end-to-end test |
+| Twenty-two rules would have started blocking with no corpus | Every rule was written against a fixture built to exercise it; none had been run over a whole realistic slide. The recorded response to a hard error nobody believes is to relax the rule, and a relaxed rule does not come back | Task 8 Step 5 |
+| The shipped example was verified against a weaker gate than users face | Task 13 verified the rebuilt example deck with the linter alone, which was all there was at the time | Task 14 Step 11 |
+
+**Ordering note.** Task 14 is last because it depends on everything: Task 8's
+linter, Task 10's roles, and Task 13's rebuilt example, which it re-verifies
+under the gate it installs. Plan 1's Task 16 must land before Task 14 runs,
+because `_tokens_digest` reads the composed `_effective.tokens.yaml` rather than
+the base token file.

@@ -6,7 +6,7 @@
 
 **Architecture:** A validated YAML token contract (`design_tokens.py` + JSON Schema) becomes the single source of visual truth. Both rendering routes resolve it: the deterministic Python renderer reads it instead of hard-coded 10–14pt literals, and the native SVG route receives it through a now-mandatory `style_tokens_ref`. A new `visual_style/` package lints authored SVG against the resolved tokens with numeric thresholds. The existing `visual_quality_reviewer_agent` is narrowed to render integrity, and a new `art_direction_reviewer_agent` gains authority to reject compositionally weak slides.
 
-**Tech Stack:** Python 3.8+, PyYAML, jsonschema, Pillow (font metrics), fontTools, lxml, python-pptx, `fc-match`/`fc-list` (fontconfig), pytest.
+**Tech Stack:** Python 3.11 (`.github/workflows/pytest.yml` pins 3.11; existing modules such as `presentation_gates.py` already use 3.10+ syntax, so new code may too), PyYAML, jsonschema, Pillow (font metrics), fontTools, lxml, python-pptx, `fc-match`/`fc-list` (fontconfig), pytest.
 
 **Spec:** `docs/superpowers/specs/2026-09-04-report-slides-visual-quality-design.md`
 
@@ -30,6 +30,8 @@
 
 | File | Action | Phase |
 |------|--------|-------|
+| `skills/report-slides/scripts/conftest.py` | Create | 1 |
+| `.github/workflows/pytest.yml` | Modify (run and gate `skills/`) | 1 |
 | `skills/report-slides/references/design-tokens.schema.json` | Create | 1 |
 | `skills/report-slides/references/tokens/default.tokens.yaml` | Create | 1 |
 | `skills/report-slides/scripts/design_tokens.py` | Create | 1 |
@@ -51,6 +53,7 @@
 | `skills/report-slides/scripts/svg_to_pptx/tests/test_fidelity.py` | Create | 3 |
 | `skills/report-slides/agents/architecture_diagram_worker_agent.md` | Modify (resolve tokens; declare roles) | 3 |
 | `skills/report-slides/references/diagram-patterns.md` | Modify (token-driven geometry) | 3 |
+| `skills/report-slides/scripts/tests/test_effective_tokens.py` | Create | 4 |
 
 ---
 
@@ -58,12 +61,17 @@
 
 | Phase | Theme | Tasks |
 |-------|-------|-------|
-| 1 | Token contract and enforcement | 1–5 |
+| 1 | Token contract and enforcement | 0–5 |
 | 2 | Presentation-scale typography | 6–9 |
 | 3 | SVG→PPTX export fidelity | 10–15 |
+| 4 | One token set, compiled | 16 |
 
-Phases are ordered by dependency. Tasks 11–14 are independent of Phases 1–2;
-Task 10 consumes `fonts.py` from Task 5, and Task 15 consumes everything.
+Phases are ordered by dependency. Task 0 is a prerequisite for every other
+task in both plans — none of their per-file `Run:` commands work without it.
+Tasks 11–14 are independent of Phases 1–2; Task 10 consumes `fonts.py` from
+Task 5, Task 15 consumes everything, and Task 16 closes the contract by making
+the style override and the token file one artifact — which the second plan's
+linter and workflow gate both read.
 
 ## Scope: this is plan 1 of 2
 
@@ -99,6 +107,122 @@ once could not be reviewed or reverted per renderer.
 
 ---
 
+### Task 0: Make the report-slides suite importable file-by-file
+
+Every `Run:` line in this plan and in plan 2 targets a single test file. Today
+that does not work: the modules under `skills/report-slides/scripts/` are plain
+top-level modules, not an installed package, and the tests import them by bare
+name (`from presentation_gates import ...`). Collecting the *directory* happens
+to work because pytest prepends the argument's basedir; collecting one *file*
+under `scripts/tests/` does not, because `tests/` has no `__init__.py`, so the
+inserted basedir is `scripts/tests`, not `scripts`.
+
+Both plans previously worked around this with a per-file
+`sys.path.insert(...)` preamble and a linter-suppression comment on each
+deferred import — which the Global Constraints of both plans forbid. This task
+removes the need for the workaround once, for the whole suite.
+
+`svg_to_pptx/tests/` is unaffected: `svg_to_pptx/` and its `tests/` are real
+packages, so pytest already walks up to `scripts/`. The gap is only
+`scripts/tests/`.
+
+**Files:**
+- Create: `skills/report-slides/scripts/conftest.py`
+
+**Interfaces:**
+- Consumes: nothing.
+- Produces: bare-name importability of every module in
+  `skills/report-slides/scripts/` from any pytest invocation. Every subsequent
+  task in this plan and in plan 2 depends on it, and none of them may reintroduce
+  a `sys.path` preamble in a test file.
+
+- [ ] **Step 1: Observe the failure**
+
+Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_presentation_gates.py -q`
+
+Expected: FAIL at collection, verbatim:
+
+```
+E   ModuleNotFoundError: No module named 'presentation_contracts'
+ERROR skills/report-slides/scripts/tests/test_presentation_gates.py
+!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!
+1 error in 0.08s
+```
+
+This is an existing defect, not one this plan introduces. It is listed as Task 0
+because 27 later steps in the two plans cannot be run until it is fixed.
+
+- [ ] **Step 2: Record the collection baseline**
+
+Run: `timeout 900 python3 -m pytest --collect-only -q | tail -1`
+Expected: `4008 tests collected` (or higher on a later checkout). Write the
+number down; Step 4 asserts it does not move.
+
+- [ ] **Step 3: Add the conftest**
+
+Create `skills/report-slides/scripts/conftest.py`:
+
+```python
+"""Make the report-slides script package importable from any pytest rootdir.
+
+The modules in this directory are plain top-level modules, not an installed
+package, and the tests import them by bare name (`import presentation_gates`).
+Collecting the directory happens to work because pytest prepends the argument's
+basedir, but collecting a single test file under `tests/` does not, because
+`tests/` is not a package: the inserted basedir is `tests/`, not this directory.
+Anchoring sys.path here makes every invocation behave the same, which is what
+lets the plans' per-file `Run:` commands work without a bootstrap preamble in
+each test module.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+_SCRIPTS = Path(__file__).resolve().parent
+if str(_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS))
+```
+
+The `if` guard matters: pytest imports a conftest once per session, but a
+developer running two directories in one invocation should not accumulate
+duplicate `sys.path` entries.
+
+- [ ] **Step 4: Run the same file and the whole suite**
+
+Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_presentation_gates.py -q`
+Expected: PASS — `18 passed`.
+
+Run: `timeout 900 python3 -m pytest --collect-only -q | tail -1`
+Expected: the same count as Step 2 — `4008 tests collected`. A conftest that
+changes `sys.path` can shadow a module of the same name elsewhere in the tree;
+an unchanged count is the check that it has not.
+
+- [ ] **Step 5: Bring `skills/` into the CI gate**
+
+`.github/workflows/pytest.yml` runs `pytest scripts/ tests/` and its `paths:`
+filters never mention `skills/**`. The 1506 tests under
+`skills/report-slides/scripts/` therefore do not gate any pull request today;
+only `test-count-monotonic.yml`, which runs a bare `pytest --collect-only`, sees
+them, and that gate counts tests without running them.
+
+In `.github/workflows/pytest.yml`, add `'skills/**'` to both `paths:` lists and
+change the run step to:
+
+```yaml
+        run: pytest scripts/ tests/ skills/
+```
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add skills/report-slides/scripts/conftest.py .github/workflows/pytest.yml
+git commit -m "test: anchor sys.path for report-slides scripts and gate skills/ in CI"
+```
+
+---
+
 ### Task 1: Design token schema and default token file
 
 **Files:**
@@ -118,10 +242,10 @@ Create `skills/report-slides/scripts/tests/test_design_tokens.py`:
 
 ```python
 """Tests for the design-token contract and its loader."""
+
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 import jsonschema
@@ -131,8 +255,6 @@ import yaml
 _SKILL_DIR = Path(__file__).resolve().parents[2]
 _SCHEMA_PATH = _SKILL_DIR / "references" / "design-tokens.schema.json"
 _DEFAULT_TOKENS = _SKILL_DIR / "references" / "tokens" / "default.tokens.yaml"
-
-sys.path.insert(0, str(_SKILL_DIR / "scripts"))
 
 
 def test_schema_file_exists_and_is_valid_json_schema() -> None:
@@ -532,6 +654,8 @@ git commit -m "feat(report-slides): add validated design-token contract"
   - `class TokenError(ValueError)`
   - `@dataclass(frozen=True) class TypeRole` — `size: float`, `weight: int`,
     `line_height: float`, `max_lines: int`, `family: str`
+  - `semantic_errors(data: Mapping[str, Any]) -> List[str]` — the cross-field
+    checks JSON Schema cannot express
   - `class DesignTokens` with `load(path: Union[str, Path]) -> DesignTokens`,
     `digest -> str`, `path -> Path`, `raw -> Mapping[str, Any]`,
     `type_role(name: str) -> TypeRole`, `font_stack(family_key: str) -> str`,
@@ -543,7 +667,7 @@ git commit -m "feat(report-slides): add validated design-token contract"
 Append to `skills/report-slides/scripts/tests/test_design_tokens.py`:
 
 ```python
-from design_tokens import DesignTokens, TokenError  # noqa: E402
+from design_tokens import DesignTokens, TokenError
 
 
 def test_loader_reads_default_tokens() -> None:
@@ -571,6 +695,69 @@ def test_loader_digest_is_content_sensitive_not_whitespace_sensitive(
     baseline = DesignTokens.load(_DEFAULT_TOKENS).digest
     assert DesignTokens.load(same).digest == baseline
     assert DesignTokens.load(changed).digest != baseline
+
+
+def test_the_shipped_default_is_semantically_coherent() -> None:
+    """The token file this plan ships passes its own cross-field checks."""
+    import yaml
+
+    from design_tokens import semantic_errors
+
+    assert semantic_errors(
+        yaml.safe_load(_DEFAULT_TOKENS.read_text(encoding="utf-8"))) == []
+
+
+def test_an_inverted_occupancy_range_is_reported() -> None:
+    """A range no slide can satisfy is schema-valid and unusable.
+
+    Both bounds are numbers in [0, 1], so JSON Schema is content. Nothing else
+    in the pipeline compares them, so the failure would surface as every slide
+    reporting both `underfilled` and `overfilled` at once.
+    """
+    import yaml
+
+    from design_tokens import semantic_errors
+
+    data = yaml.safe_load(_DEFAULT_TOKENS.read_text(encoding="utf-8"))
+    data["density"]["occupancy_min"] = 0.9
+    errors = semantic_errors(data)
+    assert any("occupancy_min" in error for error in errors)
+
+
+def test_a_surface_naming_an_unknown_colour_role_is_reported() -> None:
+    """`fill: cardd` is a string, and a string is all the schema requires."""
+    import yaml
+
+    from design_tokens import semantic_errors
+
+    data = yaml.safe_load(_DEFAULT_TOKENS.read_text(encoding="utf-8"))
+    data["surfaces"]["node"]["fill"] = "cardd"
+    errors = semantic_errors(data)
+    assert any("surfaces.node.fill" in error for error in errors)
+
+
+def test_a_type_role_naming_an_unknown_family_is_reported() -> None:
+    """A role pointing at a font family that does not exist is caught early."""
+    import yaml
+
+    from design_tokens import semantic_errors
+
+    data = yaml.safe_load(_DEFAULT_TOKENS.read_text(encoding="utf-8"))
+    data["typography"]["roles"]["body"]["family"] = "serif"
+    errors = semantic_errors(data)
+    assert any("typography.roles.body.family" in error for error in errors)
+
+
+def test_an_unordered_spacing_scale_is_reported() -> None:
+    """A spacing scale is an ordered vocabulary, not a bag of numbers."""
+    import yaml
+
+    from design_tokens import semantic_errors
+
+    data = yaml.safe_load(_DEFAULT_TOKENS.read_text(encoding="utf-8"))
+    data["spacing"]["scale"] = [8, 4, 12]
+    errors = semantic_errors(data)
+    assert any("spacing.scale" in error for error in errors)
 
 
 def test_loader_raises_on_schema_violation(tmp_path: Path) -> None:
@@ -706,6 +893,10 @@ class DesignTokens:
             raise TokenError(
                 f"token file {token_path} is invalid at {location}: {exc.message}"
             ) from exc
+        errors = semantic_errors(data)
+        if errors:
+            joined = "; ".join(errors)
+            raise TokenError(f"token file {token_path} is inconsistent: {joined}")
         return cls(data, token_path)
 
     @property
@@ -818,12 +1009,78 @@ class DesignTokens:
                 f"undefined surface {name!r}; defined surfaces: {sorted(surfaces)}"
             )
         return surfaces[name]
+
+
+def semantic_errors(data: Mapping[str, Any]) -> List[str]:
+    """Return the cross-field inconsistencies JSON Schema cannot express.
+
+    A schema validates each value against its own constraint and knows nothing
+    about the relationships between them. A token file with
+    `occupancy_min: 0.9, occupancy_max: 0.3`, or a surface whose `fill` names a
+    colour role that does not exist, is schema-valid and unusable -- and the
+    failure surfaces several files away from the mistake, as a `TokenError` from
+    `color()` during a render, or as a linter finding nobody can explain.
+
+    Args:
+        data: A schema-valid token mapping.
+
+    Returns:
+        Human-readable inconsistencies, empty when the file is coherent.
+    """
+    errors: List[str] = []
+    color_roles = set(data["color"]["roles"])
+    families = set(data["typography"]["family"])
+
+    density = data["density"]
+    if density["occupancy_min"] >= density["occupancy_max"]:
+        errors.append(
+            f"density.occupancy_min ({density['occupancy_min']}) must be below "
+            f"occupancy_max ({density['occupancy_max']}); as written no slide "
+            f"can satisfy both"
+        )
+
+    for name, role in sorted(data["typography"]["roles"].items()):
+        if role["family"] not in families:
+            errors.append(
+                f"typography.roles.{name}.family names {role['family']!r}, "
+                f"which is not in typography.family ({sorted(families)})"
+            )
+
+    for name, surface in sorted(data["surfaces"].items()):
+        for key in ("fill", "border"):
+            if surface[key] not in color_roles:
+                errors.append(
+                    f"surfaces.{name}.{key} names {surface[key]!r}, which is "
+                    f"not a colour role ({sorted(color_roles)})"
+                )
+
+    unknown = sorted(set(data["color"]["decorative_roles"]) - color_roles)
+    if unknown:
+        errors.append(
+            f"color.decorative_roles names {unknown}, which are not colour "
+            f"roles; a decorative exemption for a role nothing uses silently "
+            f"exempts nothing"
+        )
+
+    scale = data["spacing"]["scale"]
+    if sorted(set(scale)) != list(scale):
+        errors.append(
+            f"spacing.scale {scale} must be strictly ascending and unique; a "
+            f"spacing scale is an ordered vocabulary, and a repeated or "
+            f"out-of-order step makes 'the next step up' undefined"
+        )
+    # Deliberately not checked: that every step is a multiple of `canvas.grid`.
+    # The shipped scale opens with 4 against a grid of 8, and `node_padding.y`
+    # is 12. A half-step for tight internal padding is ordinary practice, and a
+    # rule that rejected it would reject this plan's own token file.
+    return errors
+
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_design_tokens.py -v`
-Expected: PASS — 15 passed.
+Expected: PASS — 20 passed.
 
 - [ ] **Step 5: Commit**
 
@@ -856,6 +1113,7 @@ Create `skills/report-slides/scripts/tests/test_validate_design_tokens.py`:
 
 ```python
 """Tests for the design-token validator CLI."""
+
 from __future__ import annotations
 
 import json
@@ -866,8 +1124,6 @@ from pathlib import Path
 _SKILL_DIR = Path(__file__).resolve().parents[2]
 _SCRIPT = _SKILL_DIR / "scripts" / "validate_design_tokens.py"
 _DEFAULT_TOKENS = _SKILL_DIR / "references" / "tokens" / "default.tokens.yaml"
-
-sys.path.insert(0, str(_SKILL_DIR / "scripts"))
 
 
 def test_cli_accepts_default_tokens() -> None:
@@ -990,9 +1246,45 @@ git commit -m "feat(report-slides): add design-token validator CLI"
 - Test: `skills/report-slides/scripts/tests/test_style_tokens_ref_enforcement.py`
 
 **Interfaces:**
-- Consumes: `validate_design_tokens.validate_token_file` (Task 3).
-- Produces: `validate_style_tokens_resolvable(doc: Any, base_dir: Path) -> list[str]`,
-  exported from `validate_visual_module`.
+- Consumes: `validate_design_tokens.validate_token_file` (Task 3);
+  `design_tokens.DesignTokens` (Task 2).
+- Produces, exported from `validate_visual_module`:
+  - `validate_style_tokens_resolvable(doc: Any, base_dir: Path) -> list[str]`
+  - `resolved_token_digest(doc: Any, base_dir: Path) -> str` — the digest of the
+    token set the module is held to, for the caller to persist
+
+**Provenance.** A module spec that records only "`style_tokens_ref` resolved" is
+recording that some file was fine at some past moment. It does not say which
+file, so nothing downstream can tell whether the tokens changed after the module
+was produced — and that is precisely the question Task 14's lint evidence has to
+answer, and the question a stale-evidence check is made of. `main` therefore
+prints the digest alongside the validation result, and the caller that writes the
+module spec persists it beside `style_tokens_ref`:
+
+```python
+def resolved_token_digest(doc: Any, base_dir: Path) -> str:
+    """Return the digest of the token set a module spec resolves to.
+
+    Args:
+        doc: A module or complex-visual specification mapping.
+        base_dir: Directory the spec's relative paths resolve against.
+
+    Returns:
+        The `DesignTokens.digest` of the resolved file.
+
+    Raises:
+        TokenError: If the reference does not resolve or does not validate.
+            Callers must not substitute a default: a module validated against
+            the wrong token set is worse than one validated against none, since
+            the record then asserts something false.
+    """
+    return DesignTokens.load(
+        (base_dir / str(doc["style_tokens_ref"])).resolve()).digest
+```
+
+Once plan 1 Task 16 lands, the path a deck's `style_tokens_ref` points at is the
+composed `_effective.tokens.yaml`, so this digest is the digest of the tokens the
+slide was actually drawn with — not of the base file before its style override.
 
 **Background:** `docs/superpowers/specs/2026-08-06-report-slides-multiagent-design.md:108`
 records this as a known deferred gap — "it does not validate `style_tokens_ref` …
@@ -1014,23 +1306,21 @@ Create `skills/report-slides/scripts/tests/test_style_tokens_ref_enforcement.py`
 
 ```python
 """Tests that ModuleSpec style_tokens_ref is mandatory and resolvable."""
+
 from __future__ import annotations
 
 import shutil
-import sys
 from pathlib import Path
 
 import yaml
 
-_SKILL_DIR = Path(__file__).resolve().parents[2]
-_DEFAULT_TOKENS = _SKILL_DIR / "references" / "tokens" / "default.tokens.yaml"
-
-sys.path.insert(0, str(_SKILL_DIR / "scripts"))
-
-from validate_visual_module import (  # noqa: E402
+from validate_visual_module import (
     validate_module_spec,
     validate_style_tokens_resolvable,
 )
+
+_SKILL_DIR = Path(__file__).resolve().parents[2]
+_DEFAULT_TOKENS = _SKILL_DIR / "references" / "tokens" / "default.tokens.yaml"
 
 
 def _module(style_tokens_ref: object) -> dict:
@@ -1245,8 +1535,15 @@ git commit -m "feat(report-slides): require and resolve ModuleSpec style_tokens_
   - `is_family_available(family: str) -> bool`
   - `resolve_font_stack(css_family: str) -> str` — first installed family, or
     raises `FontError` when none is installed
-  - `font_file_for(family: str) -> Path`
+  - `FC_WEIGHT_NAMES: Dict[int, str]` — CSS numeric weight to the fontconfig
+    weight constant that selects the matching face
+  - `font_file_for(family: str, weight: int = 400) -> Path`
   - `text_width(text: str, family: str, size: float, weight: int = 400) -> float`
+  - `vertical_metrics(family: str, size: float, weight: int = 400)
+    -> Tuple[float, float]` — measured `(ascent, descent)` in SVG units.
+    `generate_slides.frame` uses it to keep the footer's descenders inside the
+    safe area, and plan 2's `TextRun.bbox` uses it so the linter models the same
+    box the renderer drew.
 
 **Why this exists:** `svg_to_pptx/shapes.py:217-220` sets
 `run.font.name` to the first *listed* family, so `'Helvetica Neue', Arial,
@@ -1268,23 +1565,21 @@ Create `skills/report-slides/scripts/tests/test_fonts.py`:
 
 ```python
 """Tests for font stack resolution and text metrics."""
+
 from __future__ import annotations
 
 import shutil
-import sys
-from pathlib import Path
 
 import pytest
 
-_SKILL_DIR = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(_SKILL_DIR / "scripts"))
-
-from fonts import (  # noqa: E402
+from fonts import (
     FontError,
+    font_file_for,
     is_family_available,
     parse_font_stack,
     resolve_font_stack,
     text_width,
+    vertical_metrics,
 )
 
 # Requires fontconfig; the whole module is meaningless without it.
@@ -1347,6 +1642,58 @@ def test_text_width_scales_with_size_and_length() -> None:
     assert 1.8 < wide / narrow < 2.2
 
 
+def test_bold_is_measured_with_the_bold_face() -> None:
+    """A weight that selects a different face must measure differently.
+
+    `text_width` accepted a `weight` argument and threw it away, so every one of
+    the four token roles at weight 600 or 700 -- `deck_title`, `slide_title`,
+    `takeaway`, `node_label` -- was measured with the regular face. On this
+    machine that under-measures by 12.9%, which is roughly one character in
+    eight: enough to decide whether a title fits on two lines.
+
+    The assertion is an inequality rather than a number because face metrics are
+    a property of the installed font, not of this code.
+    """
+    family = resolve_font_stack("DejaVu Sans, sans-serif")
+    text = "Token contract and enforcement"
+    regular = text_width(text, family, 32, weight=400)
+    bold = text_width(text, family, 32, weight=700)
+    assert bold > regular, (
+        f"weight is being ignored: {family} measures {bold} at 700 and "
+        f"{regular} at 400"
+    )
+
+
+def test_a_weight_between_the_css_steps_still_resolves() -> None:
+    """An unusual but schema-legal weight rounds rather than raising."""
+    family = resolve_font_stack("DejaVu Sans, sans-serif")
+    assert font_file_for(family, 650) == font_file_for(family, 700)
+
+
+def test_vertical_metrics_are_measured_not_assumed() -> None:
+    """Ascent is near a full em and descent is non-zero, unlike the 0.8/0 guess.
+
+    The exact values are DejaVu Sans on the reference image; assert them so a
+    font update that shifts every text extent is noticed, not absorbed.
+    """
+    assert vertical_metrics("DejaVu Sans", 32) == (30.0, 8.0)
+    assert vertical_metrics("DejaVu Sans", 12) == (12.0, 3.0)
+
+
+def test_vertical_metrics_scale_with_size() -> None:
+    """A larger size reserves more space above and below the baseline."""
+    small_ascent, small_descent = vertical_metrics("DejaVu Sans", 12)
+    large_ascent, large_descent = vertical_metrics("DejaVu Sans", 36)
+    assert large_ascent > small_ascent
+    assert large_descent > small_descent
+
+
+def test_vertical_metrics_reject_unavailable_family() -> None:
+    """An uninstalled family is an error, not a silently substituted face."""
+    with pytest.raises(FontError):
+        vertical_metrics("Nonexistent Face 12345", 20)
+
+
 def test_text_width_rejects_unavailable_family() -> None:
     """Measuring with an uninstalled family raises rather than approximating."""
     with pytest.raises(FontError):
@@ -1376,7 +1723,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
-from typing import List
+from typing import Dict, List, Tuple
 
 from PIL import ImageFont
 
@@ -1469,12 +1816,40 @@ def resolve_font_stack(css_family: str) -> str:
     )
 
 
+# fontconfig has its own weight scale and does not accept CSS numbers. Without
+# this map every weight resolves to the same face, and a bold title is measured
+# with the regular one -- on this machine that under-measures by 12.9%, which is
+# the difference between a title that fits on two lines and one that does not.
+FC_WEIGHT_NAMES: Dict[int, str] = {
+    100: "thin", 200: "extralight", 300: "light", 400: "regular",
+    500: "medium", 600: "demibold", 700: "bold", 800: "extrabold",
+    900: "black",
+}
+
+
+def _fc_weight(weight: int) -> str:
+    """Return the fontconfig weight constant nearest a CSS numeric weight.
+
+    Args:
+        weight: A CSS numeric font weight.
+
+    Returns:
+        The fontconfig weight constant, e.g. `bold` for 700. Values between the
+        nine CSS steps round to the nearest step rather than raising: a token
+        file is validated against the 100-900 range by the schema, and an
+        unusual-but-legal 650 should resolve to a face, not fail the render.
+    """
+    return FC_WEIGHT_NAMES[min(FC_WEIGHT_NAMES, key=lambda step: abs(step - weight))]
+
+
 @functools.lru_cache(maxsize=256)
-def font_file_for(family: str) -> Path:
-    """Return the font file backing a family.
+def font_file_for(family: str, weight: int = 400) -> Path:
+    """Return the font file backing a family at a weight.
 
     Args:
         family: A concrete, installed family name.
+        weight: CSS numeric font weight. Cached as part of the key, so regular
+            and bold never share an entry.
 
     Returns:
         Path to the font file.
@@ -1486,7 +1861,7 @@ def font_file_for(family: str) -> Path:
         raise FontError(f"font family {family!r} is not installed")
     try:
         result = subprocess.run(
-            ["fc-match", "--format=%{file}", family],
+            ["fc-match", "--format=%{file}", f"{family}:weight={_fc_weight(weight)}"],
             capture_output=True, text=True, timeout=_FC_TIMEOUT_SECONDS, check=True,
         )
     except (subprocess.SubprocessError, OSError) as exc:
@@ -1504,9 +1879,9 @@ def text_width(text: str, family: str, size: float, weight: int = 400) -> float:
         text: The string to measure.
         family: A concrete, installed family name.
         size: Font size in SVG units, which map 1:1 to PowerPoint points.
-        weight: CSS numeric weight. Recorded for caller intent; fontconfig
-            resolves the concrete face, so a synthetic-bold face may measure the
-            same as regular.
+        weight: CSS numeric weight. Selects the concrete face, because a bold
+            face is materially wider than its regular sibling and measuring one
+            with the other is how a title silently overflows.
 
     Returns:
         The advance width in SVG units.
@@ -1514,20 +1889,70 @@ def text_width(text: str, family: str, size: float, weight: int = 400) -> float:
     Raises:
         FontError: If the family is not installed or the face cannot be loaded.
     """
-    font_path = font_file_for(family)
+    return float(_face(family, size, weight).getlength(text))
+
+
+def vertical_metrics(
+    family: str, size: float, weight: int = 400
+) -> Tuple[float, float]:
+    """Measure a face's ascent and descent in SVG units.
+
+    These are the face's own design metrics, not the ink extent of a particular
+    string: they are what a renderer must reserve above and below a baseline for
+    *any* text at this size, which is what a safe-area or overlap check needs.
+
+    They are measured rather than assumed because the assumption is wrong. A
+    common guess is 0.8 em of ascent and no descent; DejaVu Sans actually
+    reports ascent 30 / descent 8 at size 32, and ascent 12 / descent 3 at
+    size 12. A footer baseline placed on the safe-area boundary therefore hangs
+    three units outside it.
+
+    Args:
+        family: A concrete, installed family name.
+        size: Font size in SVG units, which map 1:1 to PowerPoint points.
+        weight: CSS numeric font weight. A bold face can carry a taller ascent
+            than its regular sibling; on this machine DejaVu Sans does not, but
+            that is a property of one family and not a rule.
+
+    Returns:
+        `(ascent, descent)`, both positive, in SVG units. `ascent` is the
+        distance from the baseline to the top of the em box; `descent` the
+        distance from the baseline down to its bottom.
+
+    Raises:
+        FontError: If the family is not installed or the face cannot be loaded.
+    """
+    ascent, descent = _face(family, size, weight).getmetrics()
+    return float(ascent), float(descent)
+
+
+def _face(family: str, size: float, weight: int = 400) -> "ImageFont.FreeTypeFont":
+    """Load a Pillow face for a family at a size and weight.
+
+    Args:
+        family: A concrete, installed family name.
+        size: Font size in SVG units.
+        weight: CSS numeric font weight.
+
+    Returns:
+        The loaded face.
+
+    Raises:
+        FontError: If the family is not installed or the face cannot be loaded.
+    """
+    font_path = font_file_for(family, weight)
     try:
-        face = ImageFont.truetype(str(font_path), size=max(1, int(round(size))))
+        return ImageFont.truetype(str(font_path), size=max(1, int(round(size))))
     except OSError as exc:
         raise FontError(
             f"cannot load face {font_path} for {family!r} at size {size}: {exc}"
         ) from exc
-    return float(face.getlength(text))
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_fonts.py -v`
-Expected: PASS — 9 passed.
+Expected: PASS — 14 passed.
 
 - [ ] **Step 5: Verify the default token stack resolves on this machine**
 
@@ -1579,6 +2004,13 @@ git commit -m "feat(report-slides): resolve font stacks to installed faces and m
     `t_lh(role: str) -> float`
   - `frame(title: str, footer: str = "", *, variant: str = "left") -> str`
   - `S["font_resolved"]` — the installed family name
+  - The marker contract every renderer must honour, and which plan 2's linter
+    reads: every `<text>` carries `data-style-role="<typography role>"`; every
+    element that intentionally runs past the safe area carries
+    `data-bleed="true"`; node groups carry `data-node-id`; connectors carry
+    `data-from`/`data-to`. Without these, plan 2's rules do not fire — they skip
+    the element and report clean, which is indistinguishable from passing. Task 9
+    Step 8 enforces the `<text>` half mechanically.
 
 **What changes and why:** `frame()` (line 140) hard-codes a 20pt centred title at
 `y=44` with a full-width hairline at `y=54` and a 10pt footer at `y=660`. Spec
@@ -1593,22 +2025,19 @@ Create `skills/report-slides/scripts/tests/test_generate_slides_typography.py`:
 
 ```python
 """Tests that the deterministic renderer typesets at presentation scale."""
+
 from __future__ import annotations
 
 import re
-import sys
 from pathlib import Path
 
 import pytest
 
+import generate_slides as gs
+from design_tokens import TokenError
+
 _SKILL_DIR = Path(__file__).resolve().parents[2]
 _DEFAULT_TOKENS = _SKILL_DIR / "references" / "tokens" / "default.tokens.yaml"
-
-sys.path.insert(0, str(_SKILL_DIR / "scripts"))
-
-import generate_slides as gs  # noqa: E402
-from design_tokens import TokenError  # noqa: E402
-
 _FONT_SIZE_RE = re.compile(r'font-size="([0-9.]+)"')
 
 
@@ -1788,7 +2217,7 @@ Add these imports at the top of the file, beside the existing ones:
 from typing import Dict, Optional
 
 from design_tokens import DEFAULT_TOKENS_PATH, DesignTokens, TokenError, TypeRole
-from fonts import resolve_font_stack
+from fonts import resolve_font_stack, vertical_metrics
 ```
 
 - [ ] **Step 4: Make `apply_style` fail loudly**
@@ -1876,25 +2305,43 @@ def frame(title: str, footer: str = "", *, variant: str = "left") -> str:
         )
     safe = S["safe"]
     size = t_size("slide_title")
+    # `size` is used here, not the measured ascent, because three later tasks
+    # place their content against `rule_y = safe.top + slide_title + 16`. It is
+    # a conservative proxy: DejaVu Sans reports ascent 30 at size 32, so the
+    # title's em box starts 2 units *inside* the safe area. Task 6's test pins
+    # that, so a font whose ascent exceeds its em size fails loudly rather than
+    # clipping silently.
     baseline = safe["top"] + size
     rule_y = baseline + 16
     x = S["w"] / 2 if variant == "centered" else safe["left"]
     anchor = "middle" if variant == "centered" else "start"
 
     parts = [
-        f'<rect width="{S["w"]}" height="{S["h"]}" fill="{S["bg"]}"/>',
+        f'<rect width="{S["w"]}" height="{S["h"]}" fill="{S["bg"]}" '
+        f'data-bleed="true"/>',
         f'<text x="{x:g}" y="{baseline:g}" font-size="{size:g}" '
         f'font-weight="{t_weight("slide_title")}" fill="{S["accent"]}" '
+        f'data-style-role="slide_title" '
         f'text-anchor="{anchor}">{esc(title)}</text>',
         f'<line x1="{safe["left"]}" y1="{rule_y:g}" '
         f'x2="{S["w"] - safe["right"]}" y2="{rule_y:g}" '
-        f'stroke="{S["divider"]}" stroke-width="1.5"/>',
+        f'stroke="{S["divider"]}" stroke-width="1.5" '
+        f'data-bleed="true" data-style-role="divider"/>',
     ]
     if footer:
         fs = t_size("footnote")
+        # The baseline is lifted by the measured descent so the footer's
+        # descenders end *on* the safe-area boundary rather than three units
+        # past it. Placing the baseline on the boundary is the obvious-looking
+        # choice and is wrong: plan 2's `safe-area` rule reports it on every
+        # slide that carries a footer.
+        _, descent = vertical_metrics(
+            S["font_resolved"], fs, t_weight("footnote"))
+        baseline_y = S["h"] - safe["bottom"] - descent
         parts.append(
-            f'<text x="{S["w"] - safe["right"]}" y="{S["h"] - safe["bottom"]:g}" '
+            f'<text x="{S["w"] - safe["right"]}" y="{baseline_y:g}" '
             f'font-size="{fs:g}" fill="{S["muted"]}" '
+            f'data-style-role="footnote" '
             f'text-anchor="end">{esc(footer)}</text>'
         )
     return "\n  ".join(parts)
@@ -2093,7 +2540,51 @@ def test_conclusion_blocks_use_roles() -> None:
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_generate_slides_typography.py -v -k "wrap or title_slide or bullet or conclusion"`
 Expected: FAIL — `AttributeError: module 'generate_slides' has no attribute 'wrap_to_width'`.
 
-- [ ] **Step 3: Add measured wrapping**
+- [ ] **Step 3: Give `tlines` its style role**
+
+`tlines` (line 123) writes its own `<text>` element and is called from five
+sites in this plan, so it takes the role rather than leaving each caller to
+patch the emitted string. Replace it with:
+
+```python
+def tlines(lines: list, x, y, size, color, anchor="start", weight="normal",
+           lh=1.45, *, role: str) -> str:
+    """Render a multi-line text element.
+
+    Args:
+        lines: Already-wrapped lines, one per rendered line.
+        x: Left, centre, or right coordinate, per `anchor`.
+        y: Baseline of the first line.
+        size: Font size in SVG units.
+        color: Fill colour.
+        anchor: SVG `text-anchor` value.
+        weight: SVG `font-weight` value.
+        lh: Line-height multiplier, applied to `size` for each `dy` after the
+            first line.
+        role: The typography role this text realises. Keyword-only and
+            mandatory: plan 2's linter skips a `<text>` with no
+            `data-style-role`, so an optional marker with a default would let a
+            caller silently disable `type-floor` and `token-color` for its text.
+
+    Returns:
+        SVG markup for one `<text>` element.
+    """
+    spans = []
+    for i, line in enumerate(lines):
+        dy = "0" if i == 0 else f"{size * lh:.1f}"
+        spans.append(f'<tspan x="{x}" dy="{dy}">{esc(line)}</tspan>')
+    return (f'<text x="{x}" y="{y}" font-size="{size}" font-weight="{weight}" '
+            f'fill="{color}" text-anchor="{anchor}" '
+            f'data-style-role="{role}">{"".join(spans)}</text>')
+```
+
+Pass the role at all five call sites in this task and Task 9: `role=title_role`
+and `role=sub_role` in `render_title_slide`, and `role="body"` in
+`render_bullet_list`, `render_two_column`, and `render_conclusion`. Because the
+parameter is keyword-only with no default, a missed call site is a `TypeError`
+at import time rather than an unmarked element at review time.
+
+- [ ] **Step 4: Add measured wrapping**
 
 In `skills/report-slides/scripts/generate_slides.py`, after the existing `wrap`
 function (line 139), add:
@@ -2144,10 +2635,10 @@ def wrap_to_width(text: str, max_width: float, role: str) -> list:
     return lines
 ```
 
-Add `from fonts import resolve_font_stack, text_width` in place of the Task 6
-import line.
+Add `from fonts import resolve_font_stack, text_width, vertical_metrics` in
+place of the Task 6 import line.
 
-- [ ] **Step 4: Re-render the three text renderers**
+- [ ] **Step 5: Re-render the three text renderers**
 
 In `render_title`, replace lines 174–192 with:
 
@@ -2178,11 +2669,18 @@ In `render_title`, replace lines 174–192 with:
     if meta_str:
         parts.append(f'<text x="{cx}" y="{base_y + t_size("caption"):g}" '
                      f'font-size="{t_size("caption"):g}" '
+                     f'data-style-role="caption" '
                      f'fill="{S["muted"]}" text-anchor="middle">{esc(meta_str)}</text>')
     if footer:
+        # Same lift as `frame()`: the baseline sits a measured descent
+        # above the safe-area boundary, not on it.
+        fs = t_size("footnote")
+        _, descent = vertical_metrics(
+            S["font_resolved"], fs, t_weight("footnote"))
         parts.append(f'<text x="{S["w"] - S["safe"]["right"]}" '
-                     f'y="{S["h"] - S["safe"]["bottom"]:g}" '
-                     f'font-size="{t_size("footnote"):g}" fill="{S["muted"]}" '
+                     f'y="{S["h"] - S["safe"]["bottom"] - descent:g}" '
+                     f'font-size="{fs:g}" fill="{S["muted"]}" '
+                     f'data-style-role="footnote" '
                      f'text-anchor="end">{esc(footer)}</text>')
 ```
 
@@ -2209,6 +2707,7 @@ In `render_bullet_list`, replace lines 203–218 with:
             parts.append(f'<text x="{x_dot}" '
                          f'y="{y - t_size("body") * 0.32 + r * 0.55:g}" '
                          f'font-size="{t_size("footnote"):g}" font-weight="700" '
+                         f'data-style-role="footnote" '
                          f'fill="{S["white"]}" text-anchor="middle">{i + 1}</text>')
         else:
             parts.append(f'<circle cx="{x_dot}" cy="{y - t_size("body") * 0.30:g}" '
@@ -2232,6 +2731,7 @@ In `render_conclusion`, inside `block`, replace the heading, rule, and item hunk
         out.append(f'<text x="{px + 24}" y="{py + 24 + t_size("takeaway"):g}" '
                    f'font-size="{t_size("takeaway"):g}" '
                    f'font-weight="{t_weight("takeaway")}" '
+                   f'data-style-role="takeaway" '
                    f'fill="{color}">{esc(heading)}</text>')
         rule_y = py + 24 + t_size("takeaway") + 14
         out.append(f'<line x1="{px + 24}" y1="{rule_y:g}" '
@@ -2250,6 +2750,7 @@ In `render_conclusion`, inside `block`, replace the heading, rule, and item hunk
                 out.append(f'<text x="{px + 32}" '
                            f'y="{iy - t_size("body") * 0.32 + r * 0.55:g}" '
                            f'font-size="{t_size("footnote"):g}" font-weight="700" '
+                           f'data-style-role="footnote" '
                            f'fill="{S["white"]}" text-anchor="middle">{idx + 1}</text>')
                 out.append(tlines(lines, px + 32 + r + 16, iy, t_size("body"),
                                   S["body"], "start", str(t_weight("body")),
@@ -2277,12 +2778,12 @@ below the new title rule and use the token safe area:
                    panel_w, panel_h, S["good"], n_head, numbered=True)
 ```
 
-- [ ] **Step 5: Run test to verify it passes**
+- [ ] **Step 6: Run test to verify it passes**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_generate_slides_typography.py -v`
 Expected: PASS — all tests green.
 
-- [ ] **Step 6: Render and inspect the pixels**
+- [ ] **Step 7: Render and inspect the pixels**
 
 Unit tests confirm sizes but not legibility. Render the three slide types and look
 at them:
@@ -2327,13 +2828,13 @@ centred template, and body text is comfortably legible at a glance. If anything
 overflows, adjust the geometry formulas above — do not reduce a role's size to
 make text fit.
 
-- [ ] **Step 7: Run the existing suite**
+- [ ] **Step 8: Run the existing suite**
 
 Run: `timeout 900 python3 -m pytest skills/report-slides/scripts/tests/ -q`
 Expected: PASS. Update any renderer fixture asserting the old sizes, and say in
 the commit message which expectations changed and why the old values were wrong.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
 git add skills/report-slides/scripts/generate_slides.py \
@@ -2526,8 +3027,12 @@ module-level constants so no renderer can silently keep the old values.
 
 In each of the ten sites in the mapping table above, replace the literal
 `font-size="N"` with `font-size="{t_size(ROLE):g}"` using the role from the table,
-and add `font-weight="{t_weight(ROLE)}"` where the site currently hard-codes a
-weight.
+add `font-weight="{t_weight(ROLE)}"` where the site currently hard-codes a
+weight, and add `data-style-role="ROLE"` with the same role. The marker is not
+cosmetic: plan 2's `type-floor` and `token-color` rules read it, and an element
+without one is skipped rather than flagged, so the rules would report clean on
+markup they never examined. Task 9 Step 8 asserts this mechanically over every
+renderer.
 
 Replace the fixed-pitch legend loop in `render_bar_chart` (lines 282–287) with
 measured spacing:
@@ -2546,6 +3051,7 @@ measured spacing:
         chart_parts.append(f'<text x="{legend_x + swatch + 8:.1f}" '
                            f'y="{legend_y:.1f}" '
                            f'font-size="{t_size("axis"):g}" '
+                           f'data-style-role="axis" '
                            f'fill="{S["body"]}">{esc(label)}</text>')
         legend_x += swatch + 8 + measured_width(label, "axis") + 32
 ```
@@ -2558,6 +3064,7 @@ with the last legend entry (lines 289–291):
         note_y = legend_y + t_size("footnote") * t_lh("footnote") + 12
         chart_parts.append(f'<text x="{CR}" y="{note_y:.1f}" '
                            f'font-size="{t_size("footnote"):g}" '
+                           f'data-style-role="footnote" '
                            f'fill="{S["muted"]}" text-anchor="end">{esc(note)}</text>')
 ```
 
@@ -2646,6 +3153,17 @@ git commit -m "feat(report-slides): typeset chart renderers at presentation scal
   `measured_width` (Task 7); `chart_area` is not used here.
 - Produces: `class SlideCapacityError(ValueError)`, raised when content cannot fit
   at presentation scale.
+
+**This task has a review checkpoint after Step 5.** It rewrites four renderers,
+and the two halves fail differently: the table and the metric cards are grid
+arithmetic, while the two-column and timeline layouts have to decide what to do
+when content will not fit. A reviewer should be able to reject the second half
+without unwinding the first, so Step 6 opens with its own commit of Steps 1–5
+and the task ends with a second. Run Step 7's tests before each. If the timeline
+work turns out to be larger than it looks — measured event spacing is the one
+place here with real layout judgement in it — stop after the first commit and
+say so; a half-finished renderer behind one commit is what makes a task like
+this hard to review.
 
 **Literal → role mapping for this task:**
 
@@ -2837,6 +3355,7 @@ In `render_table`, replace lines 439–455 with:
             f'<text x="{cx:.1f}" y="{top_y + header_h * 0.66:.1f}" '
             f'font-size="{t_size("node_label"):g}" '
             f'font-weight="{t_weight("node_label")}" fill="{S["white"]}" '
+            f'data-style-role="node_label" '
             f'text-anchor="middle">{esc(col)}</text>')
 ```
 
@@ -2888,11 +3407,13 @@ In `render_metric_cards`, replace lines 497–527 with:
         label_y = cy + surface["padding"]["y"] + t_size("caption") + 8
         parts.append(f'<text x="{cx + cw / 2:.1f}" y="{label_y:.1f}" '
                      f'font-size="{t_size("caption"):g}" '
+                     f'data-style-role="caption" '
                      f'fill="{S["muted"]}" text-anchor="middle">{esc(label)}</text>')
         parts.append(f'<text x="{cx + cw / 2:.1f}" '
                      f'y="{cy + ch / 2 + t_size("deck_title") * 0.36:.1f}" '
                      f'font-size="{t_size("deck_title"):g}" '
                      f'font-weight="{t_weight("deck_title")}" fill="{color}" '
+                     f'data-style-role="deck_title" '
                      f'text-anchor="middle">{esc(value)}</text>')
         if change:
             cc = (S["good"] if "+" in str(change)
@@ -2900,17 +3421,34 @@ In `render_metric_cards`, replace lines 497–527 with:
             parts.append(f'<text x="{cx + cw / 2:.1f}" '
                          f'y="{cy + ch - surface["padding"]["y"]:.1f}" '
                          f'font-size="{t_size("footnote"):g}" fill="{cc}" '
+                         f'data-style-role="footnote" '
                          f'text-anchor="middle">{esc(change)}</text>')
 ```
 
 - [ ] **Step 6: Re-render the two-column and timeline slides**
 
-For `render_two_column` (lines 531–568) and `render_timeline` (570–623), apply the
+First commit the checkpoint, so the two halves can be reviewed apart:
+
+```bash
+timeout 300 python3 -m pytest \
+    skills/report-slides/scripts/tests/test_generate_slides_typography.py -q
+git add skills/report-slides/scripts/generate_slides.py \
+        skills/report-slides/scripts/tests/test_generate_slides_typography.py
+git commit -m "refactor(report-slides): put tables and metric cards on the token roles
+
+Both renderers now take every size, weight, and vertical offset from the type
+roles, declare data-style-role on every text element, and raise
+SlideCapacityError rather than shrinking type to fit."
+```
+
+Then, for `render_two_column` (lines 531–568) and `render_timeline` (570–623), apply the
 mapping table rows for lines 545, 555, 560, 606, 611, and 617, and re-derive every
 vertical offset from the role:
 
-- Replace each `font-size="N"` with `font-size="{t_size(ROLE):g}"` and add
-  `font-weight="{t_weight(ROLE)}"` where a weight is hard-coded.
+- Replace each `font-size="N"` with `font-size="{t_size(ROLE):g}"`, add
+  `font-weight="{t_weight(ROLE)}"` where a weight is hard-coded, and add
+  `data-style-role="ROLE"` with the same role — see Step 4 of Task 8 for why the
+  marker is load-bearing rather than decorative.
 - Replace every `wrap(text, N)` call with
   `wrap_to_width(text, <available width>, ROLE)`, where the available width is the
   panel or column width minus twice the surface padding.
@@ -2928,44 +3466,80 @@ vertical offset from the role:
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_generate_slides_typography.py -v`
 Expected: PASS — all tests green.
 
-- [ ] **Step 8: Assert no small-type literal survives anywhere**
+- [ ] **Step 8: Assert no small-type literal, and no unroled text, survives**
 
 Add this final guard test to the same file:
 
 ```python
+_SWEEP_PAYLOADS = {
+    "title": {"title": "T", "subtitle": "S", "author": "A", "date": "D"},
+    "bullet_list": {"title": "T", "bullets": ["one", "two"]},
+    "bar_chart": {"index": 1, "title": "T", "categories": ["a", "b"],
+                  "series": [{"label": "s", "values": [1, 2]}], "y_max": 10,
+                  "note": "n"},
+    "line_chart": {"index": 2, "title": "T", "categories": ["a", "b"],
+                   "series": [{"label": "s", "values": [1, 2]}], "y_max": 10},
+    "pie_chart": {"index": 3, "title": "T", "categories": ["a", "b"],
+                  "values": [1, 2]},
+    "table": {"index": 4, "title": "T", "columns": ["c1", "c2"],
+              "rows": [["1", "2"]]},
+    "metric_cards": {"index": 5, "title": "T",
+                     "metrics": [{"label": "l", "value": "1", "change": "+1"}]},
+    "two_column": {"index": 6, "title": "T",
+                   "left": {"heading": "L", "content": "lc"},
+                   "right": {"heading": "R", "content": "rc"}},
+    "timeline": {"index": 7, "title": "T",
+                 "events": [{"label": "e", "date": "d", "detail": "x"}]},
+    "conclusion": {"index": 8, "title": "T", "conclusions": ["c"],
+                   "next_steps": ["n"]},
+}
+
+
 def test_no_renderer_emits_type_below_the_footnote_floor() -> None:
     """Every renderer's output respects the footnote floor of 12 units."""
-    payloads = {
-        "title": {"title": "T", "subtitle": "S", "author": "A", "date": "D"},
-        "bullet_list": {"title": "T", "bullets": ["one", "two"]},
-        "bar_chart": {"index": 1, "title": "T", "categories": ["a", "b"],
-                      "series": [{"label": "s", "values": [1, 2]}], "y_max": 10,
-                      "note": "n"},
-        "line_chart": {"index": 2, "title": "T", "categories": ["a", "b"],
-                       "series": [{"label": "s", "values": [1, 2]}], "y_max": 10},
-        "pie_chart": {"index": 3, "title": "T", "categories": ["a", "b"],
-                      "values": [1, 2]},
-        "table": {"index": 4, "title": "T", "columns": ["c1", "c2"],
-                  "rows": [["1", "2"]]},
-        "metric_cards": {"index": 5, "title": "T",
-                         "metrics": [{"label": "l", "value": "1", "change": "+1"}]},
-        "two_column": {"index": 6, "title": "T",
-                       "left": {"heading": "L", "content": "lc"},
-                       "right": {"heading": "R", "content": "rc"}},
-        "timeline": {"index": 7, "title": "T",
-                     "events": [{"label": "e", "date": "d", "detail": "x"}]},
-        "conclusion": {"index": 8, "title": "T", "conclusions": ["c"],
-                       "next_steps": ["n"]},
-    }
-    for slide_type, payload in payloads.items():
+    for slide_type, payload in _SWEEP_PAYLOADS.items():
         markup = gs.RENDERERS[slide_type](payload, {"footer": "f"})
         sizes = [float(m) for m in _FONT_SIZE_RE.findall(markup)]
         assert sizes, f"{slide_type} emitted no sized text"
         assert min(sizes) >= 12, f"{slide_type} emitted {min(sizes)} unit text"
+
+
+def test_every_text_element_declares_a_known_style_role() -> None:
+    """No renderer may emit a `<text>` without naming its typography role.
+
+    Plan 2's linter reads `data-style-role` to decide which type floor, which
+    colour set, and which decorative exemption apply. An element without one is
+    not merely unstyled: `check_type_floor` and `check_token_color` skip it, so
+    those rules report clean on markup they never examined. The failure is
+    silent by construction, which is why it is asserted mechanically here rather
+    than left to review. A misspelt role produces the same silent skip as an
+    omission, so the value is checked against the token file too.
+    """
+    roles = set(gs._TOKENS.raw["typography"]["roles"])
+    for slide_type, payload in _SWEEP_PAYLOADS.items():
+        fragment = gs.RENDERERS[slide_type](payload, {"footer": "f"})
+        root = etree.fromstring(gs.svg(fragment).encode("utf-8"))
+        elements = list(root.iter("{http://www.w3.org/2000/svg}text"))
+        assert elements, f"{slide_type} emitted no text at all"
+        for elem in elements:
+            declared = elem.get("data-style-role")
+            assert declared, (
+                f"{slide_type} emitted <text> with no data-style-role: "
+                f"{etree.tostring(elem)[:120]!r}"
+            )
+            assert declared in roles, (
+                f"{slide_type} declared style role {declared!r}, which the "
+                f"token file does not define"
+            )
 ```
 
-Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_generate_slides_typography.py::test_no_renderer_emits_type_below_the_footnote_floor -v`
-Expected: PASS. If any renderer fails, fix that renderer — do not lower the floor.
+Add `from lxml import etree` to the test module's imports; the repository
+already depends on lxml through `svg_to_pptx`.
+
+Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_generate_slides_typography.py -v -k "footnote_floor or style_role"`
+Expected: PASS — 2 passed. If a renderer fails the floor, fix that renderer — do
+not lower the floor. If a renderer fails the role check, add the role from the
+`t_size(...)` call already on that line — never delete the assertion.
 
 - [ ] **Step 9: Render and inspect the pixels**
 
@@ -3417,9 +3991,23 @@ tolerates but LibreOffice — the renderer this skill's review gate uses — may
 
 **Marker mapping.** An SVG `marker-end="url(#id)"` names a marker element, whose
 shape this converter cannot introspect reliably. The rule is: a non-`none` marker
-reference produces an arrowhead; its type comes from a `data-pptx-arrowhead`
-attribute on the referenced `<marker>` element when present, and defaults to
-`triangle` otherwise. An unknown explicit value is an error, not a silent default.
+reference produces an arrowhead, and its type is declared on the **connector
+element itself** — `data-pptx-arrowhead` for both ends, or
+`data-pptx-arrowhead-start` / `data-pptx-arrowhead-end` to differ. It defaults
+to `triangle`. An unknown explicit value is an error, not a silent default.
+
+Putting the declaration on the connector rather than on the `<marker>` is
+deliberate and is what Task 15 tells hand-authors to write: one `<marker>` in
+`<defs>` is typically shared by every connector on the slide, so an attribute
+there cannot express "this one ends in a stealth arrow and that one does not",
+and resolving through `<defs>` would make a connector's appearance depend on an
+element nowhere near it.
+
+**Polylines.** `connector.py:41-52` converts a `<polyline>` into one connector
+per segment, all sharing one style mapping. Arrowheads must therefore be applied
+by the *dispatcher*, which knows which segment is first and which is last, and
+not inside `_add_line`, which sees one segment and cannot tell. Calling it per
+segment puts an arrowhead in the middle of every elbow connector on the slide.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -3519,6 +4107,53 @@ def test_unknown_arrowhead_type_raises():
     assert "harpoon" in str(excinfo.value)
 
 
+def test_a_polyline_carries_arrowheads_only_at_its_ends():
+    """An elbow connector has two ends, not one per bend.
+
+    `dispatch_connector` turns a polyline into one connector per segment. If the
+    arrowhead is applied per segment, a four-point elbow -- the standard shape
+    for routing around a node in an architecture diagram -- exports with three
+    arrowheads pointing into the middle of itself.
+    """
+    slide, _ = _blank_slide()
+    elem = etree.fromstring(
+        '<polyline points="0,0 100,0 100,80 200,80" stroke="#475569" '
+        'stroke-width="2" marker-end="url(#a)"/>'
+    )
+    style = compute_style(elem, {})
+    conns = dispatch_connector(slide, elem, style, CS)
+    assert len(conns) == 3
+    tails = [_line_ends(conn)[1] for conn in conns]
+    assert [tail is not None for tail in tails] == [False, False, True]
+
+
+def test_a_closed_polygon_has_no_arrowheads():
+    """A polygon has no ends, so a marker on it declares nothing to apply."""
+    slide, _ = _blank_slide()
+    elem = etree.fromstring(
+        '<polygon points="0,0 100,0 50,80" stroke="#475569" '
+        'stroke-width="2" marker-end="url(#a)"/>'
+    )
+    style = compute_style(elem, {})
+    conns = dispatch_connector(slide, elem, style, CS)
+    assert all(_line_ends(conn) == (None, None) for conn in conns)
+
+
+def test_the_two_ends_can_differ():
+    """A connector may start plain and end in a stealth arrow."""
+    slide, _ = _blank_slide()
+    elem = etree.fromstring(
+        '<line x1="0" y1="0" x2="100" y2="0" stroke="#475569" stroke-width="2" '
+        'marker-start="url(#a)" marker-end="url(#a)" '
+        'data-pptx-arrowhead-start="oval" data-pptx-arrowhead-end="stealth"/>'
+    )
+    style = compute_style(elem, {})
+    conns = dispatch_connector(slide, elem, style, CS)
+    head, tail = _line_ends(conns[0])
+    assert head.get("type") == "oval"
+    assert tail.get("type") == "stealth"
+
+
 def test_ensure_ln_child_keeps_schema_order():
     """Line-property children are inserted in DrawingML's required order."""
     from svg_to_pptx.style_parser import ensure_ln_child
@@ -3555,6 +4190,7 @@ _STYLE_ATTRS = (
     "transform", "fill-opacity", "stroke-opacity",
     "marker-start", "marker-end",
     "data-pptx-arrowhead", "data-pptx-arrowhead-size",
+    "data-pptx-arrowhead-start", "data-pptx-arrowhead-end",
 )
 ```
 
@@ -3644,32 +4280,57 @@ def _requested_line_end(marker_value: str) -> bool:
     return bool(value) and value != "none"
 
 
-def apply_line_ends(shape: Any, style: Dict[str, str]) -> None:
-    """Apply SVG marker attributes to a connector as OOXML arrowheads.
-
-    An SVG `<marker>` element's geometry cannot be introspected reliably, so any
-    `url(#id)` reference produces an arrowhead. Its type comes from
-    `data-pptx-arrowhead` when present and defaults to `triangle`.
+def _end_type(style: Dict[str, str], which: str) -> str:
+    """Resolve one end's arrowhead type.
 
     Args:
-        shape: A PPTX connector or shape with line properties.
-        style: Computed style mapping for the SVG element.
+        style: Computed style mapping for the SVG connector element.
+        which: `start` or `end`.
+
+    Returns:
+        A validated OOXML line-end type name.
 
     Raises:
-        ValueError: If an explicit arrowhead type or size is unrecognised.
+        ValueError: If the declared type is unrecognised.
     """
-    wants_head = _requested_line_end(style.get("marker-start", ""))
-    wants_tail = _requested_line_end(style.get("marker-end", ""))
-    if not (wants_head or wants_tail):
-        return
-
-    end_type = (style.get("data-pptx-arrowhead") or "triangle").strip().lower()
+    declared = (
+        style.get(f"data-pptx-arrowhead-{which}")
+        or style.get("data-pptx-arrowhead")
+        or "triangle"
+    )
+    end_type = declared.strip().lower()
     if end_type not in LINE_END_TYPES:
         raise ValueError(
             f"unknown arrowhead type {end_type!r}; "
             f"expected one of {sorted(LINE_END_TYPES)}"
         )
-    if end_type == "none":
+    return end_type
+
+
+def apply_line_ends(
+    shape: Any, style: Dict[str, str], *, head: bool = True, tail: bool = True
+) -> None:
+    """Apply SVG marker attributes to one connector as OOXML arrowheads.
+
+    An SVG `<marker>` element's geometry cannot be introspected reliably, so any
+    `url(#id)` reference produces an arrowhead. Its type is declared on the
+    connector element -- `data-pptx-arrowhead-start`, `data-pptx-arrowhead-end`,
+    or `data-pptx-arrowhead` for both -- and defaults to `triangle`.
+
+    Args:
+        shape: A PPTX connector or shape with line properties.
+        style: Computed style mapping for the SVG element.
+        head: Whether this shape carries the connector's start. False for every
+            segment of a polyline except the first.
+        tail: Whether this shape carries the connector's end. False for every
+            segment of a polyline except the last.
+
+    Raises:
+        ValueError: If an explicit arrowhead type or size is unrecognised.
+    """
+    wants_head = head and _requested_line_end(style.get("marker-start", ""))
+    wants_tail = tail and _requested_line_end(style.get("marker-end", ""))
+    if not (wants_head or wants_tail):
         return
 
     size_name = (style.get("data-pptx-arrowhead-size") or "medium").strip().lower()
@@ -3681,8 +4342,12 @@ def apply_line_ends(shape: Any, style: Dict[str, str]) -> None:
     ooxml_size = LINE_END_SIZES[size_name]
 
     ln = shape.line._get_or_add_ln()
-    for wanted, tag in ((wants_head, "a:headEnd"), (wants_tail, "a:tailEnd")):
+    for wanted, which, tag in ((wants_head, "start", "a:headEnd"),
+                               (wants_tail, "end", "a:tailEnd")):
         if not wanted:
+            continue
+        end_type = _end_type(style, which)
+        if end_type == "none":
             continue
         element = ensure_ln_child(ln, tag)
         element.set("type", end_type)
@@ -3690,11 +4355,37 @@ def apply_line_ends(shape: Any, style: Dict[str, str]) -> None:
         element.set("len", ooxml_size)
 ```
 
-- [ ] **Step 5: Call it from the connector builder**
+- [ ] **Step 5: Call it from the connector dispatcher, not from `_add_line`**
 
 In `skills/report-slides/scripts/svg_to_pptx/connector.py`, add
-`apply_line_ends` to the existing import from `.style_parser`, and insert the call
-in `_add_line` immediately before `return conn`:
+`apply_line_ends` to the existing import from `.style_parser`. Call it from
+`dispatch_connector`, which is the only place that knows which segment is the
+connector's start and which is its end. `_add_line` sees one segment and would
+put an arrowhead on all of them.
+
+Replace the `line` branch's `return` (line 40) with:
+
+```python
+        conn = _add_line(slide, cs.x(x1), cs.y(y1), cs.x(x2), cs.y(y2), style)
+        apply_line_ends(conn, style)
+        return [conn]
+```
+
+and, in the `polyline`/`polygon` branch, after the segment loop and the closing
+segment, before `return connectors`:
+
+```python
+        if connectors:
+            # A polyline is one connector drawn as many segments. Only its two
+            # ends carry arrowheads; a closed polygon has no ends at all.
+            if not closed:
+                apply_line_ends(connectors[0], style, head=True, tail=False)
+                apply_line_ends(connectors[-1], style, head=False, tail=True)
+```
+
+The old instruction to call it inside `_add_line` immediately before
+`return conn` would have produced an arrowhead on every segment of every elbow
+connector, which is most connectors in an architecture diagram.
 
 ```python
     apply_line_ends(conn, style)
@@ -4117,14 +4808,9 @@ _BAD_GEOMETRY_SVG = """\
 </svg>"""
 
 
-def test_gradient_fill_produces_a_grad_fill_element():
+def test_gradient_fill_produces_a_grad_fill_element() -> None:
     """A url(#id) fill resolves to a native OOXML gradient, not an empty fill."""
-    path = _make_tmp_svg(_GRADIENT_SVG)
-    try:
-        prs = convert_file(path)
-    finally:
-        os.unlink(path)
-    slide = prs.slides[0]
+    slide, _ = _conv(_GRADIENT_SVG)
     shape = slide.shapes[0]
     grad = shape._element.find(f".//{_A_NS}gradFill")
     assert grad is not None
@@ -4134,46 +4820,113 @@ def test_gradient_fill_produces_a_grad_fill_element():
     assert stops[1].find(f"{_A_NS}srgbClr").get("val") == "0F766E"
 
 
-def test_gradient_stops_carry_their_offsets():
+def test_gradient_stops_carry_their_offsets() -> None:
     """Stop offsets survive as OOXML gs positions."""
-    path = _make_tmp_svg(_GRADIENT_SVG)
-    try:
-        prs = convert_file(path)
-    finally:
-        os.unlink(path)
-    grad = prs.slides[0].shapes[0]._element.find(f".//{_A_NS}gradFill")
+    slide, _ = _conv(_GRADIENT_SVG)
+    grad = slide.shapes[0]._element.find(f".//{_A_NS}gradFill")
     positions = [gs.get("pos") for gs in grad.findall(f"{_A_NS}gsLst/{_A_NS}gs")]
     assert positions == ["0", "100000"]
 
 
-def test_solid_fill_is_unaffected_by_gradient_support():
+def test_solid_fill_is_unaffected_by_gradient_support() -> None:
     """A plain hex fill still produces a solidFill, not a gradient."""
-    path = _make_tmp_svg(_DIAGRAM_SVG)
-    try:
-        prs = convert_file(path)
-    finally:
-        os.unlink(path)
-    shape = prs.slides[0].shapes[0]
+    slide, _ = _conv(_DIAGRAM_SVG)
+    shape = slide.shapes[0]
     assert shape._element.find(f".//{_A_NS}solidFill") is not None
     assert shape._element.find(f".//{_A_NS}gradFill") is None
 
 
-def test_malformed_geometry_raises_instead_of_dropping_the_shape():
+def test_percentage_gradient_coordinates_are_accepted() -> None:
+    """`x2="100%"` is ordinary SVG and must not crash the converter.
+
+    linearGradient coordinates default to objectBoundingBox units, where a
+    percentage and a fraction mean the same thing, and most authoring tools emit
+    the percentage. `float("100%")` raises `ValueError`, so before this the
+    converter died on markup it should render.
+    """
+    svg = _GRADIENT_SVG.replace('x2="1"', 'x2="100%"')
+    slide, _ = _conv(svg)
+    assert slide.shapes[0]._element.find(f".//{_A_NS}gradFill") is not None
+
+
+def test_a_nonsense_gradient_coordinate_is_named() -> None:
+    """An unparsable coordinate says which attribute was wrong."""
+    svg = _GRADIENT_SVG.replace('x2="1"', 'x2="halfway"')
+    with pytest.raises(ValueError) as excinfo:
+        _conv(svg)
+    assert "x2" in str(excinfo.value)
+
+
+@pytest.mark.parametrize("attribute,value", [
+    ("gradientUnits", "userSpaceOnUse"),
+    ("spreadMethod", "reflect"),
+    ("gradientTransform", "rotate(45)"),
+])
+def test_an_unsupported_gradient_feature_is_refused(
+        attribute: str, value: str) -> None:
+    """Features that change the rendering are refused, not dropped.
+
+    Accepting the markup and ignoring the feature exports a deck that looks
+    wrong with nothing in the log to explain it -- and the person who sees the
+    render is not the person reading the code.
+    """
+    svg = _GRADIENT_SVG.replace(
+        '<linearGradient id="fade"',
+        f'<linearGradient id="fade" {attribute}="{value}"')
+    with pytest.raises(ValueError) as excinfo:
+        _conv(svg)
+    assert attribute in str(excinfo.value)
+
+
+def test_a_stop_opacity_that_would_be_dropped_is_refused() -> None:
+    """DrawingML stops here carry no alpha, so a translucent stop is an error."""
+    svg = _GRADIENT_SVG.replace(
+        'stop-color="#0f766e"', 'stop-color="#0f766e" stop-opacity="0.4"')
+    with pytest.raises(ValueError) as excinfo:
+        _conv(svg)
+    assert "stop-opacity" in str(excinfo.value)
+
+
+def test_malformed_geometry_raises_instead_of_dropping_the_shape() -> None:
     """A bad geometry attribute is reported, not silently swallowed."""
-    path = _make_tmp_svg(_BAD_GEOMETRY_SVG)
-    try:
-        with pytest.raises(ValueError) as excinfo:
-            convert_file(path)
-    finally:
-        os.unlink(path)
+    with pytest.raises(ValueError) as excinfo:
+        _conv(_BAD_GEOMETRY_SVG)
     assert "not-a-number" in str(excinfo.value)
+
+
+def test_the_whole_deck_route_still_exports(tmp_path: Path) -> None:
+    """The gradient path also survives the directory-to-deck entry point.
+
+    `convert_file(slides_dir, out_path)` is the route `SKILL.md` actually calls;
+    the in-memory `_conv` helper bypasses `prs.save`, so a shape that python-pptx
+    accepts in memory but refuses to serialise would slip through every other
+    test in this task.
+    """
+    slides_dir = tmp_path / "slides"
+    slides_dir.mkdir()
+    (slides_dir / "slide01.svg").write_text(_GRADIENT_SVG, encoding="utf-8")
+    out = tmp_path / "deck.pptx"
+    convert_file(str(slides_dir), str(out))
+    assert out.exists()
+    assert len(Presentation(str(out)).slides) == 1
 ```
+
+These tests use `_conv`, the helper already defined at
+`skills/report-slides/scripts/svg_to_pptx/tests/test_integration.py:44`, which
+returns `(slide, prs)` from an in-memory `SvgConverter` run. Do **not** call
+`convert_file(path)`: its real signature is
+`convert_file(slides_dir: str, out_path: str, verbose: bool = False) -> None`
+(`converter.py:620`) — it globs `slide*.svg` from a *directory*, writes a deck,
+and returns nothing. `Path` is already imported at the top of that file; add the
+import if a future refactor removes it.
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/svg_to_pptx/tests/test_integration.py -v -k "gradient or malformed"`
+Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/svg_to_pptx/tests/test_integration.py -v -k "gradient or malformed or whole_deck"`
 Expected: FAIL — `assert None is not None` for the gradient tests, and
-`DID NOT RAISE` for the malformed-geometry test.
+`DID NOT RAISE` for the malformed-geometry test. `test_the_whole_deck_route_still_exports`
+passes from the start; it is a regression guard for the serialisation step, not a
+driver of this change.
 
 - [ ] **Step 3: Parse gradient definitions**
 
@@ -4194,31 +4947,108 @@ def parse_linear_gradient(elem: Any) -> Tuple[List[Tuple[str, str]], float]:
     Raises:
         ValueError: If the element declares no usable stops.
     """
+    _reject_unsupported_gradient(elem)
     stops: List[Tuple[str, str]] = []
     for child in elem:
         tag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
         if tag != "stop":
             continue
         offset = child.get("offset", "0")
-        color = child.get("stop-color")
-        if color is None:
-            inline = parse_inline_style(child.get("style", ""))
-            color = inline.get("stop-color")
+        inline = parse_inline_style(child.get("style", ""))
+        color = child.get("stop-color") or inline.get("stop-color")
         if color is None:
             raise ValueError(
                 f"gradient stop at offset {offset!r} has no stop-color"
+            )
+        opacity = child.get("stop-opacity") or inline.get("stop-opacity")
+        if opacity is not None and float(opacity) != 1.0:
+            raise ValueError(
+                f"gradient stop at offset {offset!r} sets stop-opacity="
+                f"{opacity!r}; DrawingML gradient stops here carry no alpha, "
+                f"so this would be dropped. Bake the opacity into stop-color "
+                f"or use a solid fill with fill-opacity."
             )
         stops.append((offset, color))
     if not stops:
         raise ValueError(
             f"linearGradient {elem.get('id')!r} declares no stops"
         )
-    x1 = float(elem.get("x1", 0))
-    y1 = float(elem.get("y1", 0))
-    x2 = float(elem.get("x2", 1))
-    y2 = float(elem.get("y2", 0))
+    x1 = _gradient_coord(elem.get("x1"), 0.0, "x1")
+    y1 = _gradient_coord(elem.get("y1"), 0.0, "y1")
+    x2 = _gradient_coord(elem.get("x2"), 1.0, "x2")
+    y2 = _gradient_coord(elem.get("y2"), 0.0, "y2")
     angle = _math.degrees(_math.atan2(y2 - y1, x2 - x1))
     return stops, angle
+
+
+# The SVG gradient model is much larger than what DrawingML's `a:gradFill` can
+# express, and than what this converter reads. Each of these would change how a
+# gradient looks and none of them is implemented, so each is refused by name.
+# Silently ignoring them exports a deck that looks wrong with nothing to explain
+# it, which is the expensive failure -- the author sees the render, not the code.
+_UNSUPPORTED_GRADIENT_ATTRS = {
+    "gradientTransform": "a transformed gradient",
+    "{http://www.w3.org/1999/xlink}href": "gradient inheritance",
+    "href": "gradient inheritance",
+}
+
+
+def _gradient_coord(raw: Optional[str], default: float, name: str) -> float:
+    """Parse one linearGradient coordinate in objectBoundingBox units.
+
+    Args:
+        raw: The attribute value, or `None` when absent.
+        default: The SVG default for this attribute.
+        name: The attribute name, for the error message.
+
+    Returns:
+        The coordinate as a fraction, so `"50%"` and `"0.5"` both give `0.5`.
+
+    Raises:
+        ValueError: If the value is neither a number nor a percentage.
+    """
+    if raw is None:
+        return default
+    text = raw.strip()
+    try:
+        if text.endswith("%"):
+            return float(text[:-1]) / 100.0
+        return float(text)
+    except ValueError as exc:
+        raise ValueError(
+            f"linearGradient {name}={raw!r} is neither a number nor a "
+            f"percentage; only objectBoundingBox units are supported"
+        ) from exc
+
+
+def _reject_unsupported_gradient(elem: Any) -> None:
+    """Refuse a gradient using a feature this converter does not implement.
+
+    Args:
+        elem: The `<linearGradient>` element.
+
+    Raises:
+        ValueError: If the gradient declares an unsupported feature.
+    """
+    for attr, description in _UNSUPPORTED_GRADIENT_ATTRS.items():
+        if elem.get(attr) is not None:
+            raise ValueError(
+                f"linearGradient {elem.get('id')!r} uses {description} "
+                f"({attr}), which this converter does not support"
+            )
+    units = elem.get("gradientUnits", "objectBoundingBox")
+    if units != "objectBoundingBox":
+        raise ValueError(
+            f"linearGradient {elem.get('id')!r} sets gradientUnits={units!r}; "
+            f"only objectBoundingBox is supported"
+        )
+    spread = elem.get("spreadMethod", "pad")
+    if spread != "pad":
+        raise ValueError(
+            f"linearGradient {elem.get('id')!r} sets spreadMethod={spread!r}; "
+            f"DrawingML gradient fills pad, and reflect/repeat would render "
+            f"differently in the export than in the SVG preview"
+        )
 
 
 def apply_paint(shape: Any, style: Dict[str, str]) -> None:
@@ -4239,7 +5069,18 @@ def apply_paint(shape: Any, style: Dict[str, str]) -> None:
     apply_fill(shape, style.get("fill", "black"))
 ```
 
-Add `List` and `Tuple` to the `typing` import if absent. Also remove the silent
+Add `List`, `Optional`, and `Tuple` to the `typing` import if absent.
+
+**On the narrowed subset.** `_reject_unsupported_gradient` refuses
+`gradientTransform`, href inheritance, `gradientUnits="userSpaceOnUse"`, and any
+`spreadMethod` other than `pad`; `_gradient_coord` accepts numbers and
+percentages and refuses everything else; a stop with `stop-opacity` other than 1
+is refused because `a:gradFill` stops here carry no alpha. These are refusals,
+not deferrals. Each names a feature whose absence would change the rendering, and
+the alternative — accepting the markup and dropping the feature — produces a
+deck that looks wrong with nothing in the log to explain it. Widening the subset
+later is a change to this function with its own tests; widening it by accident
+is what this prevents. Also remove the silent
 early return inside `apply_gradient_fill` (line 185) so a missing `spPr` is
 reported:
 
@@ -4418,6 +5259,30 @@ def test_worker_agents_reference_the_token_contract(agent_file: str) -> None:
     assert "design-tokens" in text or "tokens.yaml" in text
 
 
+@pytest.mark.parametrize("agent_file", _NATIVE_ROUTE_AGENTS)
+def test_worker_agents_require_the_linter_markers(agent_file: str) -> None:
+    """Hand-authored SVG must declare what the linter needs to read.
+
+    These workers are the primary producers of the markup plan 2's node,
+    connector, and clearance rules exist for. An element with no
+    `data-style-role` or `data-node-id` is skipped by those rules, not flagged,
+    so a diagram that omits them passes by never being examined -- which is
+    strictly worse than having no linter, because the report says "clean".
+    """
+    text = (_AGENTS / agent_file).read_text(encoding="utf-8")
+    for marker in ("data-style-role", "data-node-id", "data-bleed"):
+        assert marker in text, f"{agent_file} does not require {marker}"
+
+
+def test_the_diagram_worker_requires_declared_connector_endpoints() -> None:
+    """A connector without declared endpoints cannot be checked for drift."""
+    text = (_AGENTS / "architecture_diagram_worker_agent.md").read_text(
+        encoding="utf-8")
+    assert "data-from" in text
+    assert "data-to" in text
+    assert "marker-end" in text
+
+
 def test_diagram_patterns_requires_token_driven_geometry() -> None:
     """diagram-patterns.md names the token surfaces and roles."""
     text = (_REFERENCES / "diagram-patterns.md").read_text(encoding="utf-8")
@@ -4485,12 +5350,40 @@ In the Production Procedure, insert a new step between the current step 4
 
    A module whose `style_tokens_ref` cannot be resolved is a blocker. Do not
    fall back to built-in defaults.
+
+4c. **Declare what you drew.** Every element carries the marker that says which
+   token decision it realises. These are not annotations for a human reader:
+   the visual-style linter reads them, and an element without them is *skipped*
+   rather than flagged, so an unmarked diagram passes every rule by never being
+   examined.
+
+   - Every `<text>`: `data-style-role="<typography role>"` — the same role you
+     took the size from.
+   - Every node's group: `<g data-node-id="<stable id>">`, and the node's own
+     shape inside it. Node ids are what let the linter tell "these two boxes are
+     too close" from "this label is inside its own box".
+   - Every shape drawn from a surface or colour role:
+     `data-style-role="<role>"`, for example `node.primary`, `divider`, or
+     `chart.bar`. A `chart.*` or `mark.*` role also exempts the element from the
+     layout grid, because a data mark is positioned by its value.
+   - Every connector: `data-from="<node id>" data-to="<node id>"`, plus
+     `marker-end` for its arrowhead. The declared endpoints are what make a
+     drifted connector falsifiable — without them, an endpoint that has come
+     adrift is indistinguishable from one placed deliberately, and the rule
+     cannot fire. A `<line>` with none of these is read as a plain rule, not a
+     connector, and is not checked for attachment.
+   - Anything that runs past `canvas.safe_area` on purpose, such as a full-bleed
+     background: `data-bleed="true"`. Without it the safe-area rule reports it
+     on every slide, and the rule gets trained away as noise.
+
+   A diagram that resolves its tokens correctly but declares none of this is
+   invisible to every check downstream of it.
 ```
 
-Add the same block, with the surface and role names appropriate to each route, to
-`annotation_worker_agent.md`, `data_visualization_worker_agent.md`, and
-`conceptual_illustration_worker_agent.md` — for the conceptual worker, the tokens
-govern the *overlay* layer, not the generated pixels.
+Add the same two blocks, with the surface and role names appropriate to each
+route, to `annotation_worker_agent.md`, `data_visualization_worker_agent.md`,
+and `conceptual_illustration_worker_agent.md` — for the conceptual worker, the
+tokens and the markers govern the *overlay* layer, not the generated pixels.
 
 - [ ] **Step 4: Update `diagram-patterns.md`**
 
@@ -4588,7 +5481,7 @@ available for colour overrides only, applied after tokens.
 - [ ] **Step 7: Run test to verify it passes**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_token_docs.py -v`
-Expected: PASS — 8 passed.
+Expected: PASS — 13 passed.
 
 - [ ] **Step 8: Run the full skill suite**
 
@@ -4608,9 +5501,379 @@ git commit -m "docs(report-slides): bind the native SVG route to the design-toke
 
 ---
 
+## Phase 4: One Token Set, Compiled
+
+### Task 16: Compile the effective token set and make everything read it
+
+This plan opens by calling the token file the machine-readable source of truth,
+and then Task 6 Step 6 keeps `apply_style`, which overwrites nine colour keys and
+the resolved font in `S` *after* `apply_tokens` has run. Those are two sources of
+truth, and the second one wins.
+
+The second plan then lints against `$STYLE_TOKENS_REF` — the token file on disk,
+before any style override. Its `token-color` rule is a hard error: "a colour
+absent from `color.roles`". So a deck that legitimately sets `primary: "#7B2D8E"`
+in its style Markdown renders in that colour, exports in that colour, and then
+fails the build with a hard error on every element that uses it. The same holds
+for `font`: `apply_style` re-resolves `S["font_resolved"]`, and the linter goes
+on measuring text with the token font, so every width it computes is for a face
+the slide does not use.
+
+Neither is a rule bug. Both are what happens when two artifacts describe one
+slide and only one of them is checked.
+
+The fix is not to delete style Markdown — a deck's palette is a real thing users
+set, and STYLES.md ships eight of them. It is to make the override happen
+*before* anything reads the tokens, and to write the result down. A style file
+supplies values for roles that already exist; it may not invent a role, because
+the role names are what the rest of the system is written against.
+
+**Files:**
+- Modify: `skills/report-slides/scripts/design_tokens.py` — add
+  `with_overrides` and `dump`
+- Modify: `skills/report-slides/scripts/generate_slides.py` — `main`, and delete
+  the `apply_style` colour mutation Task 6 Step 4 preserved
+- Test: `skills/report-slides/scripts/tests/test_effective_tokens.py`
+- Modify: `skills/report-slides/SKILL.md` — the `--style` and `--tokens` copy
+
+**Interfaces:**
+- Consumes: `design_tokens.{DesignTokens, TokenError}` (Task 2);
+  `generate_slides._parse_frontmatter` (existing, line 46);
+  `fonts.resolve_font_stack` (Task 5).
+- Produces:
+  - `STYLE_KEY_TO_ROLE: Dict[str, str]` — style frontmatter key to colour role
+  - `DesignTokens.from_mapping(raw: Mapping[str, Any]) -> DesignTokens` —
+    `load`'s validation half, factored out
+  - `DesignTokens.with_overrides(overrides: Mapping[str, str]) -> DesignTokens`
+  - `DesignTokens.dump(path: Path) -> Path` — writes canonical YAML; the set's
+    `digest` property is unchanged by writing and remains the identifier
+  - `generate_slides.effective_tokens(tokens_path: Optional[Path],
+    style_path: Optional[str], out_dir: Path) -> Tuple[Path, str]` — the written
+    path and its digest
+
+- [ ] **Step 1: Write the failing test**
+
+Create `skills/report-slides/scripts/tests/test_effective_tokens.py`:
+
+```python
+"""One slide, one token set, one digest.
+
+A style Markdown file that changes a colour after the tokens are loaded creates
+a second description of the same slide -- and the linter reads the first one.
+These tests pin the composition order and the artifact that records the result.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+import generate_slides as gs
+from design_tokens import DesignTokens, TokenError
+
+_SKILL_DIR = Path(__file__).resolve().parents[2]
+_DEFAULT_TOKENS = _SKILL_DIR / "references" / "tokens" / "default.tokens.yaml"
+
+
+def _style(tmp_path: Path, body: str) -> Path:
+    """Write a style Markdown file with the given frontmatter body."""
+    path = tmp_path / "custom.md"
+    path.write_text(f"---\n{body}\n---\n\n# Custom\n", encoding="utf-8")
+    return path
+
+
+def test_an_override_reaches_the_token_set(tmp_path: Path) -> None:
+    """The style file's primary colour becomes the token role's value."""
+    style = _style(tmp_path, 'primary: "#7B2D8E"')
+    path, _ = gs.effective_tokens(_DEFAULT_TOKENS, str(style), tmp_path)
+    assert DesignTokens.load(path).color("primary") == "#7B2D8E"
+
+
+def test_the_effective_file_is_what_the_renderer_used(tmp_path: Path) -> None:
+    """`S` and the written artifact agree, so the linter sees what was drawn.
+
+    This is the whole point. Before this task the renderer used the override and
+    the linter used the file, and `token-color` -- a hard error -- fired on
+    every element painted in the deck's own accent colour.
+    """
+    style = _style(tmp_path, 'primary: "#7B2D8E"')
+    path, _ = gs.effective_tokens(_DEFAULT_TOKENS, str(style), tmp_path)
+    gs.apply_tokens(path)
+    assert gs.S["primary"] == "#7B2D8E"
+    assert gs.S["accent"] == "#7B2D8E"
+
+
+def test_the_digest_changes_with_the_style(tmp_path: Path) -> None:
+    """A different palette is a different contract and gets a different digest."""
+    _, plain = gs.effective_tokens(_DEFAULT_TOKENS, None, tmp_path / "a")
+    _, styled = gs.effective_tokens(
+        _DEFAULT_TOKENS, str(_style(tmp_path, 'primary: "#7B2D8E"')),
+        tmp_path / "b")
+    assert plain != styled
+
+
+def test_the_digest_is_the_written_sets_own_digest(tmp_path: Path) -> None:
+    """One token set, one digest: reloading the file reproduces it.
+
+    `DesignTokens.digest` already identifies a token set by content. Minting a
+    second, byte-level digest here would give the system two answers to "which
+    tokens is this slide held to", which is the defect this task removes, one
+    level up.
+    """
+    path, digest = gs.effective_tokens(_DEFAULT_TOKENS, None, tmp_path)
+    assert DesignTokens.load(path).digest == digest
+
+
+def test_the_same_inputs_produce_the_same_digest(tmp_path: Path) -> None:
+    """Composition is deterministic; the digest identifies inputs, not runs."""
+    _, first = gs.effective_tokens(_DEFAULT_TOKENS, None, tmp_path / "a")
+    _, second = gs.effective_tokens(_DEFAULT_TOKENS, None, tmp_path / "b")
+    assert first == second
+
+
+def test_a_style_key_with_no_role_is_refused(tmp_path: Path) -> None:
+    """A style file may set a role's value; it may not invent a role.
+
+    The role names are the vocabulary the renderer, the worker agents, the
+    linter, and the PPTX converter are all written against. Accepting an unknown
+    key would put a colour in the effective token set that nothing can refer to,
+    and the failure would surface much later as an unexplained hard error.
+    """
+    style = _style(tmp_path, 'chartreuse: "#7FFF00"')
+    with pytest.raises(TokenError) as caught:
+        gs.effective_tokens(_DEFAULT_TOKENS, str(style), tmp_path)
+    assert "chartreuse" in str(caught.value)
+
+
+def test_a_malformed_colour_is_refused(tmp_path: Path) -> None:
+    """The composed set is validated, not merely merged."""
+    style = _style(tmp_path, 'primary: "not a colour"')
+    with pytest.raises(TokenError):
+        gs.effective_tokens(_DEFAULT_TOKENS, str(style), tmp_path)
+
+
+def test_a_font_override_is_resolved_into_the_token_set(tmp_path: Path) -> None:
+    """The font the renderer measures with is the font the linter measures with."""
+    style = _style(tmp_path, 'font: "DejaVu Sans, sans-serif"')
+    path, _ = gs.effective_tokens(_DEFAULT_TOKENS, str(style), tmp_path)
+    assert "DejaVu Sans" in DesignTokens.load(path).font_stack("sans")
+
+
+def test_no_style_still_writes_an_effective_file(tmp_path: Path) -> None:
+    """Every deck has an effective token set, so the gate has one thing to read."""
+    path, digest = gs.effective_tokens(_DEFAULT_TOKENS, None, tmp_path)
+    assert path.is_file() and len(digest) == 64
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_effective_tokens.py -v`
+Expected: FAIL — `AttributeError: module 'generate_slides' has no attribute 'effective_tokens'`.
+
+- [ ] **Step 3: Add `with_overrides` and `dump` to `DesignTokens`**
+
+In `design_tokens.py`, beside `load`:
+
+```python
+    def with_overrides(self, overrides: Mapping[str, str]) -> "DesignTokens":
+        """Return a copy with colour roles and the sans font family replaced.
+
+        Overrides name existing roles. Inventing a role is refused rather than
+        merged: the role names are the vocabulary the renderer, the worker
+        agents, the linter, and the converter are all written against, and a
+        role only one of them knows about is worse than no role at all.
+
+        Args:
+            overrides: Role name to value. The key `font` is special-cased onto
+                `typography.family.sans`.
+
+        Returns:
+            A new `DesignTokens`, validated against the schema.
+
+        Raises:
+            TokenError: If a key names no existing role, or the result fails
+                schema or semantic validation.
+        """
+        raw = copy.deepcopy(self.raw)
+        roles = raw["color"]["roles"]
+        for key, value in overrides.items():
+            if key == "font":
+                raw["typography"]["family"]["sans"] = value
+                continue
+            if key not in roles:
+                raise TokenError(
+                    f"style override {key!r} names no colour role; "
+                    f"known roles are {', '.join(sorted(roles))}"
+                )
+            roles[key] = value
+        return DesignTokens.from_mapping(raw)
+
+    def dump(self, path: Path) -> Path:
+        """Write the token set as canonical YAML.
+
+        Sorted keys and a fixed dumper make the bytes a function of the content
+        alone, so two runs over the same inputs produce the same file.
+
+        Args:
+            path: Destination file. Parent directories are created.
+
+        Returns:
+            The path written, for chaining. The set's identity is its `digest`
+            property, which survives the round trip unchanged.
+        """
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            yaml.safe_dump(self.raw, sort_keys=True, allow_unicode=True),
+            encoding="utf-8")
+        return path
+```
+
+`from_mapping` is `load`'s validation half, factored out: `load` becomes "read
+the YAML, then `from_mapping`". Both run the JSON Schema check and
+`semantic_errors` from Task 2, so a composed set is held to exactly the same
+contract as a written one — that is what makes `test_a_malformed_colour_is_refused`
+pass without a second validator. Add `copy` and `Mapping` to the module imports.
+
+`digest` must be computed from `raw` rather than from the file's bytes, so that
+a composed set has a digest before it is written and the same one after. If
+Task 2 implemented it by hashing the file, move it onto the canonical dump of
+`raw` here and keep
+`test_loader_digest_is_content_sensitive_not_whitespace_sensitive` passing —
+that test already states the property this relies on.
+
+- [ ] **Step 4: Compose in `generate_slides.py`**
+
+Add, beside `apply_tokens`:
+
+```python
+# Style Markdown keys are historical; the token roles are the contract. This map
+# is the only place the two vocabularies meet.
+STYLE_KEY_TO_ROLE: Dict[str, str] = {
+    "primary": "primary", "bg": "bg", "body": "body", "muted": "muted",
+    "border": "border", "card": "card", "positive": "positive",
+    "warn": "warn", "danger": "danger", "font": "font",
+}
+
+
+def effective_tokens(
+    tokens_path: Optional[Path], style_path: Optional[str], out_dir: Path
+) -> Tuple[Path, str]:
+    """Compose tokens with a style override and write the result.
+
+    The composed file is the single artifact the renderer loads, the linter
+    reads, and the workflow gate digests. Composing before anything reads the
+    tokens is what keeps those three from disagreeing.
+
+    Args:
+        tokens_path: Token file, or `None` for the shipped default.
+        style_path: Style Markdown file, or `None`.
+        out_dir: Directory to write `_effective.tokens.yaml` into.
+
+    Returns:
+        The written path and the composed set's digest.
+
+    Raises:
+        TokenError: If the style names an unknown role or the composed set
+            fails validation.
+        ValueError: If the style file has no usable frontmatter.
+    """
+    tokens = DesignTokens.load(tokens_path or DEFAULT_TOKENS_PATH)
+    if style_path is not None:
+        frontmatter = _parse_frontmatter(style_path)
+        if not frontmatter:
+            raise ValueError(
+                f"style file {style_path} has no usable YAML frontmatter; "
+                f"expected keys such as primary/bg/body "
+                f"(see references/styles/STYLES.md)"
+            )
+        unknown = sorted(set(frontmatter) - set(STYLE_KEY_TO_ROLE))
+        if unknown:
+            raise TokenError(
+                f"style file {style_path} sets {', '.join(unknown)}, which "
+                f"name no colour role"
+            )
+        overrides = {
+            STYLE_KEY_TO_ROLE[key]: value
+            for key, value in frontmatter.items() if key in STYLE_KEY_TO_ROLE
+        }
+        if "font" in overrides:
+            overrides["font"] = resolve_font_stack(overrides["font"])
+        tokens = tokens.with_overrides(overrides)
+    path = out_dir / "_effective.tokens.yaml"
+    tokens.dump(path)
+    return path, tokens.digest
+```
+
+Then delete `apply_style` entirely, and replace its call in `main`:
+
+```python
+    tokens_path, tokens_digest = effective_tokens(
+        args.tokens, args.style, Path(args.out))
+    apply_tokens(tokens_path)
+    print(f"  [tokens] {tokens_path} sha256={tokens_digest[:12]}")
+```
+
+Deleting `apply_style` rather than leaving it unused is deliberate: a function
+that mutates `S` after `apply_tokens` is exactly the defect, and leaving it in
+the module is an invitation to call it.
+
+- [ ] **Step 5: Run the test to verify it passes**
+
+Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_effective_tokens.py -v`
+Expected: PASS — 9 passed.
+
+- [ ] **Step 6: Run the suite and fix the fallout**
+
+Run: `timeout 900 python3 -m pytest skills/report-slides/scripts/tests/ -q`
+
+Expected: the two `apply_style` tests from Task 6 Step 3 now fail with
+`AttributeError`. Their claim has moved, not disappeared:
+`test_apply_style_raises_on_unparsable_frontmatter` becomes
+`test_effective_tokens_raises_on_unparsable_frontmatter`, calling
+`effective_tokens` with the same broken file and expecting the same
+`ValueError`. Rewrite them where they stand; do not delete them, and do not keep
+`apply_style` alive to save them.
+
+- [ ] **Step 7: Say so in `SKILL.md`**
+
+In the Style system section, replace the sentence describing `--style` as a
+colour override with:
+
+```markdown
+`--style` and `--tokens` are composed before rendering, not applied in sequence
+afterwards. The result is written to `<out>/_effective.tokens.yaml`, and that
+file — not the file passed to `--tokens` — is what `$STYLE_TOKENS_REF` must
+point at for the rest of the pipeline. A style file may set the value of a
+colour role or the sans font family; a key naming no role is an error, because
+the role names are the vocabulary every downstream check is written against.
+```
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add skills/report-slides/scripts/design_tokens.py \
+        skills/report-slides/scripts/generate_slides.py \
+        skills/report-slides/scripts/tests/test_effective_tokens.py \
+        skills/report-slides/scripts/tests/test_generate_slides_typography.py \
+        skills/report-slides/SKILL.md
+git commit -m "feat(report-slides): compile one effective token set per deck
+
+apply_style overwrote nine colour keys and the resolved font in S after
+apply_tokens had run, so a deck had two descriptions of itself and only the
+token file was ever checked. A style-set accent colour would have failed the
+token-color hard error on every element that used it, and every text width the
+linter computed would have been for a face the slide did not use.
+
+Style Markdown is now composed into the token set before anything reads it, the
+result is written to _effective.tokens.yaml with a digest, and apply_style is
+deleted. A style key naming no colour role is refused rather than merged."
+```
+
+---
+
 ## Final Verification
 
-Run after Task 15, before declaring this plan complete.
+Run after Task 16, before declaring this plan complete.
 
 - [ ] **Step 1: Full suite**
 
@@ -4667,7 +5930,12 @@ Performed against the spec after writing this plan.
 **Spec coverage.** Every defect in spec §2 that this plan owns maps to a task:
 §2.2 → Tasks 6–9; §2.3 → Task 10; §2.4 → Task 11; §2.5 → Task 12;
 §2.6 → Tasks 13–14; §2.7 → Task 4; §2.8 → Tasks 6 and 15; §2.9 → Tasks 1–3;
-§2.15 → Tasks 6 and 14. Spec §3.3's adopted cherry-picks land in Tasks 12–13, and
+§2.15 → Tasks 6 and 14. Task 16 answers no spec defect either: §D2 calls the
+token file the machine-readable source of truth, and `apply_style` quietly made
+it the second-to-last word. Task 0 exists because every
+`Run:` command in both plans failed at collection without it, and because the
+1506 tests already under `skills/` gate no pull request. A plan whose verification
+steps cannot be executed verifies nothing, so it comes first. Spec §3.3's adopted cherry-picks land in Tasks 12–13, and
 its two rejections (Bézier construction, `latex_to_unicode`) are correctly absent.
 
 Deliberately **not** covered here, and carried by the second plan:
@@ -4687,14 +5955,83 @@ implementer has no open decision.
 **Type consistency.** `DesignTokens.load` returns `DesignTokens` in Tasks 2, 3, 4,
 and 6. `TypeRole` fields are `size`/`weight`/`line_height`/`max_lines`/`family`
 throughout. `t_size`/`t_weight`/`t_lh` keep their names in Tasks 6, 7, 8, and 9.
-`resolve_font_stack` returns `str` in Tasks 5, 6, and 10. `ensure_ln_child` is
+`resolve_font_stack` returns `str` in Tasks 5, 6, and 10.
+`vertical_metrics(family: str, size: float, weight: int = 400)
+-> Tuple[float, float]` is defined in
+Task 5, used in Tasks 6 and 9 to lift the footer baseline off the safe-area
+boundary, and imported by the second plan's Task 2 — both documents measure the
+text box with the same function rather than with two sets of guessed constants.
+`font_file_for(family: str, weight: int = 400) -> Path` keys its cache by both,
+so `text_width` measures a 700-weight title with the bold face; measuring it
+with the regular one under-reports by 12.9% on the development machine, and four
+of the eight token roles carry a weight of 600 or more.
+`tlines` takes a keyword-only, mandatory `role: str` from Task 7 Step 3 onward,
+so no call site can emit unroled text by omission. Task 14 calls
+`convert_file(slides_dir: str, out_path: str, verbose: bool = False) -> None`
+through the existing `_conv` helper, matching `converter.py:620`; it does not
+treat the return value as a document, because there is none. `ensure_ln_child` is
 defined in Task 12 and reused in Task 13 with the same signature. `apply_paint`
 supersedes the direct `apply_fill` call in Task 14, after Tasks 11 and 13 had used
 `apply_fill` — Task 14 Step 5 changes both call sites explicitly rather than
 leaving them inconsistent.
 
+**Marker contract.** The second plan's rules read `data-style-role`,
+`data-node-id`, `data-bleed`, `data-from`, and `data-to`. An element carrying
+none of them is *skipped* by those rules rather than flagged, so markup that
+omits them passes every check by never being examined — a report that says
+"clean" about a diagram nothing looked at. Both producers of slide SVG therefore
+emit them: `generate_slides.py` in Tasks 6–9, enforced by Task 9 Step 8's sweep
+over every rendered fragment, and the four hand-authoring worker agents in
+Task 15 Step 4c, enforced by a test per agent. Task 9 Step 8 fails on any text
+element whose role is absent from the token file's `typography.roles`, which is
+what keeps the two vocabularies from drifting apart.
+
 **Known ordering constraint.** Task 13 adds `apply_alpha` calls to `_add_rect`,
 and Task 14 replaces the `apply_fill` line in the same function. Execute 13 before
 14, as numbered.
 
+---
 
+## Revision, after review
+
+Both plans were reviewed by an independent agent and by a verification pass over
+the repository. What follows is what survived verification, with the evidence,
+because several defects were the kind that pass a reading and fail an execution.
+
+**Defects fixed in this plan:**
+
+| Defect | Evidence | Where it landed |
+|---|---|---|
+| Every per-file `Run:` command in both plans failed at collection | `pytest skills/report-slides/scripts/tests/test_presentation_gates.py` → `ModuleNotFoundError: No module named 'presentation_contracts'`, 0 collected. With the new `conftest.py`: `18 passed` | **Task 0** |
+| The 1506 tests under `skills/` gate no pull request | `.github/workflows/pytest.yml` runs `pytest scripts/ tests/`; its `paths:` filters never mention `skills/**` | Task 0 Step 5 |
+| Both plans forbade linter-suppression comments in Global Constraints and then used one 27 times | Removed by Task 0's conftest; neither document now contains the suppression | Task 0 |
+| Plan 2's rules all key off `data-style-role`; this plan emitted it zero times | `grep -c data-style-role` returned 0 | Tasks 6–9 and 15, enforced by Task 9 Step 8 |
+| The footer's descenders hung outside the safe area on every slide | `frame()` put the baseline at `675 − 36 = 639`; DejaVu Sans reports descent 3 at size 12, so the box ended at 642 — a `safe-area` error on every slide with a footer | Task 6 |
+| The text box was modelled from guessed constants | Measured with Pillow: ascent/descent are 30/8 at size 32 and 12/3 at size 12, not 0.8 em and no descent | `fonts.vertical_metrics`, Task 5 |
+| Font weight was accepted and discarded | `text_width` documented that it ignored `weight`. Measured: DejaVu Sans Bold is 585.81 units against Regular's 518.91 for one string at size 32 — 12.9% wider. Four of the eight token roles are weight 600 or 700 | `FC_WEIGHT_NAMES`, Task 5 |
+| Task 14 called `convert_file(path)` and used the return value | `converter.py:620` is `convert_file(slides_dir: str, out_path: str, verbose: bool = False) -> None` | Task 14, via `_conv` |
+| Hand-authored diagrams emitted none of the markers the linter reads | The four worker agents are the primary producers of the markup plan 2's node and connector rules exist for | Task 15 Step 4c |
+| Arrowhead type was documented on the `<marker>` and read from the connector | The prose said one thing, `apply_line_ends` and its test said another. One `<marker>` in `<defs>` is shared by every connector, so it cannot carry a per-connector answer | Task 12 |
+| Every segment of a polyline got an arrowhead | `connector.py:41-52` emits one `_add_line` per segment sharing one style dict. A four-point elbow — the standard shape for routing around a node — exported with three arrowheads pointing into its own middle | Task 12 Step 5 |
+| A gradient with percentage coordinates crashed the converter | `float(elem.get("x1", 0))` raises on `x1="0%"`, which is ordinary SVG; linearGradient coordinates default to objectBoundingBox units and percentages are what most tools emit. `gradientUnits`, `gradientTransform`, `spreadMethod`, href inheritance, and `stop-opacity` were read by nothing and would have been dropped silently | Task 13 |
+| The token schema could not express its own invariants | JSON Schema validates each value alone: `occupancy_min: 0.9` with `occupancy_max: 0.3` is valid, as is a surface whose `fill` names a colour role that does not exist | `design_tokens.semantic_errors`, Task 2 |
+| `style_tokens_ref` validated a file and forgot which file | Spec §D3 asks for provenance; the recorded fact was "some token file was fine at some past moment" | `resolved_token_digest`, Task 4 |
+| The token file was called the source of truth and `apply_style` overwrote it | `apply_style` replaces nine colour keys and the resolved font in `S` *after* `apply_tokens`. Plan 2 lints the file on disk, and its `token-color` rule is a hard error — so a deck that set its own accent colour would fail the build on every element using it | **Task 16** |
+
+**Two findings were rejected.**
+
+An earlier correction to this plan raised Task 12's expected pass count from 11
+to 12. That was wrong: the counting script attributed to Task 12 a test the task
+appends to a *different* file. The reviewer was right and the count is 11.
+
+The reviewer also read `test_fonts.py`'s module-level skip when `fc-match` is
+absent as a violation of the no-skips posture. It is not: the repository's rule
+permits a skip for an absent optional dependency when it is marked and names the
+dependency, which this one does. Mocking font discovery in a module whose entire
+subject is font discovery would test the mock.
+
+**One finding was accepted in part.** Task 9 rewrites four renderers under one
+commit, so a reviewer could not reject the timeline work while accepting the
+table work. Splitting it into two tasks would renumber Tasks 10–16 and every
+cross-reference in both documents; it now carries a review checkpoint and two
+commits instead, which gives the same rejection granularity.
