@@ -42,6 +42,28 @@ def _prompt_mode() -> str:
         print("  Please enter 1 or 2.")
 
 
+def _resolve_mode(explicit: str | None) -> str:
+    """Return the conversion mode, prompting only an interactive terminal.
+
+    Omitting `--mode` printed a menu and called `input()`. A pipeline, a CI
+    job, or an agent session has nobody to answer it: on a pipe the read
+    blocks until the process is killed, and the export never finishes.
+
+    Args:
+        explicit: The `--mode` value, or None when the flag was omitted.
+
+    Returns:
+        "native" or "embed". Off a terminal the documented default is taken
+        without asking.
+    """
+    if explicit is not None:
+        return explicit
+    stdin = sys.stdin
+    if stdin is None or not stdin.isatty():
+        return "native"
+    return _prompt_mode()
+
+
 def _authorize_production(deck_id: str, project_root: Path | None) -> Path | None:
     """Authorize the CLI before it enumerates inputs or creates outputs."""
     try:
@@ -94,7 +116,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
     )
     ap.add_argument("--mode", choices=["native", "embed"], default=None,
                     help="native: editable shapes; embed: SVG blip. "
-                         "Omit to be prompted with a description of each mode.")
+                         "Omit to be prompted with a description of each "
+                         "mode at a terminal, or to take native off one.")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args(arguments)
 
@@ -107,7 +130,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         print(f"No slide*.svg files found in {slide_dir}", file=sys.stderr)
         return 1
 
-    mode = args.mode if args.mode is not None else _prompt_mode()
+    mode = _resolve_mode(args.mode)
 
     if mode == "embed":
         sys.path.insert(0, str(Path(__file__).parent.parent))
