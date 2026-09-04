@@ -1300,7 +1300,7 @@ parameter to them would churn every call site. Instead the *syntactic* rule
 (non-null string) tightens in place, and the *filesystem* rule lands in a new
 function that only callers holding the document's path invoke.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `skills/report-slides/scripts/tests/test_style_tokens_ref_enforcement.py`:
 
@@ -1395,12 +1395,12 @@ def test_resolvable_check_rejects_escape_from_base_dir(tmp_path: Path) -> None:
     assert "outside" in errors[0]
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_style_tokens_ref_enforcement.py -v`
 Expected: FAIL — `ImportError: cannot import name 'validate_style_tokens_resolvable'`.
 
-- [ ] **Step 3: Tighten the syntactic rule**
+- [x] **Step 3: Tighten the syntactic rule**
 
 In `skills/report-slides/scripts/validate_visual_module.py`, replace
 `_validate_style_tokens_ref` (lines 285–294) with:
@@ -1433,7 +1433,7 @@ def _validate_style_tokens_ref(
         )
 ```
 
-- [ ] **Step 4: Add the resolution check**
+- [x] **Step 4: Add the resolution check**
 
 Append to `skills/report-slides/scripts/validate_visual_module.py`, above `main()`:
 
@@ -1476,12 +1476,12 @@ def validate_style_tokens_resolvable(doc: Any, base_dir: Path) -> list[str]:
     return errors
 ```
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_style_tokens_ref_enforcement.py -v`
 Expected: PASS — 7 passed.
 
-- [ ] **Step 6: Wire the check into the three callers that hold a path**
+- [x] **Step 6: Wire the check into the three callers that hold a path**
 
 In `skills/report-slides/scripts/validate_visual_module.py`, in `main()`, replace
 the `errors = validate_complex_visual_spec(...)` line (line 348) with:
@@ -1501,7 +1501,7 @@ using the same spec path that block already holds. In
 line 417. Read the surrounding lines in each file to find the local variable
 holding the specification path, and pass its `.parent`.
 
-- [ ] **Step 7: Run the full existing suite to catch regressions**
+- [x] **Step 7: Run the full existing suite to catch regressions**
 
 Run: `timeout 900 python3 -m pytest skills/report-slides/scripts/tests/ -q`
 Expected: PASS. If existing fixtures set `style_tokens_ref: null`, they are now
@@ -1509,7 +1509,7 @@ invalid by design — update each fixture to name a real token file. Do not rela
 the new rule to accommodate a fixture; state in the commit message which fixtures
 changed and why the old expectation was wrong.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add skills/report-slides/scripts/validate_visual_module.py \
@@ -1559,7 +1559,7 @@ overflow. `svg_to_pptx/text_converter.py:15` currently approximates with
 itself. The default token stack lists `Inter` first precisely so this code path is
 exercised: `resolve_font_stack` must skip Inter and return `DejaVu Sans`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `skills/report-slides/scripts/tests/test_fonts.py`:
 
@@ -1700,12 +1700,12 @@ def test_text_width_rejects_unavailable_family() -> None:
         text_width("Model", "Totally Not A Real Font 9x7", 18)
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_fonts.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'fonts'` at collection.
 
-- [ ] **Step 3: Write the module**
+- [x] **Step 3: Write the module**
 
 Create `skills/report-slides/scripts/fonts.py`:
 
@@ -1949,12 +1949,12 @@ def _face(family: str, size: float, weight: int = 400) -> "ImageFont.FreeTypeFon
         ) from exc
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_fonts.py -v`
 Expected: PASS — 14 passed.
 
-- [ ] **Step 5: Verify the default token stack resolves on this machine**
+- [x] **Step 5: Verify the default token stack resolves on this machine**
 
 Run:
 
@@ -1973,7 +1973,7 @@ Expected: both keys print an installed family. On a machine without Inter this
 prints `sans -> DejaVu Sans`. If either raises `FontError`, add the missing family
 to the token stack rather than weakening `resolve_font_stack`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add skills/report-slides/scripts/fonts.py \
