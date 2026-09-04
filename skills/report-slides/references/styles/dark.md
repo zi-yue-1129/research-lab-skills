@@ -10,7 +10,6 @@ card: "#1e293b"
 positive: "#34d399"
 warn: "#fbbf24"
 danger: "#f87171"
-font: "'Helvetica Neue', Arial, sans-serif"
 ---
 
 Best for: conference presentations in dim rooms, or for a modern high-contrast look.

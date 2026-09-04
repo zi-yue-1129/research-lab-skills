@@ -10,7 +10,6 @@ card: "#f8fafc"
 positive: "#059669"
 warn: "#d97706"
 danger: "#dc2626"
-font: "'Helvetica Neue', Arial, sans-serif"
 ---
 
 Best for: advisor meetings, academic progress reports, internal lab presentations.

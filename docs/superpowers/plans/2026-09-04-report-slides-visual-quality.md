@@ -5551,7 +5551,7 @@ the role names are what the rest of the system is written against.
     style_path: Optional[str], out_dir: Path) -> Tuple[Path, str]` — the written
     path and its digest
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `skills/report-slides/scripts/tests/test_effective_tokens.py`:
 
@@ -5665,12 +5665,12 @@ def test_no_style_still_writes_an_effective_file(tmp_path: Path) -> None:
     assert path.is_file() and len(digest) == 64
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_effective_tokens.py -v`
 Expected: FAIL — `AttributeError: module 'generate_slides' has no attribute 'effective_tokens'`.
 
-- [ ] **Step 3: Add `with_overrides` and `dump` to `DesignTokens`**
+- [x] **Step 3: Add `with_overrides` and `dump` to `DesignTokens`**
 
 In `design_tokens.py`, beside `load`:
 
@@ -5741,7 +5741,7 @@ Task 2 implemented it by hashing the file, move it onto the canonical dump of
 `test_loader_digest_is_content_sensitive_not_whitespace_sensitive` passing —
 that test already states the property this relies on.
 
-- [ ] **Step 4: Compose in `generate_slides.py`**
+- [x] **Step 4: Compose in `generate_slides.py`**
 
 Add, beside `apply_tokens`:
 
@@ -5817,12 +5817,12 @@ Deleting `apply_style` rather than leaving it unused is deliberate: a function
 that mutates `S` after `apply_tokens` is exactly the defect, and leaving it in
 the module is an invitation to call it.
 
-- [ ] **Step 5: Run the test to verify it passes**
+- [x] **Step 5: Run the test to verify it passes**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_effective_tokens.py -v`
 Expected: PASS — 9 passed.
 
-- [ ] **Step 6: Run the suite and fix the fallout**
+- [x] **Step 6: Run the suite and fix the fallout**
 
 Run: `timeout 900 python3 -m pytest skills/report-slides/scripts/tests/ -q`
 
@@ -5834,7 +5834,7 @@ Expected: the two `apply_style` tests from Task 6 Step 3 now fail with
 `ValueError`. Rewrite them where they stand; do not delete them, and do not keep
 `apply_style` alive to save them.
 
-- [ ] **Step 7: Say so in `SKILL.md`**
+- [x] **Step 7: Say so in `SKILL.md`**
 
 In the Style system section, replace the sentence describing `--style` as a
 colour override with:
@@ -5848,7 +5848,7 @@ colour role or the sans font family; a key naming no role is an error, because
 the role names are the vocabulary every downstream check is written against.
 ```
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add skills/report-slides/scripts/design_tokens.py \

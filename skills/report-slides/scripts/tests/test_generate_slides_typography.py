@@ -88,12 +88,18 @@ def test_apply_tokens_raises_on_invalid_file(tmp_path: Path) -> None:
         gs.apply_tokens(bad)
 
 
-def test_apply_style_raises_on_unparsable_frontmatter(tmp_path: Path) -> None:
-    """A style file with no usable frontmatter is an error, not a no-op."""
+def test_effective_tokens_raises_on_unparsable_frontmatter(
+        tmp_path: Path) -> None:
+    """A style file with no usable frontmatter is an error, not a no-op.
+
+    The claim moved rather than disappeared: `apply_style` mutated `S` after
+    the tokens were loaded and is deleted, so this now holds against
+    `effective_tokens`, which composes the style into the token set instead.
+    """
     broken = tmp_path / "broken.md"
     broken.write_text("no frontmatter here\n", encoding="utf-8")
     with pytest.raises(ValueError, match="no usable YAML frontmatter") as excinfo:
-        gs.apply_style(str(broken))
+        gs.effective_tokens(_DEFAULT_TOKENS, str(broken), tmp_path)
     assert "broken.md" in str(excinfo.value)
 
 

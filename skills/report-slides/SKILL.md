@@ -129,8 +129,14 @@ python3 scripts/generate_slides.py --tokens <file> --data <json> --out <dir> --d
 ```
 
 Every ModuleSpec must name a token file in `style_tokens_ref`; `null` is rejected
-and the path is resolved and validated at the gate. Style `.md` files remain
-available for colour overrides only, applied after tokens.
+and the path is resolved and validated at the gate.
+
+`--style` and `--tokens` are composed before rendering, not applied in sequence
+afterwards. The result is written to `<out>/_effective.tokens.yaml`, and that
+file — not the file passed to `--tokens` — is what `$STYLE_TOKENS_REF` must
+point at for the rest of the pipeline. A style file may set the value of a
+colour role or the sans font family; a key naming no role is an error, because
+the role names are the vocabulary every downstream check is written against.
 
 ### set-style \<name\>
 

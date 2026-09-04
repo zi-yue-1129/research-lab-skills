@@ -10,7 +10,6 @@ card: "#f2f3f4"
 positive: "#1e8449"
 warn: "#d68910"
 danger: "#c0392b"
-font: "'Helvetica Neue', Arial, sans-serif"
 ---
 
 Best for: thesis defenses, academic conference talks, journal paper presentations.

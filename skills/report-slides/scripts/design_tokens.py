@@ -5,6 +5,7 @@ frontmatter remains human documentation and is never read by renderers.
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 from dataclasses import dataclass
@@ -17,6 +18,10 @@ import yaml
 _REFERENCES_DIR = Path(__file__).resolve().parent.parent / "references"
 SCHEMA_PATH = _REFERENCES_DIR / "design-tokens.schema.json"
 DEFAULT_TOKENS_PATH = _REFERENCES_DIR / "tokens" / "default.tokens.yaml"
+
+# Named in error messages for a set that was composed rather than read, so
+# a validation failure never claims to come from a file on disk.
+_COMPOSED_PATH = "<composed tokens>"
 
 
 class TokenError(ValueError):
@@ -86,19 +91,97 @@ class DesignTokens:
             raise TokenError(f"cannot parse token file {token_path}: {exc}") from exc
         if not isinstance(data, dict):
             raise TokenError(f"token file {token_path} must contain a mapping")
+        return cls.from_mapping(data, token_path)
+
+    @classmethod
+    def from_mapping(
+        cls, raw: Mapping[str, Any], path: Union[str, Path] = _COMPOSED_PATH
+    ) -> "DesignTokens":
+        """Validate an already-parsed token mapping.
+
+        This is `load`'s validation half, reachable without a file so that a
+        composed set is held to the same contract as a written one. A second,
+        laxer path into the system is how an invalid token set reaches a
+        renderer.
+
+        Args:
+            raw: Token mapping to validate.
+            path: Path to name in error messages and expose as `path`. Defaults
+                to a placeholder for a set that was composed, not read.
+
+        Returns:
+            A validated `DesignTokens` instance.
+
+        Raises:
+            TokenError: If the mapping violates the schema or is inconsistent.
+        """
+        token_path = Path(path)
         schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
         try:
-            jsonschema.Draft202012Validator(schema).validate(data)
+            jsonschema.Draft202012Validator(schema).validate(raw)
         except jsonschema.ValidationError as exc:
             location = "/".join(str(part) for part in exc.absolute_path) or "<root>"
             raise TokenError(
                 f"token file {token_path} is invalid at {location}: {exc.message}"
             ) from exc
-        errors = semantic_errors(data)
+        errors = semantic_errors(raw)
         if errors:
             joined = "; ".join(errors)
             raise TokenError(f"token file {token_path} is inconsistent: {joined}")
-        return cls(data, token_path)
+        return cls(raw, token_path)
+
+    def with_overrides(self, overrides: Mapping[str, str]) -> "DesignTokens":
+        """Return a copy with colour roles and the sans font family replaced.
+
+        Overrides name existing roles. Inventing a role is refused rather than
+        merged: the role names are the vocabulary the renderer, the worker
+        agents, the linter, and the converter are all written against, and a
+        role only one of them knows about is worse than no role at all.
+
+        Args:
+            overrides: Role name to value. The key `font` is special-cased onto
+                `typography.family.sans`.
+
+        Returns:
+            A new `DesignTokens`, validated against the schema.
+
+        Raises:
+            TokenError: If a key names no existing role, or the result fails
+                schema or semantic validation.
+        """
+        raw = copy.deepcopy(dict(self._data))
+        roles = raw["color"]["roles"]
+        for key, value in overrides.items():
+            if key == "font":
+                raw["typography"]["family"]["sans"] = value
+                continue
+            if key not in roles:
+                raise TokenError(
+                    f"style override {key!r} names no colour role; "
+                    f"known roles are {', '.join(sorted(roles))}"
+                )
+            roles[key] = value
+        return DesignTokens.from_mapping(raw)
+
+    def dump(self, path: Path) -> Path:
+        """Write the token set as canonical YAML.
+
+        Sorted keys and a fixed dumper make the bytes a function of the content
+        alone, so two runs over the same inputs produce the same file.
+
+        Args:
+            path: Destination file. Parent directories are created.
+
+        Returns:
+            The path written, for chaining. The set's identity is its `digest`
+            property, which survives the round trip unchanged.
+        """
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            yaml.safe_dump(
+                dict(self._data), sort_keys=True, allow_unicode=True),
+            encoding="utf-8")
+        return path
 
     @property
     def digest(self) -> str:

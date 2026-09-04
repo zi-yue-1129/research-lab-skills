@@ -44,10 +44,21 @@ This file is **human documentation**. The machine contract is
 `references/tokens/`. Renderers and worker agents read tokens; they do not read
 this file's frontmatter for sizes, spacing, or geometry.
 
-Style `.md` frontmatter survives for one purpose: overriding *colours* on top of
-a resolved token set, for a project that wants its brand palette without a full
-token file. `generate_slides.py --style` applies it after `--tokens`. A style
-file with no usable frontmatter is an error, not a silent no-op.
+Style `.md` frontmatter survives for one purpose: supplying values for colour
+roles and the sans font family on top of a resolved token set, for a project
+that wants its brand palette without a full token file. `generate_slides.py`
+composes `--style` *into* `--tokens` before anything reads them and writes the
+result to `<out>/_effective.tokens.yaml`; that composed file is what the
+renderer uses and what every downstream check must be pointed at. A style file
+with no usable frontmatter is an error, not a silent no-op, and a key naming no
+existing role is an error too — a style may set a role's value, never invent one.
+
+The four built-in styles override colours only. They no longer carry a `font`
+key: all four shipped the same `'Helvetica Neue', Arial, sans-serif` stack, which
+resolves on no machine without those proprietary faces installed, so `set-style`
+followed by a render failed outright on a stock Linux box. Typography comes from
+`typography.family` in the token set, whose default stack falls back through
+DejaVu Sans and Liberation Sans.
 
 The former fixed skeleton — a 6px top accent bar, a 20pt centred title at y=44, a
 full-width rule at y=54 — is no longer prescribed. Title placement, the rule, and

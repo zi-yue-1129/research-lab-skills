@@ -13,7 +13,7 @@ import json
 import argparse
 import os
 from pathlib import Path
-from typing import Dict, Optional, Sequence
+from typing import Dict, Optional, Sequence, Tuple
 
 from design_tokens import DEFAULT_TOKENS_PATH, DesignTokens, TokenError, TypeRole
 from fonts import resolve_font_stack, text_width, vertical_metrics
@@ -178,47 +178,70 @@ def _parse_frontmatter(path: str) -> dict:
     return fm
 
 
-def apply_style(style_path: str) -> None:
-    """Load a style .md file and override colour keys in the global S dict.
+# Style Markdown keys are historical; the token roles are the contract. This map
+# is the only place the two vocabularies meet. `border` resolves to the
+# `divider` role because that is what it has always meant: `apply_tokens` sets
+# `S["border"]` from `color.roles.divider`, and there is no `border` role.
+STYLE_KEY_TO_ROLE: Dict[str, str] = {
+    "primary": "primary", "bg": "bg", "body": "body", "muted": "muted",
+    "border": "divider", "card": "card", "positive": "positive",
+    "warn": "warn", "danger": "danger", "font": "font",
+}
 
-    Style Markdown remains a colour override for backwards compatibility; sizes
-    and spacing come from the token contract. An unparsable or empty style file
-    raises: a silently ignored style is indistinguishable from an applied one.
+# Frontmatter keys that describe the style itself rather than a colour role.
+# They are part of the documented schema, so rejecting them as unknown roles
+# would make every shipped style file a hard error.
+STYLE_METADATA_KEYS = frozenset({"name", "description"})
+
+
+def effective_tokens(
+    tokens_path: Optional[Path], style_path: Optional[str], out_dir: Path
+) -> Tuple[Path, str]:
+    """Compose tokens with a style override and write the result.
+
+    The composed file is the single artifact the renderer loads, the linter
+    reads, and the workflow gate digests. Composing before anything reads the
+    tokens is what keeps those three from disagreeing.
 
     Args:
-        style_path: Path to a style `.md` file with YAML frontmatter.
+        tokens_path: Token file, or `None` for the shipped default.
+        style_path: Style Markdown file, or `None`.
+        out_dir: Directory to write `_effective.tokens.yaml` into.
+
+    Returns:
+        The written path and the composed set's digest.
 
     Raises:
-        ValueError: If the file has no usable frontmatter keys.
+        TokenError: If the style names an unknown role or the composed set
+            fails validation.
+        ValueError: If the style file has no usable frontmatter.
     """
-    fm = _parse_frontmatter(style_path)
-    if not fm:
-        raise ValueError(
-            f"style file {style_path} has no usable YAML frontmatter; "
-            f"expected keys such as primary/bg/body (see references/styles/STYLES.md)"
-        )
-    key_map = {
-        "primary":  "accent",
-        "bg":       "bg",
-        "body":     "body",
-        "muted":    "muted",
-        "border":   "border",
-        "card":     "card",
-        "positive": "good",
-        "warn":     "warn",
-        "danger":   "danger",
-        "font":     "font",
-    }
-    for style_key, s_key in key_map.items():
-        if style_key in fm:
-            S[s_key] = fm[style_key]
-    if "primary" in fm:
-        S["primary"] = fm["primary"]
-    if "font" in fm:
-        S["font_resolved"] = resolve_font_stack(fm["font"])
-    # `top_bar_h` is deliberately no longer read: the top accent bar is gone,
-    # so honouring the key would silently do nothing.
-    print(f"  [style] Applied: {style_path}")
+    tokens = DesignTokens.load(tokens_path or DEFAULT_TOKENS_PATH)
+    if style_path is not None:
+        frontmatter = _parse_frontmatter(style_path)
+        if not frontmatter:
+            raise ValueError(
+                f"style file {style_path} has no usable YAML frontmatter; "
+                f"expected keys such as primary/bg/body "
+                f"(see references/styles/STYLES.md)"
+            )
+        unknown = sorted(
+            set(frontmatter) - set(STYLE_KEY_TO_ROLE) - STYLE_METADATA_KEYS)
+        if unknown:
+            raise TokenError(
+                f"style file {style_path} sets {', '.join(unknown)}, which "
+                f"name no colour role"
+            )
+        overrides = {
+            STYLE_KEY_TO_ROLE[key]: value
+            for key, value in frontmatter.items() if key in STYLE_KEY_TO_ROLE
+        }
+        if "font" in overrides:
+            overrides["font"] = resolve_font_stack(overrides["font"])
+        tokens = tokens.with_overrides(overrides)
+    path = out_dir / "_effective.tokens.yaml"
+    tokens.dump(path)
+    return path, tokens.digest
 
 
 def series_color(series: dict, index: int) -> str:
@@ -1514,7 +1537,9 @@ def main(arguments: Sequence[str] | None = None) -> int:
     )
     ap.add_argument("--slide",    type=int, default=None, help="Render only slide N")
     ap.add_argument("--style",    metavar="FILE",      default=None,
-                    help="Style .md file to override colors/fonts (see references/styles/STYLES.md in skill bundle)")
+                    help="Style .md file whose colours are composed into the "
+                         "token set before rendering (see "
+                         "references/styles/STYLES.md in skill bundle)")
     ap.add_argument("--tokens", metavar="FILE", type=Path, default=None,
                     help="Design-token .tokens.yaml file "
                          "(default: references/tokens/default.tokens.yaml)")
@@ -1539,11 +1564,14 @@ def main(arguments: Sequence[str] | None = None) -> int:
     if not args.data or not args.out:
         ap.error("--data and --out are required when not using --to-pptx")
 
-    # `apply_tokens` runs first: it establishes sizes, spacing, and the
-    # resolved font, and `apply_style` then overrides colours only.
-    apply_tokens(args.tokens)
-    if args.style:
-        apply_style(args.style)
+    # One token set per deck: the style override is composed into the tokens
+    # and written out before anything reads them, so the renderer, the linter,
+    # and the gate all hold this slide to the same contract.
+    os.makedirs(args.out, exist_ok=True)
+    tokens_path, tokens_digest = effective_tokens(
+        args.tokens, args.style, Path(args.out))
+    apply_tokens(tokens_path)
+    print(f"  [tokens] {tokens_path} sha256={tokens_digest[:12]}")
 
     with open(args.data, encoding="utf-8") as f:
         data = json.load(f)
