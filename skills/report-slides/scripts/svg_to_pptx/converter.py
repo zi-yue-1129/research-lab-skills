@@ -123,7 +123,14 @@ class SvgConverter:
         self._resolve_defs()
         self._resolve_use_elements()
         self._compute_text_attachments()
-        self._dispatch_children(slide, self.root, {})
+        # Seed with the root element's own presentation attributes. An empty
+        # dict discarded every style declared on `<svg>` itself, which is where
+        # a document states the properties it means to apply throughout -- the
+        # deck's font family above all. Per SVG, those attributes are inherited
+        # by descendants.
+        from .style_parser import compute_style as _compute_root_style
+        self._dispatch_children(
+            slide, self.root, _compute_root_style(self.root, {}))
         # Add all text boxes after shapes so they appear on top
         from .text_converter import add_textbox
         for text_elem, text_style in self._pending_texts:

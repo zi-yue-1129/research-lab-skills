@@ -3639,7 +3639,7 @@ the deterministic renderer emit only resolved families, so this only affects
 hand-authored SVG, where the failure is actionable — install the font or change
 the stack.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `skills/report-slides/scripts/svg_to_pptx/tests/test_shapes.py`:
 
@@ -3710,13 +3710,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/svg_to_pptx/tests/test_shapes.py -v -k "font_family or font_famil or uninstalled or truncated"`
 Expected: FAIL — `assert 'DejaVu' == 'DejaVu Sans'` on the first test, because the
 current code truncates at the space.
 
-- [ ] **Step 3: Fix `_apply_font`**
+- [x] **Step 3: Fix `_apply_font`**
 
 In `skills/report-slides/scripts/svg_to_pptx/shapes.py`, replace lines 217–220
 with:
@@ -3736,19 +3736,19 @@ Add the import at the top of the file:
 from fonts import parse_font_stack, resolve_font_stack
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/svg_to_pptx/tests/test_shapes.py -v`
 Expected: PASS — all tests green.
 
-- [ ] **Step 5: Run the converter suite**
+- [x] **Step 5: Run the converter suite**
 
 Run: `timeout 900 python3 -m pytest skills/report-slides/scripts/svg_to_pptx/tests/ -q`
 Expected: PASS. Fixtures whose SVG declares only uninstalled families now raise;
 change those fixtures to a stack containing `DejaVu Sans` and say why in the
 commit message.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add skills/report-slides/scripts/svg_to_pptx/shapes.py \

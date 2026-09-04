@@ -120,3 +120,39 @@ def test_all_shapes_have_positive_size():
     for shape in slide.shapes:
         assert shape.width > 0
         assert shape.height > 0
+
+
+_ROOT_FONT_SVG = """\
+<svg viewBox="0 0 1200 675" xmlns="http://www.w3.org/2000/svg" \
+font-family="DejaVu Sans">
+  <text x="100" y="100" font-size="21" data-style-role="body">Inherited</text>
+</svg>"""
+
+
+def test_root_svg_font_family_reaches_the_run():
+    """A font-family declared once on <svg> must reach every text run.
+
+    The root traversal was seeded with an empty inherited style, so every
+    presentation attribute on the `<svg>` element itself was discarded. The
+    deterministic renderer declares the deck's resolved font exactly once,
+    there -- so the generated decks carried no run font name at all and
+    PowerPoint fell back to the layout font, diverging from the SVG preview on
+    every slide. Fixing the truncation in `_apply_font` alone left this intact,
+    because there was no `font-family` in scope for it to resolve.
+    """
+    path = _make_tmp_svg(_ROOT_FONT_SVG)
+    try:
+        prs = Presentation()
+        prs.slide_width = Emu(12_192_000)
+        prs.slide_height = Emu(6_858_000)
+        SvgConverter(path).convert(prs, prs.slide_layouts[6])
+        names = {
+            run.font.name
+            for slide in prs.slides
+            for shape in slide.shapes if shape.has_text_frame
+            for para in shape.text_frame.paragraphs
+            for run in para.runs
+        }
+        assert names == {"DejaVu Sans"}
+    finally:
+        os.unlink(path)

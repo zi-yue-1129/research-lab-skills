@@ -1,3 +1,9 @@
+import shutil
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 import pytest
 from lxml import etree
 from pptx import Presentation
@@ -202,3 +208,89 @@ def test_text_attaches_to_enclosing_rect():
         assert "Academic Paper" in texts
     finally:
         os.unlink(svg_path)
+
+
+_NEEDS_FONTCONFIG = pytest.mark.skipif(
+    shutil.which("fc-match") is None,
+    # fontconfig is an optional external binary; family resolution has no
+    # meaning without it, so these four tests cannot run on a box that lacks it.
+    reason="fontconfig (fc-match) is not installed",
+)
+
+
+def _label_font_name(markup: str) -> object:
+    """Write one SVG text element into a shape and return its run font name.
+
+    Args:
+        markup: A single SVG `<text>` element as a string.
+
+    Returns:
+        The `font.name` of the first run, which is `None` when the converter
+        set no explicit family.
+    """
+    from svg_to_pptx.shapes import _write_label
+
+    slide, _ = _blank_slide()
+    elem = etree.fromstring(markup)
+    style = compute_style(elem, {})
+    shape = slide.shapes.add_textbox(Emu(0), Emu(0), Emu(1000000), Emu(500000))
+    _write_label(shape, elem, style, CS, (100, 100, 200, 40))
+    return shape.text_frame.paragraphs[0].runs[0].font.name
+
+
+@_NEEDS_FONTCONFIG
+def test_multi_word_font_family_is_not_truncated():
+    """A quoted multi-word family is never split into its first word."""
+    name = _label_font_name(
+        '<text x="100" y="100" font-size="21" '
+        "font-family=\"'DejaVu Sans', Arial, sans-serif\">Node</text>"
+    )
+    assert name == "DejaVu Sans"
+    assert name != "DejaVu"
+
+
+@_NEEDS_FONTCONFIG
+def test_uninstalled_first_family_falls_through_to_installed_one():
+    """Resolution skips an uninstalled first choice rather than using it."""
+    name = _label_font_name(
+        '<text x="100" y="100" font-size="21" '
+        "font-family=\"Totally Not A Real Font 9x7, 'DejaVu Sans'\">Node</text>"
+    )
+    assert name == "DejaVu Sans"
+
+
+@_NEEDS_FONTCONFIG
+def test_fully_uninstalled_stack_raises():
+    """A stack with no installed family raises rather than substituting."""
+    from fonts import FontError
+
+    with pytest.raises(FontError):
+        _label_font_name(
+            '<text x="100" y="100" font-size="21" '
+            'font-family="Nope One 9x7, \'Nope Two 9x7\'">Node</text>'
+        )
+
+
+@_NEEDS_FONTCONFIG
+def test_absent_font_family_leaves_the_run_name_unset():
+    """No font-family attribute means no explicit run font name."""
+    assert _label_font_name(
+        '<text x="100" y="100" font-size="21">Node</text>') is None
+
+
+@_NEEDS_FONTCONFIG
+def test_a_bare_generic_family_raises():
+    """`sans-serif` alone names no installed face, so the export refuses it.
+
+    A CSS generic is a request for whatever the renderer's default sans is. The
+    old code wrote the literal string `sans-serif` as the PowerPoint font name,
+    which PowerPoint cannot match and therefore substitutes -- the exact silent
+    divergence between preview and deck that this change exists to stop. There
+    is no family here to preserve, so the author is told to name one.
+    """
+    from fonts import FontError
+
+    with pytest.raises(FontError, match="sans-serif"):
+        _label_font_name(
+            '<text x="100" y="100" font-size="21" '
+            'font-family="sans-serif">Node</text>')

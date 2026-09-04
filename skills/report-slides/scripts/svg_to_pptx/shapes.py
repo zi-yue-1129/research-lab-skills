@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from pptx.util import Emu, Pt
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 
+from fonts import parse_font_stack, resolve_font_stack
 from .style_parser import apply_fill, apply_stroke, resolve_color, compute_style
 from .converter import CoordSystem, _local_tag, _text_xy
 
@@ -214,7 +215,11 @@ def _apply_font(run: Any, style: Dict, parent_style: Dict) -> None:
     if rgb:
         run.font.color.rgb = rgb
     ff = style.get("font-family", parent_style.get("font-family", ""))
-    if ff:
-        first = re.split(r"[,\s]+", ff.strip())[0].strip("'\"")
-        if first:
-            run.font.name = first
+    if ff and parse_font_stack(ff):
+        # Resolve to a family that is actually installed. Splitting on
+        # `[,\s]+` and taking the first token truncated every multi-word
+        # family: the default stack `'Helvetica Neue', Arial, sans-serif`
+        # became "Helvetica", a face installed on neither Linux nor the token
+        # stack, so PowerPoint substituted silently and every text extent in
+        # the deck diverged from the SVG preview it was built from.
+        run.font.name = resolve_font_stack(ff)
