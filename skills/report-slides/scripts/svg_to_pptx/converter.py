@@ -483,7 +483,7 @@ class SvgConverter:
             self._require_source_keys(data, ("categories", "series"), role, source)
             pptx_native.add_native_chart(
                 slide, chart_type, data["categories"], data["series"], bbox,
-                style, y_max=data.get("y_max"),
+                style, y_max=data.get("y_max"), unit=str(data.get("unit", "")),
             )
 
     def _require_source_keys(self, data: Dict[str, Any], keys: Tuple[str, ...],

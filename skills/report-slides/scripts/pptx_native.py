@@ -15,6 +15,8 @@ from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION
 from pptx.enum.text import PP_ALIGN
 from pptx.util import Emu, Pt
 
+from chart_labels import number_format, tick_decimals
+
 # The type roles the SVG table renderer sets its cells in. Both routes have to
 # agree: the native one used a flat 13pt, a size the token scale does not
 # contain, so the same table was typeset two different ways.
@@ -197,6 +199,7 @@ def add_native_chart(
     style: Dict[str, str],
     y_max: Optional[float] = None,
     colors: Optional[List[str]] = None,
+    unit: str = "",
 ) -> Any:
     """Create a real PPTX chart (``GraphicFrame.has_chart``) at ``bbox`` (EMU).
 
@@ -213,6 +216,8 @@ def add_native_chart(
         style: Style dictionary with color and font keys
         y_max: Optional maximum for Y axis (not used for pie charts)
         colors: Optional list of colors for pie chart slices
+        unit: The slide's unit, appended to axis and value labels so the
+            native chart is labelled like the SVG preview beside it
 
     Returns:
         GraphicFrame containing the chart
@@ -244,7 +249,10 @@ def add_native_chart(
     chart = graphic_frame.chart
     chart.has_title = False
     chart.font.name = _font_family(style.get("font", "Calibri"))
-    chart.has_legend = len(series) > 1 or chart_type == "pie"
+    # The SVG legend names the series whatever their number, so a
+    # single-series chart that dropped it lost the only place the run was
+    # named.
+    chart.has_legend = bool(series) or chart_type == "pie"
     if chart.has_legend:
         chart.legend.position = XL_LEGEND_POSITION.BOTTOM
         chart.legend.include_in_layout = False
@@ -271,7 +279,39 @@ def add_native_chart(
         chart.value_axis.maximum_scale = float(y_max)
         chart.value_axis.minimum_scale = 0.0
 
+    if chart_type != "pie":
+        _label_values(chart, chart_type, y_max, unit)
+
     return graphic_frame
+
+
+def _label_values(chart: Any, chart_type: str, y_max: Optional[float],
+                  unit: str) -> None:
+    """Format the value axis, and label the bars as the SVG preview does.
+
+    The preview draws the value above every bar and a unit on every tick. The
+    native chart declared neither, so the exported slide carried a plot with
+    an unlabelled axis and no numbers on it at all.
+
+    Args:
+        chart: The chart to label.
+        chart_type: "bar" or "line".
+        y_max: The axis maximum, used to choose the label precision.
+        unit: The slide's unit.
+    """
+    decimals = tick_decimals(float(y_max)) if y_max is not None else 0
+    axis_labels = chart.value_axis.tick_labels
+    axis_labels.number_format = number_format(unit, decimals)
+    axis_labels.number_format_is_linked = False
+    if chart_type != "bar":
+        # The SVG line chart draws no per-point labels: stamping one on every
+        # marker of a dense series buries the line under its own numbers.
+        return
+    plot = chart.plots[0]
+    plot.has_data_labels = True
+    # One place finer than the axis, matching the preview's bar labels.
+    plot.data_labels.number_format = number_format(unit, decimals + 1)
+    plot.data_labels.number_format_is_linked = False
 
 
 def add_native_group(slide: Any, shapes: Sequence[Any]) -> Optional[Any]:

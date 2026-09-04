@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from chart_labels import axis_tick_labels, tick_decimals
 from design_tokens import DEFAULT_TOKENS_PATH, DesignTokens, TokenError, TypeRole
 from fonts import resolve_font_stack, text_width, vertical_metrics
 from presentation_gates import ProductionGateError, assert_production_allowed
@@ -337,50 +338,6 @@ def chart_note(note: str, right: float, bottom: float) -> str:
 
 
 # Chart drawing area
-_MAX_TICK_DECIMALS = 3
-
-
-def tick_decimals(y_max: float) -> int:
-    """Return the fewest decimals that keep the six y ticks distinct.
-
-    `{val:.0f}` was fixed, so the shipped example deck -- QWK on a 0-1 axis --
-    labelled its six grid lines 0, 0, 0, 1, 1, 1. An axis whose labels repeat
-    tells the reader nothing about the scale.
-
-    Args:
-        y_max: The axis maximum.
-
-    Returns:
-        A decimal count between 0 and 3. A degenerate axis (`y_max` of 0) has
-        no distinct ticks at any precision and gets the maximum.
-    """
-    for decimals in range(_MAX_TICK_DECIMALS + 1):
-        labels = {f"{y_max * i / 5:.{decimals}f}" for i in range(6)}
-        if len(labels) == 6:
-            return decimals
-    return _MAX_TICK_DECIMALS
-
-
-def axis_tick_labels(y_max: float, unit: str) -> List[str]:
-    """Return the six y-axis tick labels for a bar or line chart.
-
-    The renderers appended a literal `%` to every tick, so a throughput series
-    of 340 requests per second was labelled `340%`. A percentage suffix on
-    non-percentage data is not a styling choice; it states something false
-    about the numbers. The unit is now declared per slide and defaults to
-    empty, because a bare number is never wrong.
-
-    Args:
-        y_max: The axis maximum.
-        unit: The slide's `unit` string, appended verbatim.
-
-    Returns:
-        Six labels, from 0 to `y_max`.
-    """
-    decimals = tick_decimals(y_max)
-    return [f"{y_max * i / 5:.{decimals}f}{unit}" for i in range(6)]
-
-
 def chart_area(widest_y_tick: str = "100%") -> tuple:
     """Compute the plot rectangle from the active tokens.
 
@@ -696,6 +653,7 @@ def render_bar_chart(sl: dict, meta: dict) -> str:
     y_max      = float(sl.get("y_max", 100))
     unit       = str(sl.get("unit", ""))
     note       = sl.get("note", "")
+    note_markup = ""
     footer     = meta.get("footer", "")
     slide_index = sl.get("index", 0)
 
@@ -769,11 +727,16 @@ def render_bar_chart(sl: dict, meta: dict) -> str:
     chart_parts.extend(chart_legend(series, CL, CB))
 
     if note:
-        chart_parts.append(chart_note(note, CR, CB))
+        # Outside the marker group: the native chart replaces everything
+        # inside it, and the note is the only place the deck states its sample
+        # size or its method.
+        note_markup = chart_note(note, CR, CB)
 
     parts.append(_wrap_pptx_role("chart", slide_index, chart_parts,
                                  bbox=(CL, CT, CR - CL, CB - CT),
                                  style_keys=("font",)))
+    if note_markup:
+        parts.append(note_markup)
     return svg("\n  ".join(parts))
 
 
@@ -787,6 +750,7 @@ def render_line_chart(sl: dict, meta: dict) -> str:
     y_max      = float(sl.get("y_max", 100))
     unit       = str(sl.get("unit", ""))
     note       = sl.get("note", "")
+    note_markup = ""
     footer     = meta.get("footer", "")
     slide_index = sl.get("index", 0)
 
@@ -841,11 +805,16 @@ def render_line_chart(sl: dict, meta: dict) -> str:
     chart_parts.extend(chart_legend(series, CL, CB))
 
     if note:
-        chart_parts.append(chart_note(note, CR, CB))
+        # Outside the marker group: the native chart replaces everything
+        # inside it, and the note is the only place the deck states its sample
+        # size or its method.
+        note_markup = chart_note(note, CR, CB)
 
     parts.append(_wrap_pptx_role("chart", slide_index, chart_parts,
                                  bbox=(CL, CT, CR - CL, CB - CT),
                                  style_keys=("font",)))
+    if note_markup:
+        parts.append(note_markup)
     return svg("\n  ".join(parts))
 
 
@@ -859,6 +828,7 @@ def render_pie_chart(sl: dict, meta: dict) -> str:
     values     = sl.get("values", [])
     colors     = sl.get("colors") or [S["blue"], S["good"], S["warn"], S["danger"], S["accent"]]
     note       = sl.get("note", "")
+    note_markup = ""
     footer     = meta.get("footer", "")
     slide_index = sl.get("index", 0)
 
@@ -899,11 +869,16 @@ def render_pie_chart(sl: dict, meta: dict) -> str:
     if note:
         # Same row as the other two renderers put it in, so a deck mixing
         # chart types keeps its notes on one baseline.
-        chart_parts.append(chart_note(note, CR, CB))
+        # Outside the marker group: the native chart replaces everything
+        # inside it, and the note is the only place the deck states its sample
+        # size or its method.
+        note_markup = chart_note(note, CR, CB)
 
     parts.append(_wrap_pptx_role("chart", slide_index, chart_parts,
                                  bbox=(CL, CT, CR - CL, CB - CT),
                                  style_keys=("font",)))
+    if note_markup:
+        parts.append(note_markup)
     return svg("\n  ".join(parts))
 
 
