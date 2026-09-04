@@ -5875,13 +5875,13 @@ deleted. A style key naming no colour role is refused rather than merged."
 
 Run after Task 16, before declaring this plan complete.
 
-- [ ] **Step 1: Full suite**
+- [x] **Step 1: Full suite**
 
 Run: `timeout 1800 python3 -m pytest skills/report-slides/ -q`
 Expected: PASS with no skips other than the fontconfig guard in `test_fonts.py`.
 Paste the pytest summary line into the completion report.
 
-- [ ] **Step 2: End-to-end deck, SVG and PPTX**
+- [x] **Step 2: End-to-end deck, SVG and PPTX**
 
 Render a deck exercising every renderer, convert it, and confirm both outputs
 agree:
@@ -5900,7 +5900,7 @@ timeout 900 soffice --headless --convert-to pdf \
     --outdir /tmp/final-check /tmp/final-check/deck.pptx
 ```
 
-- [ ] **Step 3: Inspect the pixels**
+- [x] **Step 3: Inspect the pixels**
 
 Render both the source SVGs and the LibreOffice-converted PPTX pages to PNG and
 compare them side by side. Confirm, for every slide:
@@ -5915,13 +5915,67 @@ compare them side by side. Confirm, for every slide:
 Any disagreement between the SVG and the PPTX is a Phase 3 regression: fix the
 converter, not the source SVG.
 
-- [ ] **Step 4: Confirm the spec's success criteria**
+- [x] **Step 4: Confirm the spec's success criteria**
 
 Walk `docs/superpowers/specs/2026-09-04-report-slides-visual-quality-design.md`
 §6 and confirm criteria 1–4 hold. Criteria 5–7 belong to the second plan and are
 expected to be outstanding; say so explicitly rather than implying full coverage.
 
 ---
+
+
+### What the final verification found
+
+Run on 2026-09-04 against a ten-slide deck exercising every renderer, exported
+through both PPTX routes and converted to PDF by LibreOffice.
+
+**Suite:** `1687 passed in 86.05s`, no skips (`-rs`).
+
+**Criterion 1 — no text below the D2 floors: holds.** Smallest type in all ten
+slides is 12.0, equal to `typography.roles.footnote`.
+
+**Criterion 2 — `style_tokens_ref` cannot be null, an invalid token file fails
+the build: holds,** covered by `test_style_tokens_ref_enforcement.py` and by
+`apply_tokens` raising `TokenError`.
+
+**Criterion 3 — the native SVG route resolves the same token set: holds as a
+contract, not yet as a runtime check.** Task 15 binds the four worker agents to
+`style_tokens_ref` and `test_token_docs.py` fails if that is dropped, but the
+native route is hand-authored, so nothing measures the rendered result until
+plan 2's linter exists.
+
+**Criterion 4 — arrowheads, dashes, opacity, rounded corners, and multi-word
+font families survive export: holds,** with two defects found and fixed here:
+semibold (weight 600) exported as regular type, and the native table/chart route
+naming the unresolved first family of the stack. The exported deck now reports
+`roundRect` x12 with real adjustments, `sysDot` x3, and a single typeface
+(`DejaVu Sans` x69, previously 57 plus 12 unresolved `Inter`). Arrowheads and
+alpha are absent from this deck because it contains no connectors or
+translucent fills; both were verified on real output in Tasks 12 and 13.
+
+**Criteria 5-7 belong to plan 2 and are outstanding.**
+
+**Defects found and left for a decision** (evidence in the completion report):
+
+1. The card layouts absorb unrelated text. `_compute_text_attachments` attaches
+   every `<text>` whose anchor falls inside a shape to that shape, so on
+   `two_column` and `conclusion` the panel heading, the body, and -- when the
+   card reaches the bottom-right corner -- the deck footer all end up in one
+   text frame and lose their own positions. Fixing it means changing the
+   attachment heuristic, which many tests are written against.
+2. Native charts ignore `chart.palette` and drop the value labels, the legend,
+   and the chart note; `pptx_native` hardcodes `Pt(13)` for table cells and
+   carries its own colour defaults. That module never received the token
+   treatment.
+3. `render_bar_chart` and `render_line_chart` hardcode a `%` suffix on axis
+   ticks and value labels, so a non-percentage series is mislabelled -- 340
+   requests/s prints as `340.0%`. Changing the default would alter every
+   existing percentage deck, so it needs a decision rather than a patch.
+4. `python3 -m svg_to_pptx` prompts on stdin when `--mode` is absent, which
+   hangs any unattended pipeline.
+5. `_estimate_text_width` guesses instead of measuring with `fonts.text_width`.
+   The written file is correct (`algn="l"`, boxes at the right x), but a box
+   narrower than its text renders ragged in LibreOffice.
 
 ## Self-Review
 
