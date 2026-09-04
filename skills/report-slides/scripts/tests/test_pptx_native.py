@@ -1,3 +1,4 @@
+import shutil
 import sys
 from pathlib import Path
 
@@ -7,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from pptx import Presentation
 from pptx.util import Emu
 
+import pptx_native
 from pptx_native import add_native_table, add_native_chart, add_native_group
 
 STYLE = {
@@ -113,3 +115,46 @@ def test_add_native_chart_raises_on_missing_values():
             bbox=(Emu(1200000), Emu(900000), Emu(9000000), Emu(4200000)),
             style=STYLE,
         )
+
+
+_NEEDS_FONTCONFIG = pytest.mark.skipif(
+    shutil.which("fc-match") is None,
+    # fontconfig is an optional external binary; deciding which family in a
+    # stack is installed has no meaning without it.
+    reason="fontconfig (fc-match) is not installed",
+)
+
+
+@_NEEDS_FONTCONFIG
+def test_font_family_skips_an_absent_first_family() -> None:
+    """A stack whose first family is missing resolves to an installed one.
+
+    The shipped token stack begins with `Inter`, which is not installed on a
+    stock Linux box. Naming it anyway put the deck's tables in one face and
+    every other shape in another, and the renderer measured the text with the
+    resolved face while the table used something else.
+    """
+    resolved = pptx_native._font_family(
+        "Inter, 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif")
+    assert resolved != "Inter"
+    assert resolved in ("DejaVu Sans", "Liberation Sans", "Arial")
+
+
+@_NEEDS_FONTCONFIG
+def test_font_family_agrees_with_the_shape_route() -> None:
+    """The table route and the shape route must resolve identically.
+
+    `shapes._apply_font` resolves through `resolve_font_stack`. If the table
+    route resolved differently, the same deck would carry two faces and no
+    test anywhere would notice.
+    """
+    from fonts import resolve_font_stack
+
+    stack = "Inter, 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif"
+    assert pptx_native._font_family(stack) == resolve_font_stack(stack)
+
+
+@_NEEDS_FONTCONFIG
+def test_font_family_keeps_a_multi_word_family_intact() -> None:
+    """A quoted multi-word family is never truncated to its first word."""
+    assert pptx_native._font_family("'DejaVu Sans', sans-serif") == "DejaVu Sans"

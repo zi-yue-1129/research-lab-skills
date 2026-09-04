@@ -35,16 +35,33 @@ def _rgb(hex_value: Optional[str], fallback: str = "#000000") -> RGBColor:
 
 
 def _font_family(css_font: str) -> str:
-    """Extract font family name from CSS font string.
+    """Resolve a CSS font stack to an installed family.
+
+    Taking the first name in the stack unconditionally named a face the
+    machine may not have -- the shipped token stack begins with `Inter` -- so
+    a deck's tables and charts asked for one font while every other shape on
+    the slide, resolved through `shapes._apply_font`, asked for another. This
+    is the same resolution `shapes._apply_font` performs, so both routes name
+    the same face.
 
     Args:
-        css_font: CSS font string (e.g., "'Helvetica Neue', Arial, sans-serif")
+        css_font: CSS font string (e.g., "Inter, 'DejaVu Sans', sans-serif").
 
     Returns:
-        First font family name, or "Calibri" as fallback
+        The first installed family in the stack, or "Calibri" when the stack
+        is empty or none of its families resolves.
     """
-    first = css_font.split(",")[0].strip().strip("'\"")
-    return first or "Calibri"
+    from fonts import FontError, resolve_font_stack
+
+    if not css_font.strip():
+        return "Calibri"
+    try:
+        return resolve_font_stack(css_font)
+    except FontError:
+        # Nothing in the stack is installed. PowerPoint substitutes for an
+        # unknown name anyway, so naming its own default is the honest answer
+        # here rather than passing on a family that certainly is not there.
+        return "Calibri"
 
 
 def add_native_table(
