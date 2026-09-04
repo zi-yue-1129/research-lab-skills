@@ -13,14 +13,32 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from pptx import Presentation
 from pptx.enum.chart import XL_CHART_TYPE
 
-from generate_slides import render_table, render_bar_chart, render_pie_chart
+from generate_slides import (
+    apply_tokens, render_table, render_bar_chart, render_pie_chart)
 from svg_to_pptx.converter import convert_file
 from validate_native_objects import scan_pptx, load_thresholds
+
+_DEFAULT_TOKENS = (Path(__file__).resolve().parents[2]
+                   / "references" / "tokens" / "default.tokens.yaml")
+
+
+@pytest.fixture(autouse=True)
+def _tokens_applied() -> None:
+    """Load the default tokens before each test in this module.
+
+    The renderers read their geometry out of module state that `apply_tokens`
+    fills, so a run that never calls it fails on the first lookup. This module
+    was borrowing another module's autouse fixture and passed only when that
+    module happened to be collected first.
+    """
+    apply_tokens(_DEFAULT_TOKENS)
 
 
 SLIDE_DATA = {

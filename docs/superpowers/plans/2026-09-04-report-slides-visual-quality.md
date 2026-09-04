@@ -5955,27 +5955,48 @@ translucent fills; both were verified on real output in Tasks 12 and 13.
 
 **Criteria 5-7 belong to plan 2 and are outstanding.**
 
-**Defects found and left for a decision** (evidence in the completion report):
+**Defects found, and since fixed.** The verification surfaced five defects
+outside the plan's task list. All five are now closed; each was verified against
+real exported output, not only against its tests.
 
-1. The card layouts absorb unrelated text. `_compute_text_attachments` attaches
-   every `<text>` whose anchor falls inside a shape to that shape, so on
-   `two_column` and `conclusion` the panel heading, the body, and -- when the
-   card reaches the bottom-right corner -- the deck footer all end up in one
-   text frame and lose their own positions. Fixing it means changing the
-   attachment heuristic, which many tests are written against.
-2. Native charts ignore `chart.palette` and drop the value labels, the legend,
-   and the chart note; `pptx_native` hardcodes `Pt(13)` for table cells and
-   carries its own colour defaults. That module never received the token
-   treatment.
-3. `render_bar_chart` and `render_line_chart` hardcode a `%` suffix on axis
-   ticks and value labels, so a non-percentage series is mislabelled -- 340
-   requests/s prints as `340.0%`. Changing the default would alter every
-   existing percentage deck, so it needs a decision rather than a patch.
-4. `python3 -m svg_to_pptx` prompts on stdin when `--mode` is absent, which
-   hangs any unattended pipeline.
-5. `_estimate_text_width` guesses instead of measuring with `fonts.text_width`.
-   The written file is correct (`algn="l"`, boxes at the right x), but a box
-   narrower than its text renders ragged in LibreOffice.
+1. **The card layouts absorbed unrelated text** -- fixed in `4976c70`.
+   `_compute_text_attachments` attached every `<text>` whose anchor fell inside
+   a shape to that shape, so on `two_column` and `conclusion` the panel heading,
+   the body, and -- when the card reached the bottom-right corner -- the deck
+   footer landed in one text frame and lost their own positions. Slide chrome
+   (`deck_title`, `slide_title`, `footnote`) now attaches only to a host within
+   `_CHROME_HOST_HEIGHT_RATIO` of its own type size, which keeps a badge digit
+   attached to its badge while releasing the footer from the panel that merely
+   encloses it. Per-line x is carried through as `a:pPr/@marL`, because a frame
+   margin is per-frame and one card needs two different indents.
+2. **The native table and chart route ignored the token contract** -- fixed in
+   `e5f32b4` and `ba553fc`. `pptx_native` carried its own colour defaults and a
+   hardcoded `Pt(13)` for table cells; the converter's `_pptx_style` defaults
+   were literals. Both now read `design_tokens.default_tokens()`, series colours
+   come from `chart.palette`, and cell type comes from the `node_label` and
+   `body` roles. The chart marker also dropped everything the SVG group carried:
+   the note is now emitted outside the marker, the value axis takes a number
+   format built from the slide's `unit`, a bar chart labels every bar, and the
+   legend is shown whenever there is a series.
+3. **The `%` suffix was hardcoded on axis ticks and value labels** -- fixed in
+   `86dc158`. A throughput series of 340 requests/s printed as `340.0%`. `unit`
+   is now declared per slide and defaults to empty, because a bare number is
+   never wrong; the y-gutter is measured from the widest tick the unit produces.
+   The decision the defect asked for was taken this way: no existing percentage
+   deck is silently changed, it declares `"unit": "%"`.
+4. **`python3 -m svg_to_pptx` prompted on stdin** -- fixed in `5f36fb4`.
+   `_resolve_mode` falls back to `native` when stdin is not a TTY, so an
+   unattended pipeline no longer hangs; an interactive run still prompts.
+5. **`_estimate_text_width` guessed instead of measuring** -- fixed in
+   `4c2b56d`. Standalone textboxes are now sized with `fonts.text_width` against
+   the resolved stack, with the old character-factor estimate kept only for an
+   SVG that declares no family at all.
+
+**Suite after the fixes:** `1737 passed in 86.67s` for `skills/report-slides`,
+`1932 passed, 3 skipped` for `skills/ tests/`, up from the 1687 the verification
+ran against. `tests/test_native_objects_integration.py` also gained its own
+`apply_tokens` fixture: it had been borrowing another module's and failed with
+`KeyError: 'safe'` whenever it was collected alone.
 
 ## Self-Review
 
