@@ -21,13 +21,13 @@ matching the convention used by B4 git-resolution).
 
 ```bash
 # positive fixtures: rc=0
-python scripts/check_audit_artifact_consistency.py \
+python scripts/checks/check_audit_artifact_consistency.py \
   --mode persisted \
   --output-dir scripts/fixtures/audit_artifact_consistency/positive/persisted_minor \
   --run-id 2026-04-30T15-22-04Z-d8f3 \
   --repo-root scripts/fixtures/audit_artifact_consistency/positive/persisted_minor
 
-python scripts/check_audit_artifact_consistency.py \
+python scripts/checks/check_audit_artifact_consistency.py \
   --mode proposal \
   --output-dir scripts/fixtures/audit_artifact_consistency/positive/proposal_pass \
   --run-id 2026-04-30T15-22-04Z-d8f3 \
@@ -37,14 +37,14 @@ python scripts/check_audit_artifact_consistency.py \
 # (a1_pass_with_p1 is a proposal-shaped entry — the violation is the A1
 # cross-field rule, not lifecycle arm. Use --mode proposal so the lint
 # doesn't first flag the proposal shape under persisted arm enforcement.)
-python scripts/check_audit_artifact_consistency.py \
+python scripts/checks/check_audit_artifact_consistency.py \
   --mode proposal \
   --output-dir scripts/fixtures/audit_artifact_consistency/negative/a1_pass_with_p1 \
   --run-id 2026-04-30T15-22-04Z-d8f3 \
   --repo-root scripts/fixtures/audit_artifact_consistency/negative/a1_pass_with_p1
 
 # a7_orphan_completion is jsonl-stream mode (single file fixture)
-python scripts/check_audit_artifact_consistency.py \
+python scripts/checks/check_audit_artifact_consistency.py \
   --mode jsonl-stream \
   --jsonl scripts/fixtures/audit_artifact_consistency/negative/a7_orphan_completion/2026-04-30T15-22-04Z-d8f3.jsonl
 ```

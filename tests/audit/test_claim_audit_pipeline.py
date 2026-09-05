@@ -3,7 +3,7 @@
 Per spec §7.2 in
 docs/design/2026-05-15-issue-103-claim-alignment-audit-spec.md.
 
-These tests pin the contract of `scripts/claim_audit_pipeline.py`, the
+These tests pin the contract of `scripts/audit/claim_audit_pipeline.py`, the
 Python module that implements the §4 Step 1-6 pipeline the agent prompt
 narrates. Retrieval and judge are dependency-injected so tests can drive
 every error path (paywall, audit_tool_failure, not_found, VIOLATED, etc.)
@@ -26,7 +26,7 @@ from unittest import mock
 from tests.test_helpers import build_schema_validator, load_json_schema
 
 try:
-    from scripts.claim_audit_pipeline import run_audit_pipeline  # noqa: F401
+    from scripts.audit.claim_audit_pipeline import run_audit_pipeline  # noqa: F401
     _MODULE_IMPORT_ERR: Exception | None = None
 except Exception as exc:  # pragma: no cover — import-time error pathway is exercised in RED state
     _MODULE_IMPORT_ERR = exc
@@ -195,7 +195,7 @@ class _PipelineTestBase(unittest.TestCase):
     """Skip the entire pipeline suite cleanly when the module is missing.
 
     During the RED phase (Step 4 of the TDD plan in spec §13), the module
-    `scripts/claim_audit_pipeline.py` does not exist yet — these tests
+    `scripts/audit/claim_audit_pipeline.py` does not exist yet — these tests
     document the wished-for API. Once Step 5 lands the module, they will
     flip from skipped (RED-as-skip) to executed pass/fail.
     """
@@ -204,7 +204,7 @@ class _PipelineTestBase(unittest.TestCase):
     def setUpClass(cls) -> None:
         if _MODULE_IMPORT_ERR is not None:
             raise unittest.SkipTest(
-                f"scripts.claim_audit_pipeline not importable yet: {_MODULE_IMPORT_ERR!r} "
+                f"scripts.audit.claim_audit_pipeline not importable yet: {_MODULE_IMPORT_ERR!r} "
                 "(expected during RED phase — implementation lands in spec §13 step 5)"
             )
 
@@ -224,7 +224,7 @@ class _PipelineTestBase(unittest.TestCase):
     def _validate_passport(
         self, out: dict[str, Any], manifests: list[dict[str, Any]] | None = None
     ) -> list[Any]:
-        from scripts.check_claim_audit_consistency import validate_passport
+        from scripts.checks.check_claim_audit_consistency import validate_passport
 
         body = {
             "claim_intent_manifests": manifests if manifests is not None else [_manifest()],
@@ -493,13 +493,13 @@ class TP361PromptVersionCacheKey(_PipelineTestBase):
         hash_b = "b" * 64
 
         with mock.patch(
-            "scripts.claim_audit_pipeline.JUDGE_PROMPT_SHA256", hash_a
+            "scripts.audit.claim_audit_pipeline.JUDGE_PROMPT_SHA256", hash_a
         ):
             self.run_pipeline(citations=[_citation()], judge_fn=judge_fn, cache=cache)
         self.assertEqual(len(invocations), 1, "first run must invoke judge")
 
         with mock.patch(
-            "scripts.claim_audit_pipeline.JUDGE_PROMPT_SHA256", hash_b
+            "scripts.audit.claim_audit_pipeline.JUDGE_PROMPT_SHA256", hash_b
         ):
             self.run_pipeline(citations=[_citation()], judge_fn=judge_fn, cache=cache)
         self.assertEqual(
@@ -1383,7 +1383,7 @@ class TP18ManifestMissingNoSpuriousDrift(_PipelineTestBase):
     """
 
     def test_no_manifest_no_drift_rows(self) -> None:
-        from scripts._claim_audit_constants import SENTINEL_MANIFEST_ID
+        from scripts.audit._claim_audit_constants import SENTINEL_MANIFEST_ID
 
         citation = {
             "claim_id": "C-001",
@@ -1450,7 +1450,7 @@ class TP17ManifestMissingSentinelFallback(_PipelineTestBase):
         self.assertEqual(len(results), 1, "fallback row must emit, not KeyError")
         # The caller's _written_scope_for would default to SENTINEL_MANIFEST_ID
         # because no manifest binds this claim_id.
-        from scripts._claim_audit_constants import SENTINEL_MANIFEST_ID
+        from scripts.audit._claim_audit_constants import SENTINEL_MANIFEST_ID
 
         self.assertEqual(results[0]["scoped_manifest_id"], SENTINEL_MANIFEST_ID)
 
@@ -1711,7 +1711,7 @@ class TP23UncitedJudgeOutageEmitsUAF(_PipelineTestBase):
     def test_uncited_judge_timeout_emits_uaf(self) -> None:
         # judge_fn raises a raw TimeoutError; _invoke_judge maps it to
         # JudgeInvocationError("judge_timeout", ...) per the exception
-        # translation layer at scripts/claim_audit_pipeline.py:_invoke_judge.
+        # translation layer at scripts/audit/claim_audit_pipeline.py:_invoke_judge.
         def failing_judge(**_kw: Any) -> dict[str, Any]:
             raise TimeoutError("judge timed out after 30s")
 

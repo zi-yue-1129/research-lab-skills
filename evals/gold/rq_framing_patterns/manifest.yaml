@@ -7,7 +7,7 @@ description: |
   advisory. Measures conservative detection of AI-typical RQ wording shells
   while avoiding over-warning on domain-native RQ formulations.
 target:
-  entrypoint: scripts.check_rq_framing_patterns
+  entrypoint: scripts.checks.check_rq_framing_patterns
   predicted_field: trigger_advisory
   gold_set_path: gold_set.json
 sample_n: 40

@@ -11,7 +11,7 @@ To invalidate the **entire** cache at once (e.g. after a systemic resolver bug c
 
 Implementation:
 ```bash
-python3 scripts/ars_cache_invalidate.py $ARGUMENTS
+python3 scripts/tooling/ars_cache_invalidate.py $ARGUMENTS
 ```
 
 Mode reference: `docs/design/2026-05-21-v3.10-182-promote-citation-gate-spec.md` §2 Delta 2.

@@ -50,7 +50,7 @@ def load_json_schema(path: Path) -> dict[str, Any]:
     """Load a JSON Schema file and verify it parses as Draft 2020-12.
 
     Centralised so test files don't re-implement the same load + check_schema
-    pair. Mirrors the helper at scripts/check_literature_corpus_schema.py
+    pair. Mirrors the helper at scripts/checks/check_literature_corpus_schema.py
     (which predates this module) — that script can migrate at next edit.
     """
     from jsonschema import Draft202012Validator

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Imbad0202/academic-research-skills/shared/contracts/passport/audit_artifact_entry.schema.json",
   "title": "Material Passport Audit Artifact Entry",
-  "description": "One entry in Material Passport Schema 9 audit_artifact[]. Records one cross-model audit run for one downstream agent's deliverable. Two lifecycle states share this schema via oneOf: 'proposal' (wrapper-emitted, pre-verification) and 'persisted' (orchestrator-merged, post-verification). See docs/design/2026-04-30-ars-v3.6.7-step-6-orchestrator-hooks-spec.md §3.1-§3.2 and §3.7 for cross-artifact invariants. Cross-field rules (PASS/MINOR/MATERIAL/AUDIT_FAILED counts; acknowledgement scoping; etc.) are lint-enforced in scripts/check_audit_artifact_consistency.py (Phase 6.3), NOT in this schema.",
+  "description": "One entry in Material Passport Schema 9 audit_artifact[]. Records one cross-model audit run for one downstream agent's deliverable. Two lifecycle states share this schema via oneOf: 'proposal' (wrapper-emitted, pre-verification) and 'persisted' (orchestrator-merged, post-verification). See docs/design/2026-04-30-ars-v3.6.7-step-6-orchestrator-hooks-spec.md §3.1-§3.2 and §3.7 for cross-artifact invariants. Cross-field rules (PASS/MINOR/MATERIAL/AUDIT_FAILED counts; acknowledgement scoping; etc.) are lint-enforced in scripts/checks/check_audit_artifact_consistency.py (Phase 6.3), NOT in this schema.",
 
   "type": "object",
   "additionalProperties": false,

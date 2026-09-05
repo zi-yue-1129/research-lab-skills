@@ -1,4 +1,4 @@
-"""Unit tests for scripts/ars_mark_read.py.
+"""Unit tests for scripts/tooling/ars_mark_read.py.
 
 Per v3.6.8 spec §3.6 + Step 7 (round-2 R2-002, round-5 R5-003 amends).
 Covers:
@@ -23,7 +23,7 @@ import yaml
 from tests.test_helpers import run_script
 
 
-SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "ars_mark_read.py"
+SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "tooling" / "ars_mark_read.py"
 
 
 # Minimal Material Passport carrying a literature_corpus[] with 2 entries.

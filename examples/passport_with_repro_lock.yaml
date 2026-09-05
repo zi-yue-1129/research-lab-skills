@@ -1,5 +1,5 @@
 # Example Material Passport with populated repro_lock block.
-# Validates with `python scripts/check_repro_lock.py examples/passport_with_repro_lock.yaml`.
+# Validates with `python scripts/checks/check_repro_lock.py examples/passport_with_repro_lock.yaml`.
 
 origin_skill: deep-research
 origin_mode: full

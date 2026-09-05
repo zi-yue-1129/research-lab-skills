@@ -3,7 +3,7 @@
 Per spec §7.5 in
 docs/design/2026-05-15-issue-103-claim-alignment-audit-spec.md.
 
-These tests pin the contract of `scripts/claim_audit_finalizer.py`, the
+These tests pin the contract of `scripts/audit/claim_audit_finalizer.py`, the
 Python module that implements the §5 orchestrator §3.6 8-row matrix and
 the Stage 6 reflection-report histogram. The matrix discriminates the
 three `(RETRIEVAL_FAILED, not_applicable)` paths by `ref_retrieval_method`
@@ -44,7 +44,7 @@ import unittest
 from typing import Any, Callable
 
 try:
-    from scripts.claim_audit_finalizer import (
+    from scripts.audit.claim_audit_finalizer import (
         TIER_NONE,
         TIER_LOW_WARN,
         TIER_MED_WARN,
@@ -85,8 +85,8 @@ except ModuleNotFoundError as exc:  # pragma: no cover — RED phase only
     ars_mark_read_clears = _stub  # type: ignore[assignment]
 
 try:
-    from scripts.claim_audit_pipeline import run_audit_pipeline
-    from scripts._claim_audit_constants import SENTINEL_MANIFEST_ID
+    from scripts.audit.claim_audit_pipeline import run_audit_pipeline
+    from scripts.audit._claim_audit_constants import SENTINEL_MANIFEST_ID
 
     _PIPELINE_IMPORT_ERR: Exception | None = None
 except Exception as exc:  # pragma: no cover
@@ -141,7 +141,7 @@ class _FinalizerTestBase(unittest.TestCase):
     def setUpClass(cls) -> None:
         if _FINALIZER_IMPORT_ERR is not None:
             raise unittest.SkipTest(
-                f"scripts.claim_audit_finalizer not importable yet: {_FINALIZER_IMPORT_ERR!r} "
+                f"scripts.audit.claim_audit_finalizer not importable yet: {_FINALIZER_IMPORT_ERR!r} "
                 "(expected during RED phase — implementation lands in spec §13 step 8)"
             )
 
@@ -621,7 +621,7 @@ class _PipelineCarryoverTestBase(unittest.TestCase):
     def setUpClass(cls) -> None:
         if _PIPELINE_IMPORT_ERR is not None:
             raise unittest.SkipTest(
-                f"scripts.claim_audit_pipeline not importable yet: {_PIPELINE_IMPORT_ERR!r}"
+                f"scripts.audit.claim_audit_pipeline not importable yet: {_PIPELINE_IMPORT_ERR!r}"
             )
 
     def _config(self, **overrides: Any) -> dict[str, Any]:
@@ -908,7 +908,7 @@ class TUAFFinalizerRouting(unittest.TestCase):
 
     def test_uaf_row_each_fault_class_renders(self) -> None:
         """Every INV14 fault-class value must render through the annotation template."""
-        from scripts._claim_audit_constants import INV14_FAULT_CLASS_TAGS
+        from scripts.audit._claim_audit_constants import INV14_FAULT_CLASS_TAGS
 
         for fault_class in INV14_FAULT_CLASS_TAGS:
             with self.subTest(fault_class=fault_class):

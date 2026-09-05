@@ -55,7 +55,7 @@ OpenAlex returns `primary_location.source.type` and other classification fields.
 
 ## Client implementation
 
-See `scripts/openalex_client.py`. The client class `OpenAlexClient` exposes `doi_lookup_with_title_check(doi, expected_title)` and `title_search(title, year=None)` methods. Both return `dict | None`. Both raise `OpenAlexUnavailable` on degradation per the table above. The optional `year` parameter in `title_search` enables a matching-year tiebreaker (+0.05 score bonus) mirroring the S2 client `_lookup_by_title` pattern.
+See `scripts/clients/openalex_client.py`. The client class `OpenAlexClient` exposes `doi_lookup_with_title_check(doi, expected_title)` and `title_search(title, year=None)` methods. Both return `dict | None`. Both raise `OpenAlexUnavailable` on degradation per the table above. The optional `year` parameter in `title_search` enables a matching-year tiebreaker (+0.05 score bonus) mirroring the S2 client `_lookup_by_title` pattern.
 
 ## Cross-references
 

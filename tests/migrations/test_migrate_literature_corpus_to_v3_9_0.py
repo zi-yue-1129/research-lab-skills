@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """#102 v3.9.0 cross-index triangulation backfill migration tool tests.
 
-Tests scripts/migrate_literature_corpus_to_v3_9_0.py — the CLI that
+Tests scripts/migrations/migrate_literature_corpus_to_v3_9_0.py — the CLI that
 backfills `openalex_unmatched` and `crossref_unmatched` on v3.7.3-onward
 literature_corpus[] entries per v3.9.0 spec §3.7.
 
@@ -16,13 +16,13 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT / "scripts") not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT / "scripts"))
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-import migrate_literature_corpus_to_v3_9_0 as mig  # noqa: E402
+from scripts.migrations import migrate_literature_corpus_to_v3_9_0 as mig
 
-from openalex_client import OpenAlexUnavailable  # noqa: E402
-from crossref_client import CrossrefUnavailable  # noqa: E402
+from scripts.clients.openalex_client import OpenAlexUnavailable  # noqa: E402
+from scripts.clients.crossref_client import CrossrefUnavailable  # noqa: E402
 
 
 # ---------------------------------------------------------------------------

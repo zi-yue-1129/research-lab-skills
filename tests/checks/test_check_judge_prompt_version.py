@@ -12,7 +12,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import scripts.check_judge_prompt_version as lint
+import scripts.checks.check_judge_prompt_version as lint
 
 _PROMPT_BODY = "> CLAIM: {claim_text}\n> Output ONE verdict from {SUPPORTED, UNSUPPORTED}."
 

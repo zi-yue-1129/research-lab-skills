@@ -10,7 +10,7 @@ from __future__ import annotations
 import copy
 import unittest
 
-import scripts.check_268_nested_commitment_ledger as lint
+import scripts.checks.check_268_nested_commitment_ledger as lint
 
 
 CLEAN_SEED = {

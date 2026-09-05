@@ -12,7 +12,7 @@ import pytest
 import importlib.util
 import sys
 
-SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "check_v3_7_3_three_layer_citation.py"
+SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "checks" / "check_v3_7_3_three_layer_citation.py"
 spec = importlib.util.spec_from_file_location("lint_module", SCRIPT_PATH)
 lint_module = importlib.util.module_from_spec(spec)
 sys.modules["lint_module"] = lint_module

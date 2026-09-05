@@ -38,7 +38,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-LINT = REPO_ROOT / "scripts" / "check_v3_6_8_audit_scope_block.py"
+LINT = REPO_ROOT / "scripts" / "checks" / "check_v3_6_8_audit_scope_block.py"
 TEMPLATE = REPO_ROOT / "shared" / "templates" / "codex_audit_multifile_template.md"
 
 # Anchors that MUST appear in the baseline (Step 2 ships these). If any

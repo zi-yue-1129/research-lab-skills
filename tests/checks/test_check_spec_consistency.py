@@ -12,7 +12,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from scripts import check_spec_consistency as csc
+from scripts.checks import check_spec_consistency as csc
 
 
 # Minimal ja-JP README capturing the version-bearing surfaces the lint needs

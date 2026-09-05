@@ -4,7 +4,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from scripts import check_rq_framing_patterns as checker
+from scripts.checks import check_rq_framing_patterns as checker
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -51,7 +51,7 @@ def test_gold_set_calibration_passes_thresholds() -> None:
 
 def test_cli_reports_metrics() -> None:
     result = subprocess.run(
-        [sys.executable, "-m", "scripts.check_rq_framing_patterns"],
+        [sys.executable, "-m", "scripts.checks.check_rq_framing_patterns"],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Mutation tests for scripts/check_policy_anchor_protocol.py."""
+"""Mutation tests for scripts/checks/check_policy_anchor_protocol.py."""
 from __future__ import annotations
 
 import sys
@@ -8,10 +8,10 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT / "scripts") not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT / "scripts"))
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-import check_policy_anchor_protocol as cpap  # noqa: E402
+from scripts.checks import check_policy_anchor_protocol as cpap
 
 
 # Each named invariant from impl spec §4.3 must be referenced verbatim. The

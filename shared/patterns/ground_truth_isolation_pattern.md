@@ -224,7 +224,7 @@ updated.
 **Not a runtime permission system.** Nothing in ARS enforces isolation at
 execution time by blocking API calls, sandboxing the filesystem, or
 intercepting prompt construction. The mechanism is convention, declarative
-annotation, and CI lint via `scripts/check_data_access_level.py`. That script
+annotation, and CI lint via `scripts/checks/check_data_access_level.py`. That script
 confirms every `SKILL.md` carries a valid annotation; it does not inspect
 context windows at runtime. A contributor who deliberately passes ground-truth
 material into a raw-layer skill's context can do so — the pattern is a design

@@ -38,7 +38,7 @@ from tests.test_helpers import (
 
 REPO = Path(__file__).resolve().parents[2]
 PASSPORT = REPO / "shared/contracts/passport"
-LINT = REPO / "scripts/check_claim_audit_consistency.py"
+LINT = REPO / "scripts/checks/check_claim_audit_consistency.py"
 
 SCHEMA_PATHS: dict[str, Path] = {
     "claim_audit_result": PASSPORT / "claim_audit_result.schema.json",
@@ -1309,7 +1309,7 @@ class TSUAFUncitedAuditFailureInvariants(_LintTestBase):
         and a rule_version bump (D4-c-v1-uaf-v2 or later) should accompany
         any enum extension.
         """
-        from scripts._claim_audit_constants import INV14_FAULT_CLASS_TAGS
+        from scripts.audit._claim_audit_constants import INV14_FAULT_CLASS_TAGS
 
         schema = load_json_schema(SCHEMA_PATHS["uncited_audit_failure"])
         schema_enum = set(schema["properties"]["fault_class"]["enum"])

@@ -1,4 +1,4 @@
-"""Tests for scripts/run_evals.py (#184 Delta 2, Phase 1b harness)."""
+"""Tests for scripts/evals/run_evals.py (#184 Delta 2, Phase 1b harness)."""
 from __future__ import annotations
 
 import json
@@ -8,8 +8,8 @@ import pytest
 import yaml
 from jsonschema import Draft202012Validator
 
-from scripts import run_evals
-from scripts import _eval_threshold_gate as gate
+from scripts.evals import run_evals
+from scripts.evals import _eval_threshold_gate as gate
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_PATH = REPO_ROOT / "shared" / "schemas" / "evals_lift_report.schema.json"

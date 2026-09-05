@@ -29,7 +29,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-LINT = REPO_ROOT / "scripts" / "check_v3_6_8_pattern_protection.py"
+LINT = REPO_ROOT / "scripts" / "checks" / "check_v3_6_8_pattern_protection.py"
 V3_6_7_MANIFEST = REPO_ROOT / "scripts" / "v3_6_7_inversion_manifest.json"
 V3_6_8_MANIFEST = REPO_ROOT / "scripts" / "v3_6_8_inversion_manifest.json"
 
@@ -293,7 +293,7 @@ def test_extractor_includes_heading_prefix_bytes() -> None:
     """Verify the v3.6.8 extractor wraps the v3.6.7 extractor with line-start
     backtracking so heading prefix bytes are in the hashed range.
     """
-    from scripts.check_v3_6_8_pattern_protection import _extract_block_bytes
+    from scripts.checks.check_v3_6_8_pattern_protection import _extract_block_bytes
     h2_bytes_in = "prelude\n\n## PATTERN PROTECTION (v3.6.7)\n\nbody1\n".encode("utf-8")
     h3_bytes_in = "prelude\n\n### PATTERN PROTECTION (v3.6.7)\n\nbody1\n".encode("utf-8")
     h2_bytes = _extract_block_bytes(h2_bytes_in)
@@ -328,7 +328,7 @@ def test_prose_mention_does_not_truncate_block_range() -> None:
     inclusive of the heading prefix, regardless of whether prose mentions
     appear earlier in the file.
     """
-    from scripts.check_v3_6_8_pattern_protection import _extract_block_bytes
+    from scripts.checks.check_v3_6_8_pattern_protection import _extract_block_bytes
     text = (
         "## Two-Layer Citation Emission (v3.7.1)\n"
         "\n"
@@ -368,7 +368,7 @@ def test_prose_mention_of_marker_does_not_misanchor_extractor() -> None:
     a prose mention of the marker before the actual heading still returns
     the heading-anchored block.
     """
-    from scripts.check_v3_6_8_pattern_protection import _extract_block_bytes
+    from scripts.checks.check_v3_6_8_pattern_protection import _extract_block_bytes
     text = (
         "## Two-Layer Citation Emission (v3.7.1)\n"
         "\n"
@@ -400,7 +400,7 @@ def test_extractor_strips_only_file_level_bom_not_block_level() -> None:
     in the file (e.g. immediately before `## PATTERN PROTECTION`) is a real
     content mutation and MUST stay in the hashed range so the gate detects it.
     """
-    from scripts.check_v3_6_8_pattern_protection import _extract_block_bytes
+    from scripts.checks.check_v3_6_8_pattern_protection import _extract_block_bytes
     BOM = b"\xef\xbb\xbf"
     base = "prelude\n\n## PATTERN PROTECTION (v3.6.7)\n\nbody\n".encode("utf-8")
     # Variant A: BOM at file start. This is a file-level BOM; spec says strip.
@@ -523,7 +523,7 @@ def test_anti_self_baseline_guard_history_scan_called(monkeypatch) -> None:
     is normally absent).
     """
     monkeypatch.setenv("GITHUB_BASE_REF", "main")
-    from scripts import check_v3_6_8_pattern_protection as mod
+    from scripts.checks import check_v3_6_8_pattern_protection as mod
 
     real_run_git = mod._run_git
     fake_log_output = "abcdef1234567890" * 1  # one fake touching commit SHA
@@ -572,7 +572,7 @@ def test_strip_file_bom_only_at_byte_zero() -> None:
     `_normalize_bytes` → `_strip_file_bom` to make the file-level scope
     explicit (the old name was ambiguous about what it normalized).
     """
-    from scripts.check_v3_6_8_pattern_protection import _strip_file_bom
+    from scripts.checks.check_v3_6_8_pattern_protection import _strip_file_bom
     assert _strip_file_bom(b"\xef\xbb\xbfhello") == b"hello"
     assert _strip_file_bom(b"hello") == b"hello"
     # Multi-byte payloads with no BOM are passed through unchanged.
@@ -583,7 +583,7 @@ def test_strip_file_bom_only_at_byte_zero() -> None:
 
 def test_sha256_helper_matches_hashlib() -> None:
     import hashlib
-    from scripts.check_v3_6_8_pattern_protection import _sha256
+    from scripts.checks.check_v3_6_8_pattern_protection import _sha256
     assert _sha256(b"abc") == hashlib.sha256(b"abc").hexdigest()
 
 

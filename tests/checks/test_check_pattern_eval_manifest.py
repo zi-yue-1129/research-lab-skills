@@ -1,4 +1,4 @@
-"""Tests for scripts/check_pattern_eval_manifest.py.
+"""Tests for scripts/checks/check_pattern_eval_manifest.py.
 
 Covers:
 - Micro schema positive validation against a synthetic well-formed manifest.
@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = REPO_ROOT / "scripts" / "check_pattern_eval_manifest.py"
+SCRIPT = REPO_ROOT / "scripts" / "checks" / "check_pattern_eval_manifest.py"
 
 PATTERN_IDS = (
     "A1", "A2", "A3", "A4", "A5",
@@ -154,8 +154,10 @@ def _run_script(fixture_root: Path) -> subprocess.CompletedProcess:
     work = fixture_root.parent
     repo_clone = work / "repo"
     repo_clone.mkdir(exist_ok=True)
-    (repo_clone / "scripts").mkdir(exist_ok=True)
-    shutil.copy2(SCRIPT, repo_clone / "scripts" / SCRIPT.name)
+    # The lint resolves its repo root as parents[2], so it has to sit at the
+    # same depth in the clone as it does in the real tree.
+    (repo_clone / "scripts" / "checks").mkdir(parents=True, exist_ok=True)
+    shutil.copy2(SCRIPT, repo_clone / "scripts" / "checks" / SCRIPT.name)
     # Copy audit_verdict schema so the validator's verdict-YAML check can resolve it.
     schema_dir = repo_clone / "shared" / "contracts" / "audit"
     schema_dir.mkdir(parents=True, exist_ok=True)
@@ -167,7 +169,7 @@ def _run_script(fixture_root: Path) -> subprocess.CompletedProcess:
         target.unlink() if target.is_symlink() else shutil.rmtree(target)
     target.symlink_to(fixture_root, target_is_directory=True)
     return subprocess.run(
-        [sys.executable, str(repo_clone / "scripts" / SCRIPT.name)],
+        [sys.executable, str(repo_clone / "scripts" / "checks" / SCRIPT.name)],
         capture_output=True,
         text=True,
     )

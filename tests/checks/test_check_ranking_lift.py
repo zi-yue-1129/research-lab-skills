@@ -1,4 +1,4 @@
-"""Tests for scripts/check_ranking_lift.py (#184 Delta 4 lift gate).
+"""Tests for scripts/checks/check_ranking_lift.py (#184 Delta 4 lift gate).
 
 The OPEN-issue check is always monkeypatched; no test touches the network.
 """
@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-from scripts import check_ranking_lift as crl
+from scripts.checks import check_ranking_lift as crl
 
 
 # ---------------------------------------------------------------------------

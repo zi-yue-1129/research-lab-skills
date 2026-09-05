@@ -38,7 +38,7 @@ import unittest
 from pathlib import Path
 from typing import Any, Callable
 
-from scripts.claim_audit_calibration import (
+from scripts.audit.claim_audit_calibration import (
     GoldSetValidationError,
     run_calibration,
     validate_gold_set,

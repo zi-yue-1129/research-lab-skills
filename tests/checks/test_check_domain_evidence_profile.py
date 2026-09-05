@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-LINT = REPO_ROOT / "scripts" / "check_domain_evidence_profile.py"
+LINT = REPO_ROOT / "scripts" / "checks" / "check_domain_evidence_profile.py"
 
 # The four files the lint reads.
 INTAKE = "skills/academic-paper/agents/intake_agent.md"

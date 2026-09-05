@@ -138,7 +138,7 @@ Common user-written adapter families include:
 
 Before committing passport output to any workflow:
 
-1. Validate against the schema: `python scripts/check_literature_corpus_schema.py --passport <your_passport.yaml> --rejection-log <your_rejection_log.yaml>`.
+1. Validate against the schema: `python scripts/checks/check_literature_corpus_schema.py --passport <your_passport.yaml> --rejection-log <your_rejection_log.yaml>`.
 2. Run your adapter twice on the same input and diff the outputs (after stripping `generated_at` / `obtained_at`). Any non-timestamp difference is a determinism bug.
 3. Feed a known-bad entry to confirm it lands in the rejection log rather than silently vanishing or crashing.
 

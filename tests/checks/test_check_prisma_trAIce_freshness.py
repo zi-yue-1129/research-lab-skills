@@ -5,7 +5,7 @@ from tempfile import TemporaryDirectory
 
 from tests.test_helpers import run_script
 
-SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "check_prisma_trAIce_freshness.py"
+SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "checks" / "check_prisma_trAIce_freshness.py"
 
 
 def _write_protocol(path: Path, snapshot_date: str) -> None:

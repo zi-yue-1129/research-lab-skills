@@ -12,9 +12,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import check_v3_10_134_write_scope as lint  # noqa: E402
+from scripts.checks import check_v3_10_134_write_scope as lint
 
 
 class CleanRepoTest(unittest.TestCase):

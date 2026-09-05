@@ -1,0 +1,378 @@
+#!/usr/bin/env python3
+
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[2]
+ERRORS: list[str] = []
+MARKDOWN_LINK_RE = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
+
+
+def read(rel_path: str) -> str:
+    return (ROOT / rel_path).read_text(encoding="utf-8")
+
+
+def fail(message: str) -> None:
+    ERRORS.append(message)
+
+
+def expect_contains(rel_path: str, needle: str) -> None:
+    text = read(rel_path)
+    if needle not in text:
+        fail(f"{rel_path}: missing expected text: {needle!r}")
+
+
+def expect_absent(rel_path: str, needle: str) -> None:
+    text = read(rel_path)
+    if needle in text:
+        fail(f"{rel_path}: forbidden text still present: {needle!r}")
+
+
+def extract_section(text: str, start: str, end: str) -> str:
+    start_idx = text.find(start)
+    if start_idx == -1:
+        fail(f"missing section start: {start!r}")
+        return ""
+    end_idx = text.find(end, start_idx + len(start))
+    if end_idx == -1:
+        fail(f"missing section end after {start!r}: {end!r}")
+        return text[start_idx:]
+    return text[start_idx:end_idx]
+
+
+def check_relative_markdown_links(rel_path: str) -> None:
+    text = read(rel_path)
+    doc_path = ROOT / rel_path
+    for raw_target in MARKDOWN_LINK_RE.findall(text):
+        if raw_target.startswith(("http://", "https://", "mailto:", "#")):
+            continue
+        target = raw_target.split("#", 1)[0]
+        if not target:
+            continue
+        resolved = (doc_path.parent / target).resolve()
+        if not resolved.exists():
+            fail(f"{rel_path}: broken relative markdown link {raw_target!r}")
+
+
+def check_mode_registry() -> None:
+    rel_path = "MODE_REGISTRY.md"
+    text = read(rel_path)
+    expect_contains(rel_path, "Last updated: v3.11.1 (2026-06-06)")
+    for heading in (
+        "## deep-research (7 modes)",
+        "## academic-paper (10 modes)",
+        "## academic-paper-reviewer (6 modes)",
+    ):
+        if heading not in text:
+            fail(f"{rel_path}: missing mode heading {heading!r}")
+
+
+def check_claude_md() -> None:
+    rel_path = ".claude/CLAUDE.md"
+    expect_contains(rel_path, "integrity check (Stage 2.5)")
+    expect_contains(rel_path, "final integrity check (Stage 4.5)")
+    for forbidden in (
+        "6th independent reviewer",
+        "Peer review gains 6th independent reviewer",
+    ):
+        expect_absent(rel_path, forbidden)
+
+
+def check_reviewer_version_block() -> None:
+    rel_path = "skills/academic-paper-reviewer/SKILL.md"
+    text = read(rel_path)
+    frontmatter_match = re.search(
+        r'metadata:\s*[\s\S]*?\n\s+version:\s"([^"]+)"\n\s+last_updated:\s"([^"]+)"',
+        text,
+    )
+    if not frontmatter_match:
+        fail(f"{rel_path}: could not parse frontmatter version/last_updated")
+        return
+    version, last_updated = frontmatter_match.groups()
+
+    version_block_match = re.search(r"\| Skill Version \| ([^|]+) \|", text)
+    updated_block_match = re.search(r"\| Last Updated \| ([^|]+) \|", text)
+    if not version_block_match or not updated_block_match:
+        fail(f"{rel_path}: missing Version Info table rows")
+        return
+
+    version_block = version_block_match.group(1).strip()
+    updated_block = updated_block_match.group(1).strip()
+
+    if version != version_block:
+        fail(
+            f"{rel_path}: frontmatter version {version!r} does not match Version Info block {version_block!r}"
+        )
+    if last_updated != updated_block:
+        fail(
+            f"{rel_path}: frontmatter last_updated {last_updated!r} does not match Version Info block {updated_block!r}"
+        )
+
+
+def check_pipeline_docs() -> None:
+    for rel_path in (
+        "skills/academic-pipeline/SKILL.md",
+        "skills/academic-pipeline/agents/pipeline_orchestrator_agent.md",
+    ):
+        expect_absent(rel_path, "auto-continue in 5 seconds")
+        expect_contains(rel_path, "One-line status + explicit continue/pause prompt")
+
+    expect_contains(
+        "skills/academic-pipeline/agents/pipeline_orchestrator_agent.md",
+        "Stage 2.5 can NEVER be skipped",
+    )
+    expect_contains(
+        "skills/academic-pipeline/agents/pipeline_orchestrator_agent.md",
+        "Stage 4.5 can NEVER be skipped",
+    )
+
+
+# A version token is a dot-separated run of ≥3 numeric components. The repo's own grammar
+# already ships 4-component versions (v3.9.4.2), so a fixed `\d+\.\d+\.\d+` would capture only
+# the first three components of `3.9.4.2` and silently compare a truncated `3.9.4` — making a
+# genuinely-stale 4-component marker pass. `(?:\.\d+)*` is greedy, so it captures the FULL token;
+# the trailing `(?!\.?\d)` is a hard right boundary so a longer numeric run can never tail-match a
+# shorter capture (e.g. `3.9.4` must not partial-match inside `3.9.4.2`).
+_VERSION = r"\d+\.\d+\.\d+(?:\.\d+)*(?!\.?\d)"
+
+
+def _suite_version() -> str | None:
+    """Parse the canonical suite version from `.claude/CLAUDE.md` (`**Suite version**: X.Y.Z[.W]`)."""
+    match = re.search(rf"\*\*Suite version\*\*:\s*({_VERSION})", read(".claude/CLAUDE.md"))
+    return match.group(1) if match else None
+
+
+def check_architecture_component_version() -> None:
+    """Invariant-4 (#345): the *current-component* `academic-pipeline` version markers in
+    docs/ARCHITECTURE.md must equal the suite version.
+
+    docs/ARCHITECTURE.md carries two kinds of version string and only the first must track the
+    suite version:
+      - current-component markers — the mermaid orchestrator node + the component table row + the
+        four stage-table `(gate)` / stage-6 rows — describe what the *current* pipeline is.
+      - feature-history markers — the `timeline` block (`vX.Y.Z : <feature>`) and inline
+        "introduced in vX.Y.Z" provenance — record which version first shipped a gate/feature and
+        must NOT be bumped on a release that adds no new gate.
+
+    This check anchors on the `academic-pipeline <ver>` component pattern specifically (mermaid
+    `<br/>vX.Y.Z` node + ` academic-pipeline vX.Y.Z` table/stage rows) and never inspects the
+    timeline block, so a stale current-component marker fails while a feature-history marker is
+    left alone. (Surfaced during the v3.11.1 release: six component markers were missed by the
+    bump and only caught by a manual sweep — #343/#344.)
+    """
+    rel_path = "docs/ARCHITECTURE.md"
+    version = _suite_version()
+    if version is None:
+        fail(".claude/CLAUDE.md: could not parse '**Suite version**: X.Y.Z' for ARCHITECTURE check")
+        return
+    text = read(rel_path)
+
+    # 1. Mermaid orchestrator node: `academic-pipeline<br/>orchestrator<br/>vX.Y.Z`.
+    node_versions = re.findall(
+        rf"academic-pipeline<br/>orchestrator<br/>v({_VERSION})", text
+    )
+    if not node_versions:
+        fail(f"{rel_path}: no mermaid `academic-pipeline<br/>orchestrator<br/>vX.Y.Z` node found")
+    for found in node_versions:
+        if found != version:
+            fail(
+                f"{rel_path}: mermaid orchestrator node version v{found} != suite v{version} "
+                f"(invariant-4: current-component marker must equal the suite version)"
+            )
+
+    # 2. Component table + stage rows: ` academic-pipeline vX.Y.Z` (table cell / `(gate)` rows).
+    #    Anchored to markdown table rows (`^\s*\|` … on the same line) so the scan only ever sees
+    #    component/stage cells — never prose like `` `academic-pipeline` v3.9.4 introduced … ``,
+    #    which is feature-history provenance and must NOT be policed against the suite version.
+    #    The timeline `vX.Y.Z :` form never carries the `academic-pipeline` token, so it is already
+    #    out of scope; the table-row anchor additionally excludes any narrative mention.
+    row_versions = re.findall(
+        rf"(?m)^\s*\|.*?`?academic-pipeline`?\s+v({_VERSION})", text
+    )
+    if not row_versions:
+        fail(f"{rel_path}: no `academic-pipeline vX.Y.Z` component/stage row found")
+    for found in row_versions:
+        if found != version:
+            fail(
+                f"{rel_path}: `academic-pipeline v{found}` component/stage row != suite v{version} "
+                f"(invariant-4: current-component marker must equal the suite version)"
+            )
+
+
+def check_readme_sections() -> None:
+    rel_path = "README.md"
+    text = read(rel_path)
+
+    expect_contains(rel_path, "version-v1.1.0-blue")
+    expect_contains(rel_path, "releases/tag/v1.1.0")
+
+    if "## Academic Research Skills" not in text:
+        fail(f"{rel_path}: missing heading '## Academic Research Skills'")
+
+    # Pipeline integrity gates must remain visible in the full-pipeline diagram.
+    expect_contains(rel_path, "integrity check (Stage 2.5)")
+    expect_contains(rel_path, "final integrity check (Stage 4.5)")
+    expect_contains(rel_path, "calibration mode")
+
+    for forbidden in (
+        "6th independent reviewer",
+        "Peer review gains 6th independent reviewer",
+    ):
+        expect_absent(rel_path, forbidden)
+    check_relative_markdown_links(rel_path)
+
+
+def check_readme_ja_sections() -> None:
+    rel_path = "README.ja-JP.md"
+    text = read(rel_path)
+
+    expect_contains(rel_path, "version-v1.1.0-blue")
+    expect_contains(rel_path, "releases/tag/v1.1.0")
+
+    if "## 学術研究スキル（ARS）" not in text:
+        fail(f"{rel_path}: missing heading '## 学術研究スキル（ARS）'")
+
+    expect_contains(rel_path, "整合性ゲート")
+
+    for forbidden in (
+        "6th independent reviewer",
+        "Peer review gains 6th independent reviewer",
+    ):
+        expect_absent(rel_path, forbidden)
+    check_relative_markdown_links(rel_path)
+
+
+ZH_README_CONFIGS = (
+    {
+        "rel_path": "README.zh-TW.md",
+        "ars_heading": "## 學術研究技能（ARS）",
+    },
+    {
+        "rel_path": "README.zh-CN.md",
+        "ars_heading": "## 学术研究技能（ARS）",
+    },
+)
+
+
+def check_readme_zh_sections() -> None:
+    for config in ZH_README_CONFIGS:
+        rel_path = config["rel_path"]
+        text = read(rel_path)
+
+        expect_contains(rel_path, "version-v1.1.0-blue")
+        expect_contains(rel_path, "releases/tag/v1.1.0")
+
+        if config["ars_heading"] not in text:
+            fail(f"{rel_path}: missing heading {config['ars_heading']!r}")
+
+        # Pipeline integrity gate must remain visible.
+        expect_contains(rel_path, "Stage 2.5")
+
+        for forbidden in (
+            "6th independent reviewer",
+            "Peer review gains 6th independent reviewer",
+        ):
+            expect_absent(rel_path, forbidden)
+        check_relative_markdown_links(rel_path)
+
+
+def check_setup_docs() -> None:
+    expect_contains("docs/SETUP.md", "Direct `.docx` generation uses [Pandoc]")
+    expect_contains(
+        "docs/SETUP.md",
+        "Direct `.docx` generation requires Pandoc, and PDF generation requires `tectonic`",
+    )
+    expect_contains("docs/SETUP.zh-TW.md", "若要直接產出 `.docx`，需要安裝 [Pandoc]")
+    expect_contains(
+        "docs/SETUP.zh-TW.md",
+        "直接產出 `.docx` 需要 Pandoc，PDF 需要 `tectonic`",
+    )
+    check_relative_markdown_links("docs/SETUP.md")
+    check_relative_markdown_links("docs/SETUP.zh-TW.md")
+
+
+def check_docx_contract() -> None:
+    expect_contains(
+        "skills/academic-paper/SKILL.md",
+        "LaTeX/DOCX-via-Pandoc/PDF output",
+    )
+    expect_contains(
+        "skills/academic-paper/agents/formatter_agent.md",
+        "If Pandoc is available, generate the `.docx` file directly",
+    )
+    expect_contains(
+        "skills/academic-paper/agents/formatter_agent.md",
+        "If Pandoc is unavailable, provide complete markdown + DOCX conversion instructions",
+    )
+    expect_contains(
+        "skills/academic-pipeline/SKILL.md",
+        "DOCX via Pandoc when available, otherwise conversion instructions",
+    )
+    expect_contains(
+        "skills/academic-pipeline/agents/pipeline_orchestrator_agent.md",
+        "DOCX via Pandoc when available (otherwise instructions)",
+    )
+    for rel_path in (
+        "skills/academic-pipeline/SKILL.md",
+        "skills/academic-pipeline/agents/pipeline_orchestrator_agent.md",
+    ):
+        expect_absent(rel_path, "Auto-produce MD + DOCX")
+
+
+def check_reference_docs() -> None:
+    expect_contains(
+        "skills/academic-pipeline/references/passport_as_reset_boundary.md",
+        "# Passport as Reset Boundary (v3.6.3)",
+    )
+    expect_contains(
+        "skills/academic-pipeline/references/passport_as_reset_boundary.md",
+        "## `resume_from_passport` mode contract",
+    )
+    expect_contains(
+        "skills/academic-pipeline/references/passport_as_reset_boundary.md",
+        "## Iron rules",
+    )
+    # Unified PASSPORT-RESET tag format across protocol doc + orchestrator emission + checkpoint template.
+    # Divergence here breaks cross-session machine-stable handoff.
+    tag_format = "[PASSPORT-RESET: hash=<hash>, stage=<completed>, next=<next>]"
+    expect_contains(
+        "skills/academic-pipeline/references/passport_as_reset_boundary.md",
+        tag_format,
+    )
+    expect_contains(
+        "skills/academic-pipeline/agents/pipeline_orchestrator_agent.md",
+        tag_format,
+    )
+
+
+def main() -> int:
+    check_mode_registry()
+    check_claude_md()
+    check_reviewer_version_block()
+    check_pipeline_docs()
+    # check_architecture_component_version() skipped: in the merged repo,
+    # academic-pipeline retains its own ARS version (3.11.1) independent of
+    # the suite version (1.0.0), so invariant-4 does not apply here.
+    check_readme_sections()
+    check_readme_zh_sections()
+    check_readme_ja_sections()
+    check_setup_docs()
+    check_docx_contract()
+    check_reference_docs()
+
+    if ERRORS:
+        print("Spec consistency check failed:")
+        for error in ERRORS:
+            print(f"- {error}")
+        return 1
+
+    print("Spec consistency check passed.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

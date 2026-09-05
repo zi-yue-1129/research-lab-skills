@@ -11,15 +11,15 @@ citation: "Holst D, et al. Transparent Reporting of AI in Systematic Literature 
 
 Verbatim snapshot of the 17-item PRISMA-trAIce checklist from the GitHub canonical source (`cqh4046/PRISMA-trAIce`), dated 2025-12-10, with per-item ARS check procedures and tier-based behaviour.
 
-**Used by**: `compliance_agent` (Task 8), `scripts/check_prisma_trAIce_freshness.py` (Task 12).
+**Used by**: `compliance_agent` (Task 8), `scripts/checks/check_prisma_trAIce_freshness.py` (Task 12).
 
-> ⚠️ **Upstream sync warning.** If `cqh4046/PRISMA-trAIce` updates, a freshness CI check emits an annotation but does not block merges. Maintainers must manually re-sync this file and bump `snapshot_date` + `upstream_version_commit`. See `scripts/check_prisma_trAIce_freshness.py`.
+> ⚠️ **Upstream sync warning.** If `cqh4046/PRISMA-trAIce` updates, a freshness CI check emits an annotation but does not block merges. Maintainers must manually re-sync this file and bump `snapshot_date` + `upstream_version_commit`. See `scripts/checks/check_prisma_trAIce_freshness.py`.
 
 ## Status disclaimer
 
 **PRISMA-trAIce is a foundational proposal, not a Delphi-consensus standard.** Holst et al. (2025) explicitly characterize their checklist as a "well-reasoned albeit preliminary guideline," developed via systematic adaptation of PRISMA 2020 rather than "a formal, broad-based Delphi study or consensus meeting," and note that the 17 items "have not yet been empirically validated across diverse research contexts." The authors frame PRISMA-trAIce as a "foundational proposal" and a "living standard" intended for the research community to "immediately adopt and refine."
 
-ARS adopts the authors' Mandatory / Highly Recommended / Recommended / Optional tier system as defined upstream, and treats Mandatory failures as Stage 2.5 / 4.5 blocks (per the Tier legend below). This block-on-Mandatory choice follows the authors' own argument that the risk of non-transparent AI use outweighs the risk of adopting a preliminary guideline. Future revisions of the upstream living standard are pulled in via the existing freshness CI (`scripts/check_prisma_trAIce_freshness.py`).
+ARS adopts the authors' Mandatory / Highly Recommended / Recommended / Optional tier system as defined upstream, and treats Mandatory failures as Stage 2.5 / 4.5 blocks (per the Tier legend below). This block-on-Mandatory choice follows the authors' own argument that the risk of non-transparent AI use outweighs the risk of adopting a preliminary guideline. Future revisions of the upstream living standard are pulled in via the existing freshness CI (`scripts/checks/check_prisma_trAIce_freshness.py`).
 
 > See Holst D, et al. JMIR AI. 2025. doi:[10.2196/80247](https://doi.org/10.2196/80247) — Discussion and Limitations sections.
 

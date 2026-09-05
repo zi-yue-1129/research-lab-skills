@@ -20,10 +20,10 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT / "scripts") not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT / "scripts"))
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-import contamination_signals as cs  # noqa: E402
+from scripts.audit import contamination_signals as cs
 
 
 # ============================================================================
@@ -294,7 +294,7 @@ class ResolveOpenAlexUnmatchedTest(unittest.TestCase):
 
     def test_match(self):
         """OpenAlex hit via DOI cross-check → False."""
-        from contamination_signals import resolve_openalex_unmatched
+        from scripts.audit.contamination_signals import resolve_openalex_unmatched
 
         mock_client = MagicMock()
         mock_client.doi_lookup_with_title_check.return_value = {"title": "X"}
@@ -309,7 +309,7 @@ class ResolveOpenAlexUnmatchedTest(unittest.TestCase):
 
     def test_no_match(self):
         """OpenAlex no DOI hit + no title hit → True."""
-        from contamination_signals import resolve_openalex_unmatched
+        from scripts.audit.contamination_signals import resolve_openalex_unmatched
 
         mock_client = MagicMock()
         mock_client.doi_lookup_with_title_check.return_value = None
@@ -325,7 +325,7 @@ class ResolveOpenAlexUnmatchedTest(unittest.TestCase):
 
     def test_manual_exempt(self):
         """obtained_via='manual' → return None, no client calls."""
-        from contamination_signals import resolve_openalex_unmatched
+        from scripts.audit.contamination_signals import resolve_openalex_unmatched
 
         mock_client = MagicMock()
         entry = {"title": "X", "obtained_via": "manual"}
@@ -336,7 +336,7 @@ class ResolveOpenAlexUnmatchedTest(unittest.TestCase):
 
     def test_doi_absent_falls_through_to_title(self):
         """DOI absent: title search alone, NO DOI lookup attempted."""
-        from contamination_signals import resolve_openalex_unmatched
+        from scripts.audit.contamination_signals import resolve_openalex_unmatched
 
         mock_client = MagicMock()
         mock_client.title_search.return_value = {"title": "X"}
@@ -348,8 +348,8 @@ class ResolveOpenAlexUnmatchedTest(unittest.TestCase):
 
     def test_api_down_raises(self):
         """API degraded → re-raise OpenAlexUnavailable for caller to omit field."""
-        from contamination_signals import resolve_openalex_unmatched
-        from openalex_client import OpenAlexUnavailable
+        from scripts.audit.contamination_signals import resolve_openalex_unmatched
+        from scripts.clients.openalex_client import OpenAlexUnavailable
 
         mock_client = MagicMock()
         mock_client.doi_lookup_with_title_check.side_effect = OpenAlexUnavailable("down")
@@ -369,7 +369,7 @@ class ResolveCrossrefUnmatchedTest(unittest.TestCase):
 
     def test_match(self):
         """Crossref hit via DOI cross-check → False."""
-        from contamination_signals import resolve_crossref_unmatched
+        from scripts.audit.contamination_signals import resolve_crossref_unmatched
 
         mock_client = MagicMock()
         mock_client.doi_lookup_with_title_check.return_value = {"title": ["X"]}
@@ -384,7 +384,7 @@ class ResolveCrossrefUnmatchedTest(unittest.TestCase):
 
     def test_no_match(self):
         """Crossref no DOI hit + no title hit → True."""
-        from contamination_signals import resolve_crossref_unmatched
+        from scripts.audit.contamination_signals import resolve_crossref_unmatched
 
         mock_client = MagicMock()
         mock_client.doi_lookup_with_title_check.return_value = None
@@ -400,7 +400,7 @@ class ResolveCrossrefUnmatchedTest(unittest.TestCase):
 
     def test_manual_exempt(self):
         """obtained_via='manual' → return None, no client calls."""
-        from contamination_signals import resolve_crossref_unmatched
+        from scripts.audit.contamination_signals import resolve_crossref_unmatched
 
         mock_client = MagicMock()
         entry = {"title": "X", "obtained_via": "manual"}
@@ -411,7 +411,7 @@ class ResolveCrossrefUnmatchedTest(unittest.TestCase):
 
     def test_doi_absent_falls_through_to_title(self):
         """DOI absent: title search alone, NO DOI lookup attempted."""
-        from contamination_signals import resolve_crossref_unmatched
+        from scripts.audit.contamination_signals import resolve_crossref_unmatched
 
         mock_client = MagicMock()
         mock_client.title_search.return_value = {"title": ["X"]}
@@ -423,8 +423,8 @@ class ResolveCrossrefUnmatchedTest(unittest.TestCase):
 
     def test_api_down_raises(self):
         """API degraded → re-raise CrossrefUnavailable for caller to omit field."""
-        from contamination_signals import resolve_crossref_unmatched
-        from crossref_client import CrossrefUnavailable
+        from scripts.audit.contamination_signals import resolve_crossref_unmatched
+        from scripts.clients.crossref_client import CrossrefUnavailable
 
         mock_client = MagicMock()
         mock_client.doi_lookup_with_title_check.side_effect = CrossrefUnavailable("down")
@@ -448,7 +448,7 @@ class ResolveArxivUnmatchedTest(unittest.TestCase):
 
     def test_match(self):
         """arXiv hit via ID cross-check → False."""
-        from contamination_signals import resolve_arxiv_unmatched
+        from scripts.audit.contamination_signals import resolve_arxiv_unmatched
 
         mock_client = MagicMock()
         mock_client.arxiv_id_lookup.return_value = {"title": "X", "year": 2017}
@@ -463,7 +463,7 @@ class ResolveArxivUnmatchedTest(unittest.TestCase):
 
     def test_no_match(self):
         """arXiv no ID hit + no title hit → True."""
-        from contamination_signals import resolve_arxiv_unmatched
+        from scripts.audit.contamination_signals import resolve_arxiv_unmatched
 
         mock_client = MagicMock()
         mock_client.arxiv_id_lookup.return_value = None
@@ -479,7 +479,7 @@ class ResolveArxivUnmatchedTest(unittest.TestCase):
 
     def test_manual_exempt(self):
         """obtained_via='manual' → return None, no client calls."""
-        from contamination_signals import resolve_arxiv_unmatched
+        from scripts.audit.contamination_signals import resolve_arxiv_unmatched
 
         mock_client = MagicMock()
         entry = {"title": "X", "arxiv_id": "1706.03762", "obtained_via": "manual"}
@@ -497,7 +497,7 @@ class ResolveArxivUnmatchedTest(unittest.TestCase):
         triangulation k on a clean citation). Spec §4 / the orchestrator k_max
         rule both state arxiv_unmatched is ABSENT on citations with no arXiv ID
         ('arXiv resolver skipped on a non-arXiv citation per Delta 1')."""
-        from contamination_signals import resolve_arxiv_unmatched
+        from scripts.audit.contamination_signals import resolve_arxiv_unmatched
 
         mock_client = MagicMock()
 
@@ -509,7 +509,7 @@ class ResolveArxivUnmatchedTest(unittest.TestCase):
 
     def test_arxiv_id_miss_falls_through_to_title(self):
         """ID present but ID lookup misses → fall through to title search."""
-        from contamination_signals import resolve_arxiv_unmatched
+        from scripts.audit.contamination_signals import resolve_arxiv_unmatched
 
         mock_client = MagicMock()
         mock_client.arxiv_id_lookup.return_value = None
@@ -522,8 +522,8 @@ class ResolveArxivUnmatchedTest(unittest.TestCase):
 
     def test_api_down_raises(self):
         """API degraded → re-raise ArxivUnavailable for caller to omit field."""
-        from contamination_signals import resolve_arxiv_unmatched
-        from arxiv_client import ArxivUnavailable
+        from scripts.audit.contamination_signals import resolve_arxiv_unmatched
+        from scripts.clients.arxiv_client import ArxivUnavailable
 
         mock_client = MagicMock()
         mock_client.arxiv_id_lookup.side_effect = ArxivUnavailable("down")
@@ -641,7 +641,7 @@ class ResolveCrossrefCacheTest(unittest.TestCase):
         return base | overrides
 
     def test_cache_none_is_byte_equivalent(self):
-        from contamination_signals import resolve_crossref_unmatched
+        from scripts.audit.contamination_signals import resolve_crossref_unmatched
 
         client = MagicMock()
         client.doi_lookup_with_title_check.return_value = {"title": ["X"]}
@@ -650,7 +650,7 @@ class ResolveCrossrefCacheTest(unittest.TestCase):
         client.doi_lookup_with_title_check.assert_called_once()
 
     def test_cache_hit_skips_network(self):
-        from contamination_signals import resolve_crossref_unmatched
+        from scripts.audit.contamination_signals import resolve_crossref_unmatched
 
         client = MagicMock()
         qf = "doi:10.5555/abc|title:Attention Is All You Need"
@@ -663,7 +663,7 @@ class ResolveCrossrefCacheTest(unittest.TestCase):
         client.title_search.assert_not_called()
 
     def test_cache_miss_calls_network_and_populates(self):
-        from contamination_signals import resolve_crossref_unmatched
+        from scripts.audit.contamination_signals import resolve_crossref_unmatched
 
         client = MagicMock()
         client.doi_lookup_with_title_check.return_value = None
@@ -681,7 +681,7 @@ class ResolveCrossrefCacheTest(unittest.TestCase):
         """A persistent on-disk cache row written by an older/other tool that
         lacks the 'matched' key must be treated as a MISS (force live recompute),
         not crash with KeyError for 90 days. Robustness guard."""
-        from contamination_signals import resolve_crossref_unmatched
+        from scripts.audit.contamination_signals import resolve_crossref_unmatched
 
         client = MagicMock()
         client.doi_lookup_with_title_check.return_value = {"title": ["X"]}  # match
@@ -695,8 +695,8 @@ class ResolveCrossrefCacheTest(unittest.TestCase):
         client.doi_lookup_with_title_check.assert_called_once()
 
     def test_degradation_is_not_cached(self):
-        from contamination_signals import resolve_crossref_unmatched
-        from crossref_client import CrossrefUnavailable
+        from scripts.audit.contamination_signals import resolve_crossref_unmatched
+        from scripts.clients.crossref_client import CrossrefUnavailable
 
         client = MagicMock()
         client.doi_lookup_with_title_check.side_effect = CrossrefUnavailable("down")
@@ -706,7 +706,7 @@ class ResolveCrossrefCacheTest(unittest.TestCase):
         self.assertEqual(cache.put_calls, [])  # NEVER cache a degradation
 
     def test_manual_entry_does_not_touch_cache(self):
-        from contamination_signals import resolve_crossref_unmatched
+        from scripts.audit.contamination_signals import resolve_crossref_unmatched
 
         client = MagicMock()
         cache = _FakeCache()
@@ -731,7 +731,7 @@ class ResolveArxivCacheTest(unittest.TestCase):
         return base | overrides
 
     def test_cache_hit_skips_network(self):
-        from contamination_signals import resolve_arxiv_unmatched
+        from scripts.audit.contamination_signals import resolve_arxiv_unmatched
 
         client = MagicMock()
         qf = "arxiv:1706.03762|title:Attention Is All You Need"
@@ -743,7 +743,7 @@ class ResolveArxivCacheTest(unittest.TestCase):
         client.arxiv_id_lookup.assert_not_called()
 
     def test_cache_miss_populates(self):
-        from contamination_signals import resolve_arxiv_unmatched
+        from scripts.audit.contamination_signals import resolve_arxiv_unmatched
 
         client = MagicMock()
         client.arxiv_id_lookup.return_value = {"title": "X", "year": 2017}

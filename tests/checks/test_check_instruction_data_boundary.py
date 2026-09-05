@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-CHECKER = REPO_ROOT / "scripts" / "check_instruction_data_boundary.py"
+CHECKER = REPO_ROOT / "scripts" / "checks" / "check_instruction_data_boundary.py"
 
 AUTHORITATIVE_REL = "shared/patterns/ground_truth_isolation_pattern.md"
 AGENT_REL = "skills/deep-research/agents/source_verification_agent.md"

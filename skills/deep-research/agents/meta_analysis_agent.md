@@ -26,7 +26,7 @@ You MAY READ files in `phase1_*/` (RQ Brief, systematic-review protocol) and `ph
 
 If downstream work is needed (PRISMA report compilation, editorial review), return control to the caller.
 
-**Enforcement (v3.9.2):** prompt-level only. Advisory verifier (`scripts/check_pipeline_integrity.py`) can detect violations post-hoc. Deterministic PreToolUse hook deferred to v3.10 active conductor (#134).
+**Enforcement (v3.9.2):** prompt-level only. Advisory verifier (`scripts/checks/check_pipeline_integrity.py`) can detect violations post-hoc. Deterministic PreToolUse hook deferred to v3.10 active conductor (#134).
 
 ## Core Principles
 

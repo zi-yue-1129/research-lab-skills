@@ -15,13 +15,13 @@ import pytest
 # directory on sys.path for free; from tests/<group>/ it has to be explicit.
 # Do not delete this as redundant: a whole-suite run passes on some other test's
 # insert, but the per-file run in scripts/_ci_pytest_manifest.toml does not.
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 
 @pytest.fixture()
 def seeded_cache(tmp_path, monkeypatch):
     """A VerificationCache with two citations cached across resolvers."""
-    from verification_cache import VerificationCache
+    from scripts.audit.verification_cache import VerificationCache
 
     db = tmp_path / "verification.db"
     monkeypatch.setenv("ARS_VERIFICATION_CACHE_PATH", str(db))
@@ -33,8 +33,8 @@ def seeded_cache(tmp_path, monkeypatch):
 
 
 def test_invalidate_removes_named_citation(seeded_cache, monkeypatch):
-    from ars_cache_invalidate import main
-    from verification_cache import VerificationCache
+    from scripts.tooling.ars_cache_invalidate import main
+    from scripts.audit.verification_cache import VerificationCache
 
     cache, db = seeded_cache
     rc = main(["smith2024"])
@@ -48,14 +48,14 @@ def test_invalidate_removes_named_citation(seeded_cache, monkeypatch):
 
 
 def test_invalidate_unknown_citation_is_noop_success(seeded_cache):
-    from ars_cache_invalidate import main
+    from scripts.tooling.ars_cache_invalidate import main
 
     rc = main(["never-cached"])
     assert rc == 0  # idempotent no-op, not an error
 
 
 def test_missing_argument_is_usage_error(seeded_cache):
-    from ars_cache_invalidate import main
+    from scripts.tooling.ars_cache_invalidate import main
 
     with pytest.raises(SystemExit):  # argparse exits on missing required arg
         main([])

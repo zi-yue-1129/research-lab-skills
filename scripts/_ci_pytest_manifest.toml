@@ -1,9 +1,9 @@
 # CI pytest invocation manifest (issue #156)
 #
 # Single source of truth for the pytest invocations spec-consistency.yml runs
-# file-by-file. The workflow consumes this via `python scripts/run_ci_pytest_manifest.py`.
+# file-by-file. The workflow consumes this via `python scripts/tooling/run_ci_pytest_manifest.py`.
 #
-# Drift guard: scripts/check_ci_pytest_manifest.py validates:
+# Drift guard: scripts/checks/check_ci_pytest_manifest.py validates:
 #   - every `path` exists on disk
 #   - `id` values unique
 #   - (path, args) tuples unique (so the manifest stays a single source, not a
@@ -20,8 +20,8 @@
 # Adding a new entry:
 #   1. add a [[pytest]] block with a unique `id`, the test file `path`, and
 #      optional `args` (list of strings, passed to pytest verbatim).
-#   2. run `python scripts/check_ci_pytest_manifest.py` to validate.
-#   3. run `python scripts/run_ci_pytest_manifest.py --id <id>` to smoke-test
+#   2. run `python scripts/checks/check_ci_pytest_manifest.py` to validate.
+#   3. run `python scripts/tooling/run_ci_pytest_manifest.py --id <id>` to smoke-test
 #      locally before opening a PR.
 
 [[pytest]]

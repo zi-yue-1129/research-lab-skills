@@ -52,7 +52,7 @@ Read these passport fields:
     - **`all_uncited_sentences` (FULL set)** — every uncited sentence in the draft, regardless of D4-c trigger token presence. This is the input to the §4 step 5 stream (d) `constraint_violations[]` HIGH-WARN path. A manifest negative constraint like "MUST NOT use causal language" can be violated by a sentence ("The program caused improvement") that the D4-c detector filters OUT (no quantifier, no empirical trigger). Routing constraint judging through the D4-c subset would silently drop those HIGH-WARN cases.
     - **`uncited_sentences` (D4-c subset)** — the output of `detect_uncited_assertions` per spec §4 step 6 (D4-c three-condition token rule). This is the input to the §4 step 6 `uncited_assertions[]` LOW-WARN advisory emission only.
 
-  Without this stream the `[HIGH-WARN-CONSTRAINT-VIOLATION-UNCITED]` row and the LOW-WARN `uncited_assertions[]` row cannot fire — both are operationally load-bearing per spec §3.3 + §3.5. In the Python runtime (`scripts/claim_audit_pipeline.py`), callers pass the FULL set as `all_uncited_sentences` and the D4-c output as `uncited_sentences`; legacy callers may pass only `uncited_sentences` and the pipeline falls back (narrower constraint surface, backwards-compatible).
+  Without this stream the `[HIGH-WARN-CONSTRAINT-VIOLATION-UNCITED]` row and the LOW-WARN `uncited_assertions[]` row cannot fire — both are operationally load-bearing per spec §3.3 + §3.5. In the Python runtime (`scripts/audit/claim_audit_pipeline.py`), callers pass the FULL set as `all_uncited_sentences` and the D4-c output as `uncited_sentences`; legacy callers may pass only `uncited_sentences` and the pipeline falls back (narrower constraint surface, backwards-compatible).
 
   **Sentence scope (Step 13 R6 codex P1):** the documented sentence shape is `sentence_text` + `section_path` + optional `adjacent_text` — sentences do NOT need to carry `scoped_manifest_id`. The pipeline derives constraint scope per sentence: if the caller pins `scoped_manifest_id` on the sentence dict (legacy / explicit-scope shape), only that manifest's MNCs apply. Otherwise the pipeline applies **every manifest's MNCs** (uncited sentences have no claim-level binding, so manifest-scoped MNCs reach them universally per spec §3.5 D4-c stream (d) semantics). The emitted `constraint_violation` row derives its `scoped_manifest_id` from the `violated_constraint_id` ↔ source-manifest mapping; no MANIFEST-MISSING sentinel is admitted per the schema's pattern constraint.
 
@@ -73,7 +73,7 @@ When `len(citations) > max_claims_per_paper`, emit exactly one `audit_sampling_s
 2. Pick the first index of each bucket.
 3. Sort the picks ascending; emit them as `audited_indices`.
 
-Sampling invariants (lint-enforced in `scripts/check_claim_audit_consistency.py`):
+Sampling invariants (lint-enforced in `scripts/checks/check_claim_audit_consistency.py`):
 
 - **S-INV-1** `audited_count == len(audited_indices)`.
 - **S-INV-2** `audited_count ≤ max_claims_per_paper` AND `audited_count ≤ total_citation_count`.
@@ -137,7 +137,7 @@ cache_key = SHA-256(JCS(
 
 Selection is scoped by `(scoped_manifest_id, claim_id)`, NOT bare `claim_id` — per M-INV-1, cross-manifest C-001 collision is permitted, so selecting by bare claim_id would pick constraints from the wrong manifest.
 
-`prompt_version` (#361): the fingerprint of the judge prompt this verdict was produced under. `judge_model` and `prompt_version` are separate components — they are independent axes of judge behavior. The pipeline reads `config.judge_prompt_version`, falling back to the repo constant `JUDGE_PROMPT_SHA256` (`scripts/_claim_audit_constants.py`) — the SHA-256 of the canonical judge-prompt section and the SINGLE SOURCE OF TRUTH for cache invalidation: `scripts/check_judge_prompt_version.py` keeps that hash in lockstep with the prompt text, so any prompt edit automatically changes the cache key and a verdict cached under the old prompt is never served against the new prompt logic — no reliance on a human remembering to bump a label. (`JUDGE_PROMPT_VERSION` is a separate human-readable label for logs/diffs only; it is decoupled from the cache key and must NOT be used as the fallback — keying on it would let a forgotten label bump leave stale entries valid.) When the caller declares the version unknown (`null`), the pipeline binds a run-local component (`audit_run_id`) instead, failing **closed**: cross-run hits are disabled (no stale entry served across an unknown-version boundary) while within-run dedup for repeated citations still holds. `scripts/check_judge_prompt_version.py` is the CI backstop against forgetting the hash re-pin.
+`prompt_version` (#361): the fingerprint of the judge prompt this verdict was produced under. `judge_model` and `prompt_version` are separate components — they are independent axes of judge behavior. The pipeline reads `config.judge_prompt_version`, falling back to the repo constant `JUDGE_PROMPT_SHA256` (`scripts/audit/_claim_audit_constants.py`) — the SHA-256 of the canonical judge-prompt section and the SINGLE SOURCE OF TRUTH for cache invalidation: `scripts/checks/check_judge_prompt_version.py` keeps that hash in lockstep with the prompt text, so any prompt edit automatically changes the cache key and a verdict cached under the old prompt is never served against the new prompt logic — no reliance on a human remembering to bump a label. (`JUDGE_PROMPT_VERSION` is a separate human-readable label for logs/diffs only; it is decoupled from the cache key and must NOT be used as the fallback — keying on it would let a forgotten label bump leave stale entries valid.) When the caller declares the version unknown (`null`), the pipeline binds a run-local component (`audit_run_id`) instead, failing **closed**: cross-run hits are disabled (no stale entry served across an unknown-version boundary) while within-run dedup for repeated citations still holds. `scripts/checks/check_judge_prompt_version.py` is the CI backstop against forgetting the hash re-pin.
 
 `active_constraints_for_(manifest_id, claim_id)`: the **manifest's** `manifest_negative_constraints[]` UNION that manifest's `claims[].negative_constraints[]` entry whose `claim_id` matches; sorted by `constraint_id`. Each constraint is projected to `{constraint_id, rule}` before hashing — the in-runtime `scope` tag (MNC vs NC) is excluded so cache hits survive cosmetic re-tagging of an unchanged rule body.
 
@@ -169,7 +169,7 @@ The judge is invoked ONCE per citation with both the alignment question and the 
 
 **Unified judge prompt** (canonical):
 
-<!-- JUDGE-PROMPT-CANONICAL-START (#361): scripts/check_judge_prompt_version.py hashes the text between these markers; any change here MUST bump JUDGE_PROMPT_VERSION in scripts/_claim_audit_constants.py so stale judge-cache entries are not served against the new prompt. -->
+<!-- JUDGE-PROMPT-CANONICAL-START (#361): scripts/checks/check_judge_prompt_version.py hashes the text between these markers; any change here MUST bump JUDGE_PROMPT_VERSION in scripts/audit/_claim_audit_constants.py so stale judge-cache entries are not served against the new prompt. -->
 
 > Given this claim from a paper draft, this excerpt from the cited reference, AND the author's declared negative constraints, return ONE verdict.
 >
@@ -273,7 +273,7 @@ Diff streams:
 | (c) cited constraint violation | emitted citation has `<!--ref:slug-->` AND judge returns VIOLATED | `claim_audit_result` row, `defect_stage=negative_constraint_violation` | HIGH-WARN gate-refuse |
 | (d) uncited constraint violation | sentence has NO `<!--ref:slug-->` AND matches MNC/NC scope AND judge returns VIOLATED | `constraint_violations[]` row | HIGH-WARN gate-refuse |
 
-**Precedence rules** (also enforced by `scripts/check_claim_audit_consistency.py` §6 rule 6):
+**Precedence rules** (also enforced by `scripts/checks/check_claim_audit_consistency.py` §6 rule 6):
 
 1. **Negative-constraint violation > drift**: when an audited citation in a manifest judges VIOLATED, that manifest's drift findings are absorbed — the constraint violation has already surfaced the failure at HIGH-WARN, and layering LOW-WARN drift noise on top of it would report the same paper-level problem twice. Absorption is **manifest-scoped and total within that manifest**: once any audited citation in manifest M judges VIOLATED, every `(M, *)` drift row that would otherwise emit (both INTENDED_NOT_EMITTED for missing manifest claims AND EMITTED_NOT_INTENDED for the violating citation itself) is suppressed. A violation in manifest A does NOT silence drift in manifest B — absorption never crosses manifest boundaries.
 2. **`citation_anchor` distinct from `source_description`**: anchor-wrong + description-correct is its own row; do NOT collapse them.
@@ -289,7 +289,7 @@ Three-condition token rule. A sentence in the emitted draft becomes an `uncited_
 2. **No `<!--ref:slug-->` marker on this sentence AND no marker on its adjacent clause**. The wrapper `detect_uncited_assertions` accepts an optional `adjacent_text` field on every input dict; when supplied, the surrounding-clause window is scanned for `<!--ref:slug-->` markers with the same condition-2 regex. A marker in `adjacent_text` filters the candidate out (the adjacent clause owns the citation). Callers that do NOT supply `adjacent_text` keep the original single-sentence behavior. The Step 9 e2e wiring in `tests/audit/test_e2e_claim_audit.py` exercises both paths.
 3. **Not a definitional sentence** (sentences containing `refers to` / `is defined as` / `we define` / `for the purposes of` are excluded — definitions don't need refs).
 
-Pseudocode (matches the production implementation at `scripts/uncited_assertion_detector.py`):
+Pseudocode (matches the production implementation at `scripts/audit/uncited_assertion_detector.py`):
 
 ```
 def detect_uncited(sentence):
@@ -308,7 +308,7 @@ def detect_uncited(sentence):
   return (bool(trigger_tokens), trigger_tokens)
 ```
 
-The implementation diverges from the original 4-line pseudocode in four places: (a) bare-number matches go through a year/version/section guard before counting as quantifiers (the unguarded `\b\d+(?:\.\d+)?%?` shape produced false positives on `2026` / `v3.7.3` / `section 3.1.2`); (b) `RE_REF_MARKER` is a broad presence probe `<!--\s*ref:[^\s>][^>]*?-->` — it accepts any `<!--ref:...-->` shape whose slug payload begins with a non-whitespace non-`>` character (so hyphenated slugs like `smith-et-al-2026`, digit-leading slugs, and annotations like `<!--ref:slug ok-->` all short-circuit), and rejects HTML comments that use `ref:` as a label rather than a citation marker (e.g. `<!-- ref: $analysis -->`). The v3.7.3 strict validator in `scripts/check_v3_7_3_three_layer_citation.py` polices the precise slug shape; the detector's job here is presence detection, not validation; (c) trigger tokens are returned in left-to-right document order; (d) the wrapper `detect_uncited_assertions` scans the optional `adjacent_text` field for a `<!--ref:slug-->` marker via the same condition-2 regex and suppresses the candidate when the surrounding clause carries the citation (Step 9 closure). All four divergences are pinned by `tests/audit/test_uncited_assertion.py`.
+The implementation diverges from the original 4-line pseudocode in four places: (a) bare-number matches go through a year/version/section guard before counting as quantifiers (the unguarded `\b\d+(?:\.\d+)?%?` shape produced false positives on `2026` / `v3.7.3` / `section 3.1.2`); (b) `RE_REF_MARKER` is a broad presence probe `<!--\s*ref:[^\s>][^>]*?-->` — it accepts any `<!--ref:...-->` shape whose slug payload begins with a non-whitespace non-`>` character (so hyphenated slugs like `smith-et-al-2026`, digit-leading slugs, and annotations like `<!--ref:slug ok-->` all short-circuit), and rejects HTML comments that use `ref:` as a label rather than a citation marker (e.g. `<!-- ref: $analysis -->`). The v3.7.3 strict validator in `scripts/checks/check_v3_7_3_three_layer_citation.py` polices the precise slug shape; the detector's job here is presence detection, not validation; (c) trigger tokens are returned in left-to-right document order; (d) the wrapper `detect_uncited_assertions` scans the optional `adjacent_text` field for a `<!--ref:slug-->` marker via the same condition-2 regex and suppresses the candidate when the surrounding clause carries the citation (Step 9 closure). All four divergences are pinned by `tests/audit/test_uncited_assertion.py`.
 
 Per D4-c last paragraph: **manifest membership does NOT exempt a sentence from being flagged**. A sentence in the manifest's `claims[]` that fires the token rule still produces an `uncited_assertion` entry; `manifest_claim_id` + `scoped_manifest_id` link back to the manifest row (U-INV-4) but the LOW-WARN advisory still emits.
 
@@ -371,5 +371,5 @@ The cited / uncited split for `audit_tool_failure` (rows 2 vs 3) is a schema-int
 - **v3.6.7 PATTERN PROTECTION convention**: `docs/design/2026-04-29-ars-v3.6.7-downstream-agent-pattern-protection-spec.md` §3.1
 - **Zhao et al. arXiv:2605.07723** — external motivation for L3 audit channel
 - **Li et al. RubricEM arXiv:2605.10899** — Borrows 1+2 (claim_intent_manifest + stage-attribution)
-- **Pipeline implementation**: `scripts/claim_audit_pipeline.py` (Python module pinned by `tests/audit/test_claim_audit_pipeline.py` T-P1..T-P11)
-- **Schema + invariant lint**: `scripts/check_claim_audit_consistency.py` (38 cross-field invariants)
+- **Pipeline implementation**: `scripts/audit/claim_audit_pipeline.py` (Python module pinned by `tests/audit/test_claim_audit_pipeline.py` T-P1..T-P11)
+- **Schema + invariant lint**: `scripts/checks/check_claim_audit_consistency.py` (38 cross-field invariants)

@@ -2,7 +2,7 @@
 """Tests for the verify_passport CLI (Delta 5 ad-hoc entry point).
 
 Spec: docs/design/2026-05-21-v3.10-182-promote-citation-gate-spec.md §2 Delta 5
-(`python -m scripts.verify_passport <passport.yaml>`).
+(`python -m scripts.audit.verify_passport <passport.yaml>`).
 
 The CLI is a thin wrapper: it loads a passport YAML and prints the
 verification summary as JSON. Network resolvers are real by default; tests
@@ -19,8 +19,8 @@ import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT / "scripts") not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT / "scripts"))
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 
 def _no_network_clients():
@@ -75,7 +75,7 @@ def test_cli_refuses_without_prose_join(tmp_path, capsys):
     citation_verification_summary, because the summary contract requires the
     prose-sourced ref_slug join that a passport alone does not carry. The CLI
     refuses (nonzero) with a clear error rather than fabricating ref_slug (#332)."""
-    from verify_passport import run
+    from scripts.audit.verify_passport import run
     passport = _write_passport(tmp_path, [_entry()])
     rc = run([str(passport)], clients_factory=_no_network_clients)
     assert rc != 0
@@ -88,7 +88,7 @@ def test_cli_synthetic_ref_slug_uses_citation_key(tmp_path, capsys):
     ref_slug from citation_key so the ad-hoc tool can still produce output. It
     warns on stderr that the result is diagnostic (not prose-join-safe) so no
     downstream consumer mistakes it for a real prose join (#332)."""
-    from verify_passport import run
+    from scripts.audit.verify_passport import run
     passport = _write_passport(tmp_path, [_entry(citation_key="a")])
     rc = run([str(passport), "--synthetic-ref-slug", "citation_key"],
              clients_factory=_no_network_clients)
@@ -105,12 +105,12 @@ def test_cli_synthetic_ref_slug_uses_citation_key(tmp_path, capsys):
 
 
 def test_cli_missing_file_errors(tmp_path):
-    from verify_passport import run
+    from scripts.audit.verify_passport import run
     rc = run([str(tmp_path / "nope.yaml")], clients_factory=_no_network_clients)
     assert rc != 0
 
 
 def test_cli_requires_path_arg():
-    from verify_passport import run
+    from scripts.audit.verify_passport import run
     with pytest.raises(SystemExit):
         run([], clients_factory=_no_network_clients)

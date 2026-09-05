@@ -94,10 +94,10 @@ def test_no_dead_code_after_exit(raw):
 
 
 def test_rq_framing_runner_in_path_filter(raw):
-    # The harness dispatches to scripts/check_rq_framing_patterns.py, so a change
+    # The harness dispatches to scripts/checks/check_rq_framing_patterns.py, so a change
     # there must re-trigger the workflow. Must appear in BOTH pull_request and
     # push path lists.
-    assert raw.count('"scripts/check_rq_framing_patterns.py"') >= 2
+    assert raw.count('"scripts/checks/check_rq_framing_patterns.py"') >= 2
 
 
 def test_final_gate_enforces_threshold_and_ack(workflow):
@@ -119,7 +119,7 @@ def test_harness_step_computes_failed_tasks(workflow):
     body = run_step["run"]
     # The absolute-threshold verdict is computed via the unit-tested module
     # (not an inline heredoc) and written to GITHUB_OUTPUT.
-    assert "scripts._eval_threshold_gate" in body
+    assert "scripts.evals._eval_threshold_gate" in body
     assert "failed_tasks=" in body
     assert "GITHUB_OUTPUT" in body
 

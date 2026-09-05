@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/ars_write_scope_guard.py\""
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/tooling/ars_write_scope_guard.py\""
           }
         ]
       }

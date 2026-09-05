@@ -8,7 +8,7 @@ from tempfile import TemporaryDirectory
 
 from tests.test_helpers import run_script
 
-SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "check_collaboration_depth_rubric.py"
+SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "checks" / "check_collaboration_depth_rubric.py"
 
 
 def _run(root: Path):

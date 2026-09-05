@@ -298,7 +298,7 @@ def test_temporal_audit_p1_requires_bound_dates():
 import subprocess
 import sys as _sys
 
-SCRIPT = REPO_ROOT / "scripts/check_v3_9_4_temporal_verification.py"
+SCRIPT = REPO_ROOT / "scripts/checks/check_v3_9_4_temporal_verification.py"
 
 
 def test_lint_exits_zero_on_clean_fixture(tmp_path):
