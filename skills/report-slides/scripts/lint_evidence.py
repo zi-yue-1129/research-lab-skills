@@ -16,10 +16,11 @@ different actions from the person reading the blocker.
 """
 from __future__ import annotations
 
+import hashlib
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 import presentation_events as events
 from design_tokens import DesignTokens, TokenError
@@ -47,7 +48,7 @@ def record_lint_evidence(
     artifact_sha256: str,
     tokens_sha256: str,
     report: LintReport,
-    tokens_path: Optional[str] = None,
+    tokens_path: str,
 ) -> Dict[str, Any]:
     """Persist one lint result as an immutable event.
 
@@ -58,9 +59,11 @@ def record_lint_evidence(
         artifact_sha256: Digest of the exact SVG bytes that were linted.
         tokens_sha256: Digest of the resolved token file the rules read.
         report: The result of `validate_visual_style.lint_svg`.
-        tokens_path: Where that token file was read from. Recorded so the gate
-            can notice the file changing after the run, which silently changes
-            what every recorded result means.
+        tokens_path: Where that token file was read from, relative to the
+            project root or absolute. Required: it is the only record of which
+            contract the result was measured under, and the gate re-reads it to
+            check the file has not changed since. Evidence that cannot name its
+            token file cannot be checked, and is refused rather than trusted.
 
     Returns:
         The persisted event mapping.
@@ -168,10 +171,10 @@ def latest_lint_tokens_digest(
     return str(digest) if digest else None
 
 
-def _newest_svg_digests(
+def _newest_svg_publications(
     project_root: Path, subject_type: str, subject_id: str
-) -> List[str]:
-    """Return the digests published for this subject at its newest timestamp.
+) -> List[Tuple[str, str]]:
+    """Return the `(path, digest)` pairs published at the newest timestamp.
 
     The artifact store is a map keyed by generated id, so it carries no order
     of its own and `created_at` resolves to the second. Two publications inside
@@ -184,8 +187,8 @@ def _newest_svg_digests(
         subject_id: The subject's generated identifier.
 
     Returns:
-        The distinct digests carrying the newest `created_at`, sorted; empty
-        when nothing has been published.
+        The distinct `(artifact_path, sha256)` pairs carrying the newest
+        `created_at`, sorted; empty when nothing has been published.
     """
     kind = _ARTIFACT_KIND_FOR_SUBJECT.get(subject_type)
     if kind is None:
@@ -201,10 +204,59 @@ def _newest_svg_digests(
         return []
     newest = max(str(record.get("created_at", "")) for record in records)
     return sorted({
-        str(record.get("sha256"))
+        (str(record.get("path") or record.get("relative_path") or ""),
+         str(record.get("sha256")))
         for record in records
         if str(record.get("created_at", "")) == newest and record.get("sha256")
     })
+
+
+def _newest_svg_digests(
+    project_root: Path, subject_type: str, subject_id: str
+) -> List[str]:
+    """Return the digests published for this subject at its newest timestamp.
+
+    Args:
+        project_root: Project root owning the presentation state.
+        subject_type: `slide` or `module`.
+        subject_id: The subject's generated identifier.
+
+    Returns:
+        The distinct digests carrying the newest `created_at`, sorted.
+    """
+    return sorted({
+        digest for _, digest
+        in _newest_svg_publications(project_root, subject_type, subject_id)
+    })
+
+
+def _published_bytes_blocker(
+    project_root: Path, artifact_path: str, artifact_sha256: str
+) -> Optional[Dict[str, Any]]:
+    """Report why the file on disk is not the artifact that was published.
+
+    An artifact record is a claim about bytes, and the linter measured bytes,
+    not a claim. Overwriting the file without publishing a new record leaves
+    both the record and the lint evidence internally consistent and describing
+    something nobody can read any more, so the gate hashes the file itself.
+
+    Args:
+        project_root: Project root owning the presentation state.
+        artifact_path: The published path, relative to the project root.
+        artifact_sha256: The digest the artifact record claims for it.
+
+    Returns:
+        A blocker mapping, or `None` when the file matches the record.
+    """
+    if not artifact_path:
+        return {"reason": "lint_artifact_path_missing"}
+    path = project_root / artifact_path
+    if not path.is_file():
+        return {"reason": "lint_artifact_file_missing", "path": artifact_path}
+    on_disk = hashlib.sha256(path.read_bytes()).hexdigest()
+    if on_disk != artifact_sha256:
+        return {"reason": "lint_artifact_bytes_changed", "path": artifact_path}
+    return None
 
 
 def current_svg_digest(
@@ -242,60 +294,76 @@ def lint_blockers(
         Machine-readable blockers; empty means the linter passes on the current
         bytes. `lint_artifact_missing` means no SVG has been published at all,
         `lint_artifact_ambiguous` that two publications share the newest
-        timestamp and disagree about the bytes,
-        `lint_evidence_missing` that it has never been linted,
-        `lint_evidence_stale` that the evidence predates the current bytes or
-        token set, and `lint_failed` that hard errors are outstanding.
+        timestamp and disagree about the bytes, `lint_artifact_file_missing`
+        and `lint_artifact_bytes_changed` that the file on disk is no longer
+        the artifact that was published, `lint_evidence_missing` that it has
+        never been linted, `lint_evidence_stale` that the evidence predates the
+        current bytes or token set, `lint_tokens_changed` and
+        `lint_tokens_unverifiable` that the token file the run measured against
+        can no longer be shown to be the one on disk, and `lint_failed` that
+        hard errors are outstanding.
     """
-    published = _newest_svg_digests(project_root, subject_type, subject_id)
+    published = _newest_svg_publications(project_root, subject_type, subject_id)
     if not published:
         return [{"reason": "lint_artifact_missing"}]
     if len(published) > 1:
-        return [{"reason": "lint_artifact_ambiguous", "digests": published}]
-    artifact_sha256 = published[0]
+        return [{"reason": "lint_artifact_ambiguous",
+                 "digests": sorted({digest for _, digest in published})}]
+    artifact_path, artifact_sha256 = published[0]
+    on_disk = _published_bytes_blocker(
+        project_root, artifact_path, artifact_sha256)
+    if on_disk is not None:
+        return [on_disk]
     evidence = current_lint_evidence(
         project_root, subject_type, subject_id, artifact_sha256, tokens_sha256)
     if evidence is None:
         prior = _matching_events(project_root, subject_type, subject_id)
         reason = "lint_evidence_stale" if prior else "lint_evidence_missing"
         return [{"reason": reason}]
-    drifted = _tokens_file_drifted(evidence)
-    if drifted is not None:
-        return [{"reason": "lint_tokens_changed", "tokens_path": drifted}]
+    unverifiable = _tokens_file_blocker(project_root, evidence)
+    if unverifiable is not None:
+        return [unverifiable]
     if evidence["errors"]:
         return [{"reason": "lint_failed", "rules": list(evidence["errors"])}]
     return []
 
 
-def _tokens_file_drifted(evidence: Mapping[str, Any]) -> Optional[str]:
-    """Return the token path whose content no longer matches the run, if any.
+def _tokens_file_blocker(
+    project_root: Path, evidence: Mapping[str, Any]
+) -> Optional[Dict[str, Any]]:
+    """Report why the recorded token file is no longer demonstrably the same.
 
     Nothing in the state store records which token set a deck is held to, so
-    the run's own token file is the contract. That makes editing the file after
-    the run a silent change to what every recorded result means -- the only
-    check available is that the file still hashes to what the run saw.
+    the file a run read is the contract. Editing it afterwards silently changes
+    what every recorded result means, and losing it removes the only way to
+    check. Both refuse: a recorded path that cannot be resolved is not evidence
+    of correctness, and re-running the linter clears either state.
 
     Args:
+        project_root: Project root the recorded path is resolved against.
         evidence: A lint event from `current_lint_evidence`.
 
     Returns:
-        The recorded path when the file still exists and no longer matches, and
-        `None` when it matches, was not recorded, or is no longer on this
-        machine -- a result recorded elsewhere is not evidence of drift.
+        A blocker mapping, or `None` when the file still hashes to what the run
+        measured against.
     """
     recorded = evidence.get("tokens_path")
     if not isinstance(recorded, str) or not recorded:
-        return None
+        return {"reason": "lint_tokens_unverifiable", "tokens_path": None}
     path = Path(recorded)
+    if not path.is_absolute():
+        path = project_root / path
     if not path.is_file():
-        return None
+        return {"reason": "lint_tokens_unverifiable", "tokens_path": recorded}
     try:
         current = DesignTokens.load(path).digest
     except TokenError:
         # The file is there but no longer a valid token set, so it certainly is
         # not the one the run measured against.
-        return recorded
-    return None if current == evidence.get("tokens_sha256") else recorded
+        return {"reason": "lint_tokens_changed", "tokens_path": recorded}
+    if current != evidence.get("tokens_sha256"):
+        return {"reason": "lint_tokens_changed", "tokens_path": recorded}
+    return None
 
 
 def unanswered_warnings(

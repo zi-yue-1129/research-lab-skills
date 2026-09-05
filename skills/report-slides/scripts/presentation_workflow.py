@@ -481,9 +481,20 @@ def record_production_review(project_root: Path, review_path: Path) -> dict[str,
         except ProductionGateError as exc:
             raise ReviewGateError("production_review_recordable", deck_id, exc.blockers) from exc
         blockers = review_result_blockers(project_root, subject_type, subject_id, review)
-        for persisted in load_review_results(project_root, {subject_id}):
+        persisted_reviews = load_review_results(project_root, {subject_id})
+        # The candidate above is validated against the current lint run.
+        # Earlier rounds are not: they answered the run they were shown,
+        # and re-judging them here would refuse every review written after
+        # a revision changed which warnings the slide raises.
+        effective_ids = {
+            str(item.get("id"))
+            for item in effective_review_results(persisted_reviews)
+        }
+        for persisted in persisted_reviews:
+            persisted_id = str(persisted.get("id"))
             blockers.extend(review_result_blockers(
-                project_root, subject_type, subject_id, persisted, str(persisted.get("id"))
+                project_root, subject_type, subject_id, persisted,
+                persisted_id, is_effective=persisted_id in effective_ids,
             ))
         if target.get("status") != "review_required":
             blockers.append({"reason": f"status:{target.get('status')}:review_required_expected"})

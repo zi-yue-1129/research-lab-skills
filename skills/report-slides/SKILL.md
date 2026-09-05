@@ -740,7 +740,12 @@ several slides would file every result under one of them.
 The exit code is not the gate; the recorded result is. `assert_slide_passable`
 refuses a slide with no lint evidence, with evidence older than the current SVG
 or token file, or with outstanding hard errors — so re-running the linter after
-every edit is not diligence, it is the only way the slide ever passes. Exit
+every edit is not diligence, it is the only way the slide ever passes. It also
+hashes the published SVG on disk and re-reads the recorded token file, so
+overwriting either after the run refuses the slide rather than inheriting the
+old result; a token file that has been moved or deleted is refused too, because
+a check that cannot run is not a check that passed. Both are cleared by running
+the linter again. Exit
 code 1 also blocks the slide immediately: the module returns to
 `revision_required` with the findings attached, and Stages 11–12 are not
 entered.

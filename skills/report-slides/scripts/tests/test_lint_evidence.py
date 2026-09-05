@@ -23,6 +23,10 @@ from design_tokens import DEFAULT_TOKENS_PATH, DesignTokens
 from visual_style.report import Finding, LintReport
 
 _SCRIPTS = Path(__file__).resolve().parent.parent
+# A nominal reference for the unit-level tests below: they exercise
+# digest matching and warning answering, and never reach the check
+# that re-reads the token file.
+_TOKENS_REF = "specs/tokens.yaml"
 
 
 @pytest.fixture()
@@ -37,8 +41,29 @@ def project(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def _publish_svg(project_root: Path, sha256: str) -> str:
-    """Record a slide-svg artifact so the gate has bytes to reason about.
+def _write_svg(project_root: Path, body: str) -> str:
+    """Write the slide's SVG and return the digest of the bytes written.
+
+    The gate hashes the file itself, so a fixture that publishes a digest for
+    a file that was never written tests nothing: it would pass an
+    implementation that trusts the record and never opens the artifact.
+
+    Args:
+        project_root: Project root owning the presentation state.
+        body: Text distinguishing one revision of the slide from another.
+
+    Returns:
+        The SHA-256 of the bytes now on disk.
+    """
+    path = project_root / "slides/slide-01.svg"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body if body.startswith("<svg") else f"<svg>{body}</svg>",
+                    encoding="utf-8")
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _publish_svg(project_root: Path, body: str = "one") -> Tuple[str, str]:
+    """Write a slide's SVG and record it as the slide's current artifact.
 
     An artifact record is refused unless its deck and slide exist, so the
     subject is created here and its generated id returned; the evidence
@@ -46,18 +71,38 @@ def _publish_svg(project_root: Path, sha256: str) -> str:
 
     Args:
         project_root: Project root owning the presentation state.
-        sha256: Digest to publish as the slide's current SVG.
+        body: Text distinguishing one revision of the slide from another.
 
     Returns:
-        The generated slide identifier the artifact was recorded against.
+        The generated slide identifier and the digest of the published bytes.
     """
     deck = state.create_deck(project_root, "Lint evidence deck")
     slide = state.create_slide(project_root, deck["id"], "slide-01", "A slide")
+    digest = _write_svg(project_root, body)
     events.create_artifact_record(
         project_root, deck_id=deck["id"], artifact_kind="slide-svg",
-        artifact_path="slides/slide-01.svg", sha256=sha256,
+        artifact_path="slides/slide-01.svg", sha256=digest,
         producer_id="test", slide_id=slide["id"])
-    return str(slide["id"])
+    return str(slide["id"]), digest
+
+
+def _stage_tokens(project_root: Path) -> Tuple[str, str]:
+    """Copy the shipped token set into the project and describe it.
+
+    The gate re-reads the recorded token file to confirm it still hashes to
+    what the run measured against, so a test that reaches that check needs a
+    file that is really there.
+
+    Args:
+        project_root: Project root owning the presentation state.
+
+    Returns:
+        The project-relative reference and the canonical token digest.
+    """
+    path = project_root / _TOKENS_REF
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(DEFAULT_TOKENS_PATH.read_bytes())
+    return _TOKENS_REF, DesignTokens.load(path).digest
 
 
 def _report(errors: int = 0, warnings: Tuple[str, ...] = ()) -> LintReport:
@@ -79,7 +124,7 @@ def _report(errors: int = 0, warnings: Tuple[str, ...] = ()) -> LintReport:
 def test_a_recorded_result_is_found_again_by_its_digests(project: Path) -> None:
     """The evidence is keyed by what it examined, not by when it ran."""
     le.record_lint_evidence(project, "slide", "sl-1", "a" * 64, "b" * 64,
-                            _report())
+                            _report(), tokens_path=_TOKENS_REF)
     found = le.current_lint_evidence(project, "slide", "sl-1", "a" * 64,
                                      "b" * 64)
     assert found is not None and found["errors"] == []
@@ -90,7 +135,7 @@ def test_a_recorded_result_is_found_again_by_its_digests(project: Path) -> None:
 def test_a_result_for_different_bytes_is_not_current(project: Path) -> None:
     """Editing the SVG invalidates the evidence, silently or not at all."""
     le.record_lint_evidence(project, "slide", "sl-1", "a" * 64, "b" * 64,
-                            _report())
+                            _report(), tokens_path=_TOKENS_REF)
     assert le.current_lint_evidence(project, "slide", "sl-1", "c" * 64,
                                     "b" * 64) is None
 
@@ -98,7 +143,7 @@ def test_a_result_for_different_bytes_is_not_current(project: Path) -> None:
 def test_a_result_for_different_tokens_is_not_current(project: Path) -> None:
     """A token change re-opens every colour and type question on the slide."""
     le.record_lint_evidence(project, "slide", "sl-1", "a" * 64, "b" * 64,
-                            _report())
+                            _report(), tokens_path=_TOKENS_REF)
     assert le.current_lint_evidence(project, "slide", "sl-1", "a" * 64,
                                     "d" * 64) is None
 
@@ -106,9 +151,9 @@ def test_a_result_for_different_tokens_is_not_current(project: Path) -> None:
 def test_the_latest_result_for_one_digest_pair_wins(project: Path) -> None:
     """A re-run after a fix supersedes the failing result it replaces."""
     le.record_lint_evidence(project, "slide", "sl-1", "a" * 64, "b" * 64,
-                            _report(errors=2))
+                            _report(errors=2), tokens_path=_TOKENS_REF)
     le.record_lint_evidence(project, "slide", "sl-1", "a" * 64, "b" * 64,
-                            _report())
+                            _report(), tokens_path=_TOKENS_REF)
     found = le.current_lint_evidence(project, "slide", "sl-1", "a" * 64,
                                      "b" * 64)
     assert found is not None and found["errors"] == []
@@ -116,7 +161,7 @@ def test_the_latest_result_for_one_digest_pair_wins(project: Path) -> None:
 
 def test_no_evidence_at_all_is_a_blocker(project: Path) -> None:
     """The default is refusal. A linter nobody ran must not read as a pass."""
-    slide_id = _publish_svg(project, "a" * 64)
+    slide_id, _ = _publish_svg(project)
     reasons = {blocker["reason"] for blocker in
                le.lint_blockers(project, "slide", slide_id, "b" * 64)}
     assert reasons == {"lint_evidence_missing"}
@@ -124,9 +169,9 @@ def test_no_evidence_at_all_is_a_blocker(project: Path) -> None:
 
 def test_evidence_for_older_bytes_is_a_blocker(project: Path) -> None:
     """Stale evidence is worse than none: it looks like a pass."""
-    slide_id = _publish_svg(project, "a" * 64)
+    slide_id, _ = _publish_svg(project)
     le.record_lint_evidence(project, "slide", slide_id, "0" * 64, "b" * 64,
-                            _report())
+                            _report(), tokens_path=_TOKENS_REF)
     reasons = {blocker["reason"] for blocker in
                le.lint_blockers(project, "slide", slide_id, "b" * 64)}
     assert reasons == {"lint_evidence_stale"}
@@ -141,27 +186,31 @@ def test_an_unpublished_svg_is_its_own_blocker(project: Path) -> None:
 
 def test_a_failing_result_is_a_blocker(project: Path) -> None:
     """A hard error blocks the slide whatever the three reviewers concluded."""
-    slide_id = _publish_svg(project, "a" * 64)
-    le.record_lint_evidence(project, "slide", slide_id, "a" * 64, "b" * 64,
-                            _report(errors=1))
-    blockers = le.lint_blockers(project, "slide", slide_id, "b" * 64)
+    slide_id, digest = _publish_svg(project)
+    tokens_ref, tokens_digest = _stage_tokens(project)
+    le.record_lint_evidence(project, "slide", slide_id, digest, tokens_digest,
+                            _report(errors=1), tokens_path=tokens_ref)
+    blockers = le.lint_blockers(project, "slide", slide_id, tokens_digest)
     assert [blocker["reason"] for blocker in blockers] == ["lint_failed"]
     assert blockers[0]["rules"] == ["safe-area"]
 
 
 def test_a_passing_result_blocks_nothing(project: Path) -> None:
     """Warnings are for the art director to answer, not for the gate."""
-    slide_id = _publish_svg(project, "a" * 64)
-    le.record_lint_evidence(project, "slide", slide_id, "a" * 64, "b" * 64,
-                            _report(warnings=("occupancy",)))
-    assert le.lint_blockers(project, "slide", slide_id, "b" * 64) == []
+    slide_id, digest = _publish_svg(project)
+    tokens_ref, tokens_digest = _stage_tokens(project)
+    le.record_lint_evidence(project, "slide", slide_id, digest, tokens_digest,
+                            _report(warnings=("occupancy",)),
+                            tokens_path=tokens_ref)
+    assert le.lint_blockers(project, "slide", slide_id, tokens_digest) == []
 
 
 def test_unanswered_warnings_are_named(project: Path) -> None:
     """The reviewer must answer the warnings this run produced."""
     evidence = le.record_lint_evidence(
         project, "slide", "sl-1", "a" * 64, "b" * 64,
-        _report(warnings=("occupancy", "equal-card-repetition")))
+        _report(warnings=("occupancy", "equal-card-repetition")),
+        tokens_path=_TOKENS_REF)
     review: Dict[str, Any] = {
         "reviewer_role": "art_direction", "status": "passed",
         "linter_warnings_answered": [
@@ -181,7 +230,7 @@ def test_answering_a_warning_that_was_not_raised_is_unanswered(
     """
     evidence = le.record_lint_evidence(
         project, "slide", "sl-1", "a" * 64, "b" * 64,
-        _report(warnings=("occupancy",)))
+        _report(warnings=("occupancy",)), tokens_path=_TOKENS_REF)
     review: Dict[str, Any] = {
         "reviewer_role": "art_direction", "status": "passed",
         "linter_warnings_answered": [
@@ -195,7 +244,7 @@ def test_an_empty_answer_does_not_count(project: Path) -> None:
     """A blank string is not an answer."""
     evidence = le.record_lint_evidence(
         project, "slide", "sl-1", "a" * 64, "b" * 64,
-        _report(warnings=("occupancy",)))
+        _report(warnings=("occupancy",)), tokens_path=_TOKENS_REF)
     review: Dict[str, Any] = {
         "reviewer_role": "art_direction", "status": "passed",
         "linter_warnings_answered": [{"rule": "occupancy", "answer": "  "}],
@@ -206,7 +255,7 @@ def test_an_empty_answer_does_not_count(project: Path) -> None:
 def test_a_module_is_linted_under_its_own_subject_type(project: Path) -> None:
     """Modules and slides do not share an evidence namespace."""
     le.record_lint_evidence(project, "module", "sl-1", "a" * 64, "b" * 64,
-                            _report())
+                            _report(), tokens_path=_TOKENS_REF)
     assert le.current_lint_evidence(project, "slide", "sl-1", "a" * 64,
                                     "b" * 64) is None
 
@@ -215,7 +264,7 @@ def test_an_unknown_subject_type_is_refused(project: Path) -> None:
     """A typo must not create a namespace nothing ever reads."""
     with pytest.raises(ValueError, match="subject_type"):
         le.record_lint_evidence(project, "deck", "dk-1", "a" * 64, "b" * 64,
-                                _report())
+                                _report(), tokens_path=_TOKENS_REF)
 
 
 def test_the_cli_records_evidence_the_gate_accepts(
@@ -227,14 +276,13 @@ def test_the_cli_records_evidence_the_gate_accepts(
     evidence that can never match a deck's declared token set, so every slide
     would be refused as unlinted no matter how often the linter ran.
     """
-    svg = tmp_path / "slide.svg"
-    svg.write_text(
+    slide_id, _ = _publish_svg(
+        project,
         '<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" '
         'viewBox="0 0 1200 675">'
         '<rect x="0" y="0" width="1200" height="675" fill="#ffffff"/>'
-        '</svg>\n', encoding="utf-8")
-    slide_id = _publish_svg(
-        project, hashlib.sha256(svg.read_bytes()).hexdigest())
+        '</svg>\n')
+    svg = project / "slides/slide-01.svg"
     completed = subprocess.run(
         [sys.executable, str(_SCRIPTS / "validate_visual_style.py"),
          "--svg", str(svg), "--tokens", str(DEFAULT_TOKENS_PATH), "--json",
@@ -255,7 +303,7 @@ def test_two_publications_in_one_second_are_ambiguous(project: Path) -> None:
     either would let the gate judge a slide against bytes it may no longer
     have; the state itself is what needs fixing.
     """
-    slide_id = _publish_svg(project, "a" * 64)
+    slide_id, digest = _publish_svg(project)
     deck_id = next(iter(state.load_decks(project)))
     events.create_artifact_record(
         project, deck_id=deck_id, artifact_kind="slide-svg",
@@ -264,5 +312,5 @@ def test_two_publications_in_one_second_are_ambiguous(project: Path) -> None:
     blockers = le.lint_blockers(project, "slide", slide_id, "b" * 64)
     assert [blocker["reason"] for blocker in blockers] == [
         "lint_artifact_ambiguous"]
-    assert blockers[0]["digests"] == ["a" * 64, "c" * 64]
+    assert blockers[0]["digests"] == sorted({digest, "c" * 64})
     assert le.current_svg_digest(project, "slide", slide_id) is None

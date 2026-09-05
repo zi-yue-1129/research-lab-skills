@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import shutil
 from pathlib import Path
 from typing import Any, Dict, Sequence, Tuple
@@ -22,7 +23,9 @@ _DEFAULT_TOKENS = _SKILL_DIR / "references/tokens/default.tokens.yaml"
 
 # Any digest will do for the published SVG: the gate compares the artifact
 # record against the lint evidence, and never opens the file.
-_SVG_SHA256 = "1" * 64
+_SVG_RELATIVE = "slides/slide-01.svg"
+_SVG_BODY = '<svg xmlns="http://www.w3.org/2000/svg" width="1200" ' \
+    'height="675" viewBox="0 0 1200 675"/>\n'
 
 
 def test_render_integrity_is_an_accepted_review_role() -> None:
@@ -168,6 +171,26 @@ def project(tmp_path: Path) -> Path:
     return tmp_path
 
 
+def _write_slide_svg(project_root: Path, body: str = _SVG_BODY) -> str:
+    """Write the slide's SVG and return the digest of the bytes written.
+
+    The gate hashes the published file, so a fixture that records a digest for
+    a file nobody wrote would pass an implementation that trusts the artifact
+    record and never opens the artifact.
+
+    Args:
+        project_root: Project root owning the presentation state.
+        body: The SVG text to write.
+
+    Returns:
+        The SHA-256 of the bytes now on disk.
+    """
+    path = project_root / _SVG_RELATIVE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body, encoding="utf-8")
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def _stage_token_file(project_root: Path) -> Path:
     """Copy the shipped tokens into the project and return their path.
 
@@ -233,7 +256,7 @@ def _slide_with_three_passing_reviews(
         state.set_slide_status(project_root, slide_id, status)
     create_artifact_record(
         project_root, deck_id=deck["id"], artifact_kind="slide-svg",
-        artifact_path="slides/slide-01.svg", sha256=_SVG_SHA256,
+        artifact_path=_SVG_RELATIVE, sha256=_write_slide_svg(project_root),
         producer_id="slide-producer", slide_id=slide_id)
     state.record_review(project_root, "slide", slide_id,
                         "scientific-reviewer", "scientific", "passed")
@@ -265,9 +288,10 @@ def _lint_clean_with_warnings(
     )
     tokens_path = project_root / "specs/tokens.yaml"
     lint_evidence.record_lint_evidence(
-        project_root, "slide", slide_id, _SVG_SHA256,
+        project_root, "slide", slide_id,
+        hashlib.sha256((project_root / _SVG_RELATIVE).read_bytes()).hexdigest(),
         DesignTokens.load(tokens_path).digest, report,
-        tokens_path=str(tokens_path))
+        tokens_path="specs/tokens.yaml")
 
 
 def test_a_slide_cannot_pass_without_a_current_lint_result(
@@ -281,8 +305,11 @@ def test_a_slide_cannot_pass_without_a_current_lint_result(
     slide_id = _slide_with_three_passing_reviews(project)
     with pytest.raises(gates.ReviewGateError) as caught:
         gates.assert_slide_passable(project, slide_id)
-    assert any(str(blocker["reason"]).startswith("lint_")
-               for blocker in caught.value.blockers)
+    # Name the blocker: accepting any `lint_*` reason would also accept a
+    # broken artifact lookup that reported `lint_artifact_missing` for every
+    # slide, which is a different defect wearing the same prefix.
+    assert "lint_evidence_missing" in [
+        blocker["reason"] for blocker in caught.value.blockers]
 
 
 def test_an_art_direction_pass_must_answer_the_warnings(project: Path) -> None:
@@ -335,32 +362,30 @@ def test_a_slide_is_bound_to_the_bytes_it_linted(project: Path) -> None:
     weaker than an independent declaration -- no writer produces one -- and is
     still enough to refuse evidence that predates the current SVG.
     """
-    deck = state.create_deck(project, "Simple deck")
-    slide = state.create_slide(project, deck["id"], "slide-01", "A slide")
-    slide_id = str(slide["id"])
-    for status in ("ready", "assigned", "producing", "review_required"):
-        state.set_slide_status(project, slide_id, status)
-    create_artifact_record(
-        project, deck_id=deck["id"], artifact_kind="slide-svg",
-        artifact_path="slides/slide-01.svg", sha256=_SVG_SHA256,
-        producer_id="slide-producer", slide_id=slide_id)
-    for reviewer, role in (("scientific-reviewer", "scientific"),
-                           ("render-reviewer", "render_integrity"),
-                           ("art-reviewer", "art_direction")):
-        state.record_review(project, "slide", slide_id, reviewer, role,
-                            "passed", linter_warnings_answered=[])
-    lint_evidence.record_lint_evidence(
-        project, "slide", slide_id, _SVG_SHA256, "b" * 64, LintReport())
+    slide_id = _slide_with_three_passing_reviews(project, answer_warnings=False)
+    _lint_clean_with_warnings(project, slide_id, ())
     assert gates.assert_slide_passable(project, slide_id)["slide"]["id"] == slide_id
 
-    # Rewrite the published bytes in place rather than adding a second record:
-    # two records inside one clock second are unordered, which is a different
-    # blocker with a different meaning.
+    # Edit the file itself, not the digest recorded for it. Rewriting the
+    # record would leave the bytes on disk untouched and would pass an
+    # implementation that never reads them.
+    new_digest = _write_slide_svg(project, _SVG_BODY.replace("675", "676"))
+    with pytest.raises(gates.ReviewGateError) as caught:
+        gates.assert_slide_passable(project, slide_id)
+    assert [blocker["reason"] for blocker in caught.value.blockers
+            if str(blocker["reason"]).startswith("lint_")] == [
+        "lint_artifact_bytes_changed"]
+
+    # Recording the new bytes as the current artifact moves the failure on:
+    # they are now what is published, and no lint run has ever measured them.
+    # The record is edited in place rather than appended, because a second
+    # publication inside the same clock second is unordered and raises a
+    # different blocker with a different meaning.
     artifacts_path = project / ".research/presentations/state/artifacts.yaml"
     artifacts = yaml.safe_load(artifacts_path.read_text(encoding="utf-8"))
     for record in artifacts["artifacts"].values():
         if record.get("artifact_kind") == "slide-svg":
-            record["sha256"] = "2" * 64
+            record["sha256"] = new_digest
     artifacts_path.write_text(yaml.safe_dump(artifacts), encoding="utf-8")
     with pytest.raises(gates.ReviewGateError) as caught:
         gates.assert_slide_passable(project, slide_id)
@@ -401,3 +426,106 @@ def test_the_persisted_review_keeps_its_warning_answers(project: Path) -> None:
         project, "slide", str(slide["id"]), "art-reviewer", "art_direction",
         "passed", linter_warnings_answered=answers)
     assert event["linter_warnings_answered"] == answers
+
+
+def test_an_art_direction_pass_over_hard_errors_is_refused(
+        project: Path) -> None:
+    """A reviewer cannot sign off measurable errors the linter found.
+
+    Without this, the slide never has to face `assert_slide_passable` at all:
+    `record_production_review` promotes a slide to `passed` on passing roles
+    alone, and a deck reaches draft review on that status. The error check has
+    to live where the review is admitted, not only where the slide is read
+    back.
+    """
+    deck = state.create_deck(project, "Error deck")
+    slide = state.create_slide(project, deck["id"], "slide-01", "A slide")
+    slide_id = str(slide["id"])
+    _stage_token_file(project)
+    for status in ("ready", "assigned", "producing", "review_required"):
+        state.set_slide_status(project, slide_id, status)
+    create_artifact_record(
+        project, deck_id=deck["id"], artifact_kind="slide-svg",
+        artifact_path=_SVG_RELATIVE, sha256=_write_slide_svg(project),
+        producer_id="slide-producer", slide_id=slide_id)
+    report = LintReport()
+    report.add(Finding(rule="safe-area", severity="error", message="outside",
+                       element_id="node-1", location=(0.0, 0.0)))
+    tokens_path = project / "specs/tokens.yaml"
+    lint_evidence.record_lint_evidence(
+        project, "slide", slide_id,
+        hashlib.sha256((project / _SVG_RELATIVE).read_bytes()).hexdigest(),
+        DesignTokens.load(tokens_path).digest, report,
+        tokens_path="specs/tokens.yaml")
+
+    blockers = gates.review_result_blockers(
+        project, "slide", slide_id, _review("art_direction", "passed"), None)
+    assert {"reason": "art_direction:lint_errors_outstanding",
+            "rules": ["safe-area"]} in blockers
+
+
+def test_a_superseded_review_is_not_held_to_a_later_lint_run(
+        project: Path) -> None:
+    """A revision that changes the warnings must not deadlock the slide.
+
+    Round 1 answers the warnings it was shown. If a legitimate revision makes
+    the slide raise a different warning, judging round 1 against the new run
+    turns it into a permanent blocker -- and because the event log is
+    append-only, no round 2 can ever repair it. The slide would be unpassable
+    with no write that fixes it.
+    """
+    slide_id = _slide_with_three_passing_reviews(project)
+    _lint_clean_with_warnings(project, slide_id, ("connector-crossing",))
+    # Round 1 answered `occupancy`, which this run no longer raises.
+    state.record_review(
+        project, "slide", slide_id, "art-reviewer-2", "art_direction",
+        "passed", round_number=2,
+        linter_warnings_answered=[
+            {"rule": "connector-crossing",
+             "answer": "the two feedback edges cross by design"}])
+    assert gates.assert_slide_passable(project, slide_id)["slide"]["id"] == (
+        slide_id)
+
+
+def test_a_review_written_before_the_lint_run_does_not_answer_it(
+        project: Path) -> None:
+    """Answers match by rule name, which any later run reproduces for free.
+
+    An art-direction review recorded before the measurement cannot have seen
+    it. Crediting its answers would mean a reviewer who once explained
+    `occupancy` has explained every future occurrence of it, on bytes they
+    never saw.
+    """
+    slide_id = _slide_with_three_passing_reviews(project)
+    _lint_clean_with_warnings(project, slide_id, ("occupancy",))
+    evidence = lint_evidence.current_lint_evidence(
+        project, "slide", slide_id,
+        hashlib.sha256((project / _SVG_RELATIVE).read_bytes()).hexdigest(),
+        DesignTokens.load(project / "specs/tokens.yaml").digest)
+    assert evidence is not None
+    stale = dict(_review("art_direction", "passed",
+                         [{"rule": "occupancy", "answer": "sparse by design"}]))
+    stale["ts"] = "2000-01-01T00:00:00+00:00"
+    stale["subject_id"] = slide_id
+    blockers = gates.review_result_blockers(
+        project, "slide", slide_id, stale, None)
+    assert {"reason": "art_direction:review_predates_lint_run"} in blockers
+
+
+def test_a_deleted_token_file_is_refused_rather_than_assumed_unchanged(
+        project: Path) -> None:
+    """A check that cannot run is not a check that passed.
+
+    The token file is the whole contract, so losing it removes the only way to
+    confirm the recorded result still means what it said. Re-running the linter
+    clears this, so the refusal costs a command rather than the deck.
+    """
+    slide_id = _slide_with_three_passing_reviews(project)
+    _lint_clean_with_warnings(project, slide_id, ())
+    assert gates.assert_slide_passable(project, slide_id)
+
+    (project / "specs/tokens.yaml").unlink()
+    with pytest.raises(gates.ReviewGateError) as caught:
+        gates.assert_slide_passable(project, slide_id)
+    assert "lint_tokens_unverifiable" in [
+        blocker["reason"] for blocker in caught.value.blockers]

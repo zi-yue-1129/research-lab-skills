@@ -167,7 +167,7 @@ via ELK/Graphviz/dagre. See spec §5.
 The report is ordered deterministically so a run is reproducible and diffable:
 errors before warnings, then by rule id, then by element id, then by message.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `skills/report-slides/scripts/tests/test_visual_style_report.py`:
 
@@ -245,12 +245,12 @@ def test_empty_report_is_valid() -> None:
     assert payload["findings"] == []
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_visual_style_report.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'visual_style'`.
 
-- [ ] **Step 3: Create the package and report model**
+- [x] **Step 3: Create the package and report model**
 
 Create `skills/report-slides/scripts/visual_style/__init__.py`:
 
@@ -386,12 +386,12 @@ class LintReport:
         }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_visual_style_report.py -v`
 Expected: PASS — 6 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add skills/report-slides/scripts/visual_style/ \
@@ -467,7 +467,7 @@ git commit -m "feat(report-slides): add visual-style finding and report model"
 - Text width is measured, never estimated. `line_count` counts `<tspan>` children,
   defaulting to 1.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `skills/report-slides/scripts/tests/test_visual_style_scene.py`:
 
@@ -673,12 +673,12 @@ def test_parse_scene_raises_on_missing_viewbox(tmp_path: Path) -> None:
     assert "viewBox" in str(excinfo.value)
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_visual_style_scene.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'visual_style.scene'`.
 
-- [ ] **Step 3: Write the scene model**
+- [x] **Step 3: Write the scene model**
 
 Create `skills/report-slides/scripts/visual_style/scene.py`:
 
@@ -1264,12 +1264,12 @@ def _parse_points(raw: str) -> Tuple[Tuple[float, float], ...]:
     )
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_visual_style_scene.py -v`
 Expected: PASS — 14 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add skills/report-slides/scripts/visual_style/scene.py \
@@ -1316,7 +1316,7 @@ sitting inside its own node, are both correct composition. The rule therefore
 reports an overlap only when neither box contains the other *and* the two belong
 to different semantic nodes. Two text runs overlapping is always a defect.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `skills/report-slides/scripts/tests/test_visual_style_geometry.py`:
 
@@ -1501,12 +1501,12 @@ def test_check_runs_every_geometry_rule(tokens: DesignTokens) -> None:
     }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_visual_style_geometry.py -v`
 Expected: FAIL — `ImportError: cannot import name 'geometry' from 'visual_style'`.
 
-- [ ] **Step 3: Write the geometry rules**
+- [x] **Step 3: Write the geometry rules**
 
 Create `skills/report-slides/scripts/visual_style/geometry.py`:
 
@@ -1842,12 +1842,12 @@ def check(scene: Scene, tokens: DesignTokens) -> List[Finding]:
     return findings
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_visual_style_geometry.py -v`
 Expected: PASS — 17 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add skills/report-slides/scripts/visual_style/geometry.py \
@@ -1888,7 +1888,7 @@ disable the rule.
 deliberately carries no word budget, and inventing a token for one number the
 design system does not own would be worse than naming it here.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `skills/report-slides/scripts/tests/test_visual_style_typography.py`:
 
@@ -2037,12 +2037,12 @@ def test_check_runs_every_typography_rule(tokens: DesignTokens) -> None:
     }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_visual_style_typography.py -v`
 Expected: FAIL — `ImportError: cannot import name 'typography' from 'visual_style'`.
 
-- [ ] **Step 3: Write the typography rules**
+- [x] **Step 3: Write the typography rules**
 
 Create `skills/report-slides/scripts/visual_style/typography.py`:
 
@@ -2212,12 +2212,12 @@ def check(scene: Scene, tokens: DesignTokens) -> List[Finding]:
     return findings
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_visual_style_typography.py -v`
 Expected: PASS — 13 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add skills/report-slides/scripts/visual_style/typography.py \
@@ -2269,7 +2269,7 @@ Verified against the default palette (all ratios computed with the WCAG formula
 against `#ffffff`): `#374151` 10.31, `#475569` 7.58, `#64748b` 4.76,
 `#e2e8f0` 1.23, `#94a3b8` 2.56.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `skills/report-slides/scripts/tests/test_visual_style_color.py`:
 
@@ -2459,12 +2459,12 @@ def test_check_runs_every_colour_rule(tokens: DesignTokens) -> None:
     }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_visual_style_color.py -v`
 Expected: FAIL — `ImportError: cannot import name 'color' from 'visual_style'`.
 
-- [ ] **Step 3: Write the colour rules**
+- [x] **Step 3: Write the colour rules**
 
 Create `skills/report-slides/scripts/visual_style/color.py`:
 
@@ -2791,12 +2791,12 @@ def check(scene: Scene, tokens: DesignTokens) -> List[Finding]:
     return findings
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_visual_style_color.py -v`
 Expected: PASS — 17 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add skills/report-slides/scripts/visual_style/color.py \
@@ -2843,7 +2843,7 @@ cannot be drawn planar. One crossing is a fact about the graph; several are
 usually a fact about the layout, so the rule fires above one and hands the
 judgement to the art-direction reviewer (Task 10).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `skills/report-slides/scripts/tests/test_visual_style_connectors.py`:
 
@@ -3055,12 +3055,12 @@ def test_check_runs_every_connector_rule(tokens: DesignTokens) -> None:
     }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_visual_style_connectors.py -v`
 Expected: FAIL — `ImportError: cannot import name 'connectors' from 'visual_style'`.
 
-- [ ] **Step 3: Write the connector rules**
+- [x] **Step 3: Write the connector rules**
 
 Create `skills/report-slides/scripts/visual_style/connectors.py`:
 
@@ -3510,12 +3510,12 @@ def check(scene: Scene, tokens: DesignTokens) -> List[Finding]:
     return findings
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_visual_style_connectors.py -v`
 Expected: PASS — 17 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add skills/report-slides/scripts/visual_style/connectors.py \
@@ -3559,7 +3559,7 @@ cards carrying identically sized labels is exactly the shape the spec calls out
 that is right. The rule surfaces it as a warning and names the cards, so the
 reviewer either justifies the grid or breaks it.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `skills/report-slides/scripts/tests/test_visual_style_density.py`:
 
@@ -3753,12 +3753,12 @@ def test_check_runs_every_density_rule(tokens: DesignTokens) -> None:
     }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_visual_style_density.py -v`
 Expected: FAIL — `ImportError: cannot import name 'density' from 'visual_style'`.
 
-- [ ] **Step 3: Write the density rules**
+- [x] **Step 3: Write the density rules**
 
 Create `skills/report-slides/scripts/visual_style/density.py`:
 
@@ -4046,12 +4046,12 @@ def check(scene: Scene, tokens: DesignTokens) -> List[Finding]:
     return findings
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_visual_style_density.py -v`
 Expected: PASS — 18 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add skills/report-slides/scripts/visual_style/density.py \
@@ -4108,7 +4108,7 @@ never spend its attention on a defect a ruler could have caught.
 `0` clean, `1` findings, and a read or token failure is reported as a finding
 rather than a traceback.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `skills/report-slides/scripts/tests/test_validate_visual_style.py`:
 
@@ -4302,12 +4302,12 @@ def test_every_rule_module_shares_the_entry_point(module) -> None:
     assert module.RULES
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `timeout 600 python3 -m pytest skills/report-slides/scripts/tests/test_validate_visual_style.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'validate_visual_style'`.
 
-- [ ] **Step 3: Write the CLI**
+- [x] **Step 3: Write the CLI**
 
 Create `skills/report-slides/scripts/validate_visual_style.py`:
 
@@ -4470,7 +4470,7 @@ if __name__ == "__main__":
     main()
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `timeout 600 python3 -m pytest skills/report-slides/scripts/tests/test_validate_visual_style.py -v`
 Expected: PASS — 16 passed.
@@ -4480,7 +4480,7 @@ working: the fixture is deliberately sparse. `occupancy` is a *warning*, so it
 must not affect `valid`; if it does, the bug is in `lint_paths`, not the fixture.
 Do not relax the fixture to make the assertion pass.
 
-- [ ] **Step 5: Lint six real slide archetypes and record what they say**
+- [x] **Step 5: Lint six real slide archetypes and record what they say**
 
 Every rule so far was written against a fixture built to exercise it. None has
 been run over a whole realistic slide, so nothing yet establishes what this rule
@@ -4563,7 +4563,7 @@ Expected: PASS — 12 passed (two tests parametrised six ways each). The first r
 will not pass; it is how you learn what to write into `_EXPECTED` and which
 renderers or defaults need fixing.
 
-- [ ] **Step 6: Wire the gate into the workflow**
+- [x] **Step 6: Wire the gate into the workflow**
 
 In `skills/report-slides/SKILL.md`, append to `### 10. Visual integration`
 (after the paragraph ending "per §5 of the design spec)."):
@@ -4618,12 +4618,12 @@ answer is recorded in the review.
 Leave the "The following conditions always fail the gate:" list in place; it
 still names defects that require pixels to see.
 
-- [ ] **Step 7: Verify the docs still validate**
+- [x] **Step 7: Verify the docs still validate**
 
 Run: `timeout 600 python3 -m pytest skills/report-slides/scripts/tests/ -v`
 Expected: PASS — the whole suite, including the doc-consistency tests.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add skills/report-slides/scripts/validate_visual_style.py \
@@ -4683,7 +4683,7 @@ recorded before this change still reach `passed`.
   - `presentation_gates.missing_slide_review_roles(roles: AbstractSet[str])
     -> Tuple[str, ...]` — the outstanding roles, in workflow order
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `skills/report-slides/scripts/tests/test_reviewer_roles.py`:
 
@@ -4781,13 +4781,13 @@ def test_render_integrity_reviewer_agent_names_stage_and_finding_kinds() -> None
         assert kind in text, f"missing finding kind: {kind}"
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `timeout 600 python3 -m pytest skills/report-slides/scripts/tests/test_reviewer_roles.py skills/report-slides/scripts/tests/test_agent_persona_docs.py -v`
 Expected: FAIL — `AttributeError: module 'presentation_gates' has no attribute
 'slide_reviews_complete'`, and a `FileNotFoundError` for the renamed doc.
 
-- [ ] **Step 3: Add the role and the predicate**
+- [x] **Step 3: Add the role and the predicate**
 
 In `skills/report-slides/scripts/presentation_gates.py`, replace line 35:
 
@@ -4885,7 +4885,7 @@ def missing_slide_review_roles(roles: AbstractSet[str]) -> tuple[str, ...]:
 
 Add `AbstractSet` to the module's `typing` import at the top of the file.
 
-- [ ] **Step 4: Route the workflow and events through the predicate**
+- [x] **Step 4: Route the workflow and events through the predicate**
 
 In `skills/report-slides/scripts/presentation_workflow.py`, replace both
 occurrences of:
@@ -4950,7 +4950,7 @@ line 712's inequality assertion to match. This is a rename of a next-action
 label, not a weakening: the assertion still requires exactly one specific
 action.
 
-- [ ] **Step 5: Rename and narrow the agent doc**
+- [x] **Step 5: Rename and narrow the agent doc**
 
 ```bash
 git mv skills/report-slides/agents/visual_quality_reviewer_agent.md \
@@ -4984,7 +4984,7 @@ slide reaches `passed` only when the scientific, render-integrity, and
 art-direction reviews all pass.
 ```
 
-- [ ] **Step 6: Update the cross-references**
+- [x] **Step 6: Update the cross-references**
 
 In `skills/report-slides/agents/scientific_visual_reviewer_agent.md:12`, replace
 `visual_quality_reviewer_agent` with `render_integrity_reviewer_agent`.
@@ -5009,13 +5009,13 @@ independent. A slide reaches `passed` only when all three pass; any one failing
 triggers the `revision_required` path scoped to that reviewer's findings.
 ```
 
-- [ ] **Step 7: Run tests to verify they pass**
+- [x] **Step 7: Run tests to verify they pass**
 
 Run: `timeout 900 python3 -m pytest skills/report-slides/scripts/tests/ -v`
 Expected: PASS — the whole suite. The ~30 existing tests recording
 `visual_quality` still pass, because the legacy role set is still accepted.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add -A skills/report-slides/agents skills/report-slides/scripts \
@@ -5089,7 +5089,7 @@ vocabulary, so they cannot be moved there either:
 questions, and this reviewer answers them in the record. Answering "yes, the
 grid is right here" is a valid outcome; leaving them unanswered is not.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `skills/report-slides/scripts/tests/test_reviewer_roles.py`:
 
@@ -5163,13 +5163,13 @@ def test_art_direction_reviewer_agent_names_stage_and_finding_kinds() -> None:
         assert kind in text, f"missing finding kind: {kind}"
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `timeout 600 python3 -m pytest skills/report-slides/scripts/tests/test_reviewer_roles.py skills/report-slides/scripts/tests/test_agent_persona_docs.py -v`
 Expected: FAIL — `KeyError: 'art_direction'` and a `FileNotFoundError` for the
 new doc.
 
-- [ ] **Step 3: Register the role and its finding kinds**
+- [x] **Step 3: Register the role and its finding kinds**
 
 In `skills/report-slides/scripts/presentation_gates.py`, extend `_FINDING_KINDS`
 with the eight new kinds, then replace the role tables:
@@ -5252,7 +5252,7 @@ to `_ALLOWED_FINDING_KINDS` with a comment naming their owner:
     "undifferentiated-repetition",
 ```
 
-- [ ] **Step 4: Route the next action**
+- [x] **Step 4: Route the next action**
 
 `presentation_events.py` needs no further change: the block Task 9 introduced
 already reads `missing_slide_review_roles`, and extending
@@ -5263,7 +5263,7 @@ expects `record_render_integrity_review` — a slide with only `scientific`
 recorded is still sent to the rendering review next, because the order is the
 workflow's, not the alphabet's.
 
-- [ ] **Step 5: Write the agent doc**
+- [x] **Step 5: Write the agent doc**
 
 Create `skills/report-slides/agents/art_direction_reviewer_agent.md`:
 
@@ -5373,7 +5373,7 @@ A finding must name what you looked at. "Feels AI-generated" is not reviewable;
 model" is.
 ````
 
-- [ ] **Step 6: Run tests to verify they pass**
+- [x] **Step 6: Run tests to verify they pass**
 
 Run: `timeout 900 python3 -m pytest skills/report-slides/scripts/tests/ -v`
 Expected: PASS — the whole suite.
@@ -5383,7 +5383,7 @@ via the legacy role set. If any test recorded `scientific` +
 `render_integrity` and expected `passed`, it must now also record
 `art_direction`; update the fixture, not the assertion.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add -A skills/report-slides/agents skills/report-slides/scripts
@@ -5482,7 +5482,7 @@ a model producing one unasked. That residual case is the art-direction
 reviewer's `visual-cliche` finding (Task 10). Both are needed; neither is
 sufficient. Do not present the scan as a guarantee.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `skills/report-slides/scripts/tests/test_style_anchors.py`:
 
@@ -5752,12 +5752,12 @@ def test_prompt_fragment_is_itself_clean(
             prompt_fragment(anchor, tokens)) == []
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_style_anchors.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'style_anchors'`.
 
-- [ ] **Step 3: Write the registry**
+- [x] **Step 3: Write the registry**
 
 Create `skills/report-slides/references/style-anchors/anchors.yaml`:
 
@@ -5886,7 +5886,7 @@ unasked; that case is caught at review as a `visual-cliche` or
 `stock-ai-composition` finding. The scan is a floor, not a guarantee.
 ```
 
-- [ ] **Step 4: Write the loader**
+- [x] **Step 4: Write the loader**
 
 Create `skills/report-slides/scripts/style_anchors.py`:
 
@@ -6215,7 +6215,7 @@ def prompt_fragment(anchor: StyleAnchor, tokens: DesignTokens) -> str:
     )
 ```
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_style_anchors.py -v`
 Expected: PASS — 18 passed.
@@ -6225,7 +6225,7 @@ Expected: PASS — 18 passed.
 neural sphere" rather than "no glow or bloom" — the fragment fails its own scan.
 Fix the anchor wording, not the scan.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add skills/report-slides/references/style-anchors \
@@ -6273,7 +6273,7 @@ registered anchor; `illustration_rationale` states what a deterministic diagram
 could not have carried. Both are validated. A record whose free text asks for a
 banned motif is rejected outright.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `skills/report-slides/scripts/tests/test_validate_generative_prompt.py`:
 
@@ -6537,12 +6537,12 @@ def test_cli_exits_one_on_an_invalid_record(tmp_path: Path) -> None:
     assert json.loads(proc.stdout)["valid"] is False
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_validate_generative_prompt.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'validate_generative_prompt'`.
 
-- [ ] **Step 3: Write the validator**
+- [x] **Step 3: Write the validator**
 
 Create `skills/report-slides/scripts/validate_generative_prompt.py`:
 
@@ -6789,12 +6789,12 @@ if __name__ == "__main__":
     main()
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_validate_generative_prompt.py -v`
 Expected: PASS — 18 passed.
 
-- [ ] **Step 5: Invert the route default**
+- [x] **Step 5: Invert the route default**
 
 In `skills/report-slides/agents/conceptual_illustration_worker_agent.md`,
 replace the `Classify` step:
@@ -6848,7 +6848,7 @@ the `intended_visual_type` bullet with:
    - An `intended_visual_type` that accurately reflects how this content should be visualized: `native` (text/simple formatting), `data` (charts, graphs, tables), `generative` (runtime-generated illustration), `hybrid` (mix of data and visuals), or `none` (text-only). Prefer `native` for structural diagrams: a deterministic diagram is authored, reviewable, and editable, and a generated raster is none of those. Choose `generative` only when the slide's claim needs imagery that no diagram can carry, and say so in `visual_rationale` — that sentence becomes the `illustration_rationale` the prompt record requires.
 ```
 
-- [ ] **Step 6: Rewrite the selection gate and the prompt record**
+- [x] **Step 6: Rewrite the selection gate and the prompt record**
 
 In `skills/report-slides/references/generative-visuals.md`, replace
 `## Selection gate` with:
@@ -6955,7 +6955,7 @@ still return a banned motif unasked, and that case is caught at review as an
 `art_direction` `visual-cliche` finding.
 ````
 
-- [ ] **Step 7: Update the persona test**
+- [x] **Step 7: Update the persona test**
 
 In `skills/report-slides/scripts/tests/test_agent_persona_docs.py`, extend
 `test_conceptual_illustration_worker_agent_names_stage_and_route`:
@@ -6974,12 +6974,12 @@ def test_conceptual_illustration_worker_agent_names_stage_and_route() -> None:
     assert "Downgrade rule" in text
 ```
 
-- [ ] **Step 8: Run tests to verify they pass**
+- [x] **Step 8: Run tests to verify they pass**
 
 Run: `timeout 900 python3 -m pytest skills/report-slides/scripts/tests/ -v`
 Expected: PASS — the whole suite.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add skills/report-slides/scripts/validate_generative_prompt.py \
@@ -7035,7 +7035,7 @@ prompts and would not have caught it; only the art-direction reviewer's
 `visual-cliche` finding would. Record that in `WHY-THIS-FAILS.md` rather than
 overstating what the scan buys.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `skills/report-slides/scripts/tests/test_shipped_examples.py`:
 
@@ -7115,7 +7115,7 @@ def test_every_shipped_slide_passes_the_visual_style_gate(
         result["files"][0]["findings"], indent=2)
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `timeout 600 python3 -m pytest skills/report-slides/scripts/tests/test_shipped_examples.py -v`
 Expected: FAIL — `FileNotFoundError` for `WHY-THIS-FAILS.md`, `review["status"]`
@@ -7125,7 +7125,7 @@ Capture that findings JSON. It is the work list for Step 5, and it is also the
 first honest measurement of how far the pre-token examples sit from the
 contract.
 
-- [ ] **Step 3: Record the verdict**
+- [x] **Step 3: Record the verdict**
 
 Create `examples/report-slides/visual-authoring/assets/research-collaboration/WHY-THIS-FAILS.md`:
 
@@ -7176,7 +7176,7 @@ art-direction reviewer, looking at the delivered pixels, can — which is why
 lint rule.
 ```
 
-- [ ] **Step 4: Update the records and apply the downgrade**
+- [x] **Step 4: Update the records and apply the downgrade**
 
 In `assets/research-collaboration/prompt.md`, add at the top of the file:
 
@@ -7239,7 +7239,7 @@ element at lines 11-15) and the corresponding element in
 Keep `generated.png` on disk. `WHY-THIS-FAILS.md` refers to it, and deleting the
 evidence would leave the counter-example unreadable.
 
-- [ ] **Step 5: Bring the example slides onto the tokens**
+- [x] **Step 5: Bring the example slides onto the tokens**
 
 For each of `slide01-architecture.svg`, `slide02-hybrid.svg`, and
 `slide03-chart.svg`, iterate until clean:
@@ -7296,7 +7296,7 @@ any `occupancy` or `equal-card-repetition` warning in the deck-level
 `examples/report-slides/visual-authoring/review.json`, in the
 `linter_warnings_answered` shape from `art_direction_reviewer_agent.md`.
 
-- [ ] **Step 6: Run tests to verify they pass**
+- [x] **Step 6: Run tests to verify they pass**
 
 Run: `timeout 900 python3 -m pytest skills/report-slides/scripts/tests/ -v`
 Expected: PASS — the whole suite, including the six new shipped-example tests.
@@ -7307,7 +7307,7 @@ weaken `test_every_shipped_slide_passes_the_visual_style_gate`. Do not add an
 `xfail`, do not narrow the parametrisation, and do not relax a token to fit one
 slide without recording the contrast measurement that justifies it.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add examples/report-slides/visual-authoring \
@@ -7376,7 +7376,7 @@ persisted lint result with a digest — so they are fixed in one task.
   - `unanswered_warnings(evidence: Mapping[str, Any],
     review: Mapping[str, Any]) -> List[str]`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `skills/report-slides/scripts/tests/test_lint_evidence.py`:
 
@@ -7563,12 +7563,12 @@ def test_a_module_is_linted_under_its_own_subject_type(project: Path) -> None:
                                     "b" * 64) is None
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_lint_evidence.py -v`
 Expected: FAIL at collection — `ModuleNotFoundError: No module named 'lint_evidence'`.
 
-- [ ] **Step 3: Write `lint_evidence.py`**
+- [x] **Step 3: Write `lint_evidence.py`**
 
 Create `skills/report-slides/scripts/lint_evidence.py`:
 
@@ -7772,12 +7772,12 @@ def unanswered_warnings(
     return sorted(set(evidence.get("warnings", [])) - answered)
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_lint_evidence.py -v`
 Expected: PASS — 12 passed.
 
-- [ ] **Step 5: Record evidence from the CLI**
+- [x] **Step 5: Record evidence from the CLI**
 
 `validate_visual_style.py` currently prints and exits. Give it the option to
 write down what it found. In `main`, add to the argument parser, beside the
@@ -7812,7 +7812,7 @@ computed:
 because the linter is also run outside a project, on a scratch file, while
 authoring — but Stage 10 always passes `--record`.
 
-- [ ] **Step 6: Write the failing gate tests**
+- [x] **Step 6: Write the failing gate tests**
 
 Append to `skills/report-slides/scripts/tests/test_reviewer_roles.py`, the file
 Task 9 created:
@@ -7873,13 +7873,13 @@ Write `_slide_with_three_passing_reviews`, `_lint_clean_with_warnings`, and
 established there; `answer_warnings` controls whether the `art_direction` review
 carries a `linter_warnings_answered` entry for `occupancy`.
 
-- [ ] **Step 7: Run them to verify they fail**
+- [x] **Step 7: Run them to verify they fail**
 
 Run: `timeout 300 python3 -m pytest skills/report-slides/scripts/tests/test_reviewer_roles.py -v`
 Expected: FAIL — `assert_slide_passable` returns normally in the first three,
 and `review_result_blockers` reports no `retired_reviewer_role` in the fourth.
 
-- [ ] **Step 8: Wire the gate**
+- [x] **Step 8: Wire the gate**
 
 In `presentation_gates.py`, add beside the other module-level constants:
 
@@ -7938,7 +7938,7 @@ than refusing.
 Import `current_lint_evidence`, `current_svg_digest`, `lint_blockers`, and
 `unanswered_warnings` from `lint_evidence` at the top of the module.
 
-- [ ] **Step 9: Run the tests to verify they pass**
+- [x] **Step 9: Run the tests to verify they pass**
 
 Run: `timeout 900 python3 -m pytest skills/report-slides/scripts/tests/ -v`
 Expected: PASS — the whole suite.
@@ -7951,7 +7951,7 @@ existed specifically to assert that three reviews are sufficient, its claim has
 changed and it should be rewritten to assert the new rule, with the reason
 stated in the commit body.
 
-- [ ] **Step 10: Say so in `SKILL.md`**
+- [x] **Step 10: Say so in `SKILL.md`**
 
 Replace the Stage 10 paragraph Task 8 wrote with the enforced version:
 
@@ -7974,7 +7974,7 @@ answer each one by rule id in `linter_warnings_answered`; an `art_direction`
 review that passes with a warning unanswered is refused.
 ````
 
-- [ ] **Step 11: Re-verify the shipped example under the enforced gate**
+- [x] **Step 11: Re-verify the shipped example under the enforced gate**
 
 Task 13 rebuilt `examples/report-slides/visual-authoring` and verified it with
 the linter alone — which, at the time, was all there was. The example deck is
@@ -8010,7 +8010,7 @@ file Task 13 created. If a slide cannot clear the gate, that is a finding about
 Task 13's redesign or about the token defaults — say which, and fix it. Do not
 record an art-direction pass to make this green.
 
-- [ ] **Step 12: Commit**
+- [x] **Step 12: Commit**
 
 ```bash
 git add skills/report-slides/scripts/lint_evidence.py \
@@ -8037,12 +8037,12 @@ bypassed both render_integrity and art_direction permanently."
 
 ## Final Verification
 
-- [ ] **Whole suite**
+- [x] **Whole suite**
 
 Run: `timeout 1800 python3 -m pytest skills/report-slides/scripts/tests/ -v`
 Expected: PASS, no skips added by this plan, no xfail.
 
-- [ ] **The linter runs on a real deck end to end**
+- [x] **The linter runs on a real deck end to end**
 
 Run:
 ```bash
@@ -8052,7 +8052,7 @@ timeout 300 python3 skills/report-slides/scripts/validate_visual_style.py \
 Expected: exit 0, with any warnings printed and answered in the deck's
 `review.json`.
 
-- [ ] **Every rule in the inventory is implemented and reachable**
+- [x] **Every rule in the inventory is implemented and reachable**
 
 Run:
 ```bash
@@ -8067,12 +8067,12 @@ Expected: `22`, and the printed list matches the Rule Inventory tables above
 exactly. A rule in the inventory that is not in this list is an unimplemented
 requirement, not a documentation slip.
 
-- [ ] **The generative route is genuinely opt-in**
+- [x] **The generative route is genuinely opt-in**
 
 Run: `grep -n "default" skills/report-slides/agents/conceptual_illustration_worker_agent.md`
 Expected: no line asserting that the generative route is the default.
 
-- [ ] **The three review roles are all reachable**
+- [x] **The three review roles are all reachable**
 
 Run:
 ```bash

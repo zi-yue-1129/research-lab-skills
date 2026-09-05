@@ -73,12 +73,11 @@ def publish_and_lint_slide(
         sha256=hashlib.sha256(svg_path.read_bytes()).hexdigest(),
         producer_id=producer_id, slide_id=slide_id)
     _, reports = lint_reports([svg_path], tokens_path)
-    report = reports[0][1]
+    _, svg_digest, report = reports[0]
     assert not [finding for finding in report.findings
                 if finding.severity == "error"], (
         f"the fixture slide no longer lints clean: {report.to_dict()}")
     record_lint_evidence(
-        project_root, "slide", slide_id,
-        hashlib.sha256(svg_path.read_bytes()).hexdigest(), tokens_digest,
+        project_root, "slide", slide_id, svg_digest, tokens_digest,
         report, tokens_path=str(tokens_path))
     return slide_id

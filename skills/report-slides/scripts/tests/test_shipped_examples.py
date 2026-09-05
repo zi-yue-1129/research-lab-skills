@@ -158,14 +158,13 @@ def example_project(tmp_path_factory: pytest.TempPathFactory) -> Dict[str, str]:
             project_root, str(deck["id"]), slide_name, "specs/visual.yaml",
             f"module-{index}")
         staged[slide_name] = slide_id
+        tokens_file = spec_dir / "tokens.yaml"
         _, reports = lint_reports(
-            [project_root / "slides" / slide_name], spec_dir / "tokens.yaml")
-        report = reports[0][1]
+            [project_root / "slides" / slide_name], tokens_file)
+        _, svg_digest, report = reports[0]
         evidence = record_lint_evidence(
-            project_root, "slide", slide_id,
-            hashlib.sha256(
-                (project_root / "slides" / slide_name).read_bytes()).hexdigest(),
-            tokens_digest, report)
+            project_root, "slide", slide_id, svg_digest, tokens_digest,
+            report, tokens_path=str(tokens_file))
         # The shipped slides raise no warnings. If one appears, the answer must
         # be written from the slide in front of you -- an answer invented here
         # to keep the fixture green is the exact failure `linter_warnings_

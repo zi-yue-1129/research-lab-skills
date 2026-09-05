@@ -696,7 +696,8 @@ def _subject_tokens_digest(
 _TERMINAL_DISPOSITIONS = frozenset({"fixed", "resolved", "closed", "accepted", "rechecked", "done", "dismissed"})
 
 def review_result_blockers(
-    project_root: Path, subject_type: str, subject_id: str, review: Mapping[str, Any], persisted_id: str | None = None
+    project_root: Path, subject_type: str, subject_id: str, review: Mapping[str, Any], persisted_id: str | None = None,
+    is_effective: bool = True,
 ) -> list[dict[str, Any]]:
     """Validate one production review and its independence constraints.
 
@@ -706,6 +707,11 @@ def review_result_blockers(
         subject_id: Target production-unit ID.
         review: Candidate Review Result mapping.
         persisted_id: Existing event ID when validating persisted history.
+        is_effective: Whether this review is the current one for its role.
+            A superseded review answered the warnings of the run it saw;
+            holding it to a later run's warnings would deadlock the deck,
+            because events are append-only and no new review can repair a
+            round that has already been written.
 
     Returns:
         Machine-readable blockers; an empty list means admissible.
@@ -772,7 +778,8 @@ def review_result_blockers(
                 owner_ids.add(str(artifact.get("producer_id", artifact.get("produced_by"))))
         if isinstance(reviewer_id, str) and reviewer_id in owner_ids:
             blockers.append({"reason": "reviewer_self_review_prohibited"})
-        if role == "art_direction" and review.get("status") == "passed":
+        if (role == "art_direction" and review.get("status") == "passed"
+                and is_effective):
             blockers.extend(_art_direction_warning_blockers(
                 project_root, subject_type, subject_id, target, review))
     return blockers
@@ -809,6 +816,21 @@ def _art_direction_warning_blockers(
         project_root, subject_type, subject_id, artifact_sha256, tokens_digest)
     if evidence is None:
         return [{"reason": "art_direction:lint_evidence_missing"}]
+    if evidence["errors"]:
+        # A pass recorded over outstanding hard errors is how a slide
+        # reaches `passed` without anything calling `assert_slide_passable`:
+        # the promotion in `record_production_review` counts roles, not
+        # measurements.
+        return [{
+            "reason": "art_direction:lint_errors_outstanding",
+            "rules": list(evidence["errors"]),
+        }]
+    review_ts = str(review.get("ts") or "")
+    if review_ts and review_ts < str(evidence.get("ts") or ""):
+        # Answers written before the measurement are not answers to it.
+        # They match by rule name alone, which a later run reproduces for
+        # free, so an old review would silently discharge new warnings.
+        return [{"reason": "art_direction:review_predates_lint_run"}]
     unanswered = unanswered_warnings(evidence, review)
     if unanswered:
         return [{
@@ -838,9 +860,18 @@ def assert_slide_passable(project_root: Path, slide_id: str) -> dict[str, Any]:
     _deck(project_root, deck_id)
     blockers: list[dict[str, Any]] = []
     raw_reviews = load_review_results(project_root, {slide_id})
-    for review in raw_reviews:
-        blockers.extend(review_result_blockers(project_root, "slide", slide_id, review, str(review.get("id"))))
     reviews = effective_review_results(raw_reviews)
+    # Only the current review of each role is held to the current lint
+    # run. A superseded round answered the warnings it was shown, and the
+    # event log is append-only, so judging it against a later run would
+    # leave the slide permanently unpassable with no write that repairs
+    # it.
+    effective_ids = {str(review.get("id")) for review in reviews}
+    for review in raw_reviews:
+        review_id = str(review.get("id"))
+        blockers.extend(review_result_blockers(
+            project_root, "slide", slide_id, review, review_id,
+            is_effective=review_id in effective_ids))
     by_role = {review.get("reviewer_role"): review for review in reviews}
     # `_REVIEW_ROLES` is the admissible set, not the required one. A slide
     # recorded before the review split carries `visual_quality` and will never

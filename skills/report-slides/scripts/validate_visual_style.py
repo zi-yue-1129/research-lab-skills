@@ -62,7 +62,7 @@ def lint_svg(svg_path: Path, tokens: DesignTokens,
 def lint_reports(
     paths: Sequence[Path], tokens_path: Path,
     warnings_as_errors: bool = False,
-) -> Tuple[Dict[str, Any], List[Tuple[Path, LintReport]]]:
+) -> Tuple[Dict[str, Any], List[Tuple[Path, str, LintReport]]]:
     """Lint every given slide and return both the envelope and the reports.
 
     The envelope is what a reader wants; the reports are what
@@ -75,8 +75,11 @@ def lint_reports(
         warnings_as_errors: When true, warnings also fail the gate.
 
     Returns:
-        The JSON-serialisable envelope, and one `(path, report)` pair per input
-        in the order given.
+        The JSON-serialisable envelope, and one `(path, sha256, report)` triple
+        per input in the order given. The digest is of the bytes the run
+        actually measured: each file is hashed before and after its rules run,
+        and a file that changed in between is reported as `unstable-input`
+        rather than credited with a result describing bytes that are gone.
 
     Raises:
         TokenError: If the token file is missing or invalid.
@@ -86,15 +89,29 @@ def lint_reports(
     font_family = resolve_font_stack(tokens.font_stack("sans"))
 
     files: List[Dict[str, Any]] = []
-    reports: List[Tuple[Path, LintReport]] = []
+    reports: List[Tuple[Path, str, LintReport]] = []
     error_count = 0
     warning_count = 0
     for path in paths:
-        report = lint_svg(Path(path), tokens, font_family)
+        svg_path = Path(path)
+        before = _sha256_or_none(svg_path)
+        report = lint_svg(svg_path, tokens, font_family)
+        after = _sha256_or_none(svg_path)
+        if before is not None and after is not None and before != after:
+            report = LintReport()
+            report.add(Finding(
+                rule="unstable-input", severity="error",
+                message=(f"{svg_path} changed while it was being linted; "
+                         "the result would describe bytes that no longer "
+                         "exist. Re-run the linter."),
+                element_id=str(svg_path)))
         payload = report.to_dict()
         payload["path"] = str(path)
         files.append(payload)
-        reports.append((Path(path), report))
+        # An unreadable file has no digest to record; the empty string matches
+        # no published artifact, so the gate reports it as unlinted rather than
+        # crediting a result for bytes nobody could read.
+        reports.append((svg_path, after or "", report))
         error_count += payload["error_count"]
         warning_count += payload["warning_count"]
 
@@ -176,6 +193,52 @@ def _sha256_of(path: Path) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+def _sha256_or_none(path: Path) -> str | None:
+    """Return a file's digest, or `None` when it cannot be read.
+
+    A missing or unreadable input is reported as an `unreadable-input` finding
+    by `lint_svg`, which is how the run stays alive for the other files. Letting
+    the digest step raise first would turn that designed finding back into the
+    traceback it replaced.
+
+    Args:
+        path: The file to digest.
+
+    Returns:
+        The lowercase hexadecimal digest, or `None` if the read failed.
+    """
+    try:
+        return _sha256_of(path)
+    except OSError:
+        return None
+
+
+def _recorded_tokens_path(tokens_path: Path, project_root: Path) -> str:
+    """Return a token-file reference the gate can resolve from anywhere.
+
+    The gate re-reads this path to check the token file has not changed under
+    the recorded result, and it runs from whatever directory the caller
+    happens to be in. A path relative to the caller's shell would silently
+    resolve to nothing there, and "not found" would read as "no drift" -- a
+    check that passes precisely when it cannot run.
+
+    Args:
+        tokens_path: The token file as given on the command line.
+        project_root: The project the evidence is recorded into.
+
+    Returns:
+        The path relative to the project root when the token file lives inside
+        it, and the resolved absolute path otherwise.
+    """
+    resolved = Path(tokens_path).resolve()
+    try:
+        return str(resolved.relative_to(Path(project_root).resolve()))
+    except ValueError:
+        # The shipped token sets live in the installed skill bundle, outside
+        # any project; an absolute path is the only reference that resolves.
+        return str(resolved)
+
+
 def main() -> None:
     """Run the visual-style gate over one or more slides."""
     parser = argparse.ArgumentParser(
@@ -216,11 +279,11 @@ def main() -> None:
         # resolves the deck's declared token set through `DesignTokens.digest`,
         # and a raw-file digest would never match it.
         tokens_digest = result["tokens_digest"]
-        for svg_path, report in reports:
+        tokens_ref = _recorded_tokens_path(args.tokens, args.record)
+        for svg_path, svg_digest, report in reports:
             record_lint_evidence(
                 args.record, args.subject_type, args.subject_id,
-                _sha256_of(svg_path), tokens_digest, report,
-                tokens_path=str(args.tokens))
+                svg_digest, tokens_digest, report, tokens_path=tokens_ref)
 
     if args.json:
         _emit(json.dumps(result))
