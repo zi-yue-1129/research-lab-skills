@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Optional
 
 import pytest
@@ -195,11 +196,38 @@ def test_connectors_sharing_an_endpoint_do_not_cross(
 
 
 def test_check_runs_every_connector_rule(tokens: DesignTokens) -> None:
-    """The module entry point aggregates all six rules."""
-    scene = _scene(boxes=[_A], conns=[_conn("c1", 300, 145, 420, 400)])
+    """The module entry point aggregates all six rules.
+
+    `c1` ends in open space, `c2` claims a port it does not touch, `c3` runs
+    straight through `n3`, `c4` skims six units past it, the polygon is a
+    hand-drawn arrowhead beside a connector end, and the three connectors on
+    the right cross each other three times against a budget of one.
+    """
+    node_c = _box("n3", 350, 300)
+    scene = _scene(
+        boxes=[_A, _B, node_c],
+        conns=[_conn("c1", 300, 145, 420, 260),
+               _conn("c2", 320, 145, 500, 145, from_node="n1", to_node="n2"),
+               _conn("c3", 400, 250, 400, 450),
+               _conn("c4", 360, 396, 540, 396),
+               _conn("c5", 800, 100, 900, 200),
+               _conn("c6", 800, 200, 900, 100),
+               _conn("c7", 790, 150, 910, 150)],
+        polys=[Polygon("poly1", ((420, 260), (410, 250), (430, 250)),
+                       "#475569", None)])
     rules = {f.rule for f in connectors.check(scene, tokens)}
-    assert "connector-dangling" in rules
-    assert set(connectors.RULES) == {
-        "connector-dangling", "connector-port-drift", "connector-through-node",
-        "connector-clearance", "hand-drawn-arrow", "connector-crossing",
-    }
+    assert rules == set(connectors.RULES)
+
+
+
+def test_a_t_junction_is_not_a_crossing() -> None:
+    """A connector ending on another connector is a join, not a crossing.
+
+    The orientation test treated a zero determinant -- an endpoint lying
+    exactly on the other segment -- as being on the far side, so every
+    deliberate T-junction in a routed diagram counted towards the crossing
+    budget and pushed a clean layout over it.
+    """
+    assert not connectors.segments_cross(
+        Connector("a", 0, 0, 10, 0, "#475569", 2.0, False, True, None),
+        Connector("b", 5, 0, 5, 5, "#475569", 2.0, False, True, None))

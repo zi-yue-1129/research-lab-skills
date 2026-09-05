@@ -112,13 +112,15 @@ _ARCHITECTURE_SVG = """\
 #
 # Every entry below was read and judged, not merely recorded:
 #
-# `off-grid` on five of six archetypes is a true observation about the
-# renderers and a deliberate non-fix. Chart plot rectangles, timeline node
-# circles, and bullet markers are placed by dividing the safe area by the
-# number of items, which lands on eighths only by accident. Quantising them to
-# 8 units would visibly unbalance a three-item row to buy alignment nobody can
-# see. It is a warning for exactly this reason: it is evidence for the
-# art-direction reviewer, not a build failure.
+# `off-grid` on four of six archetypes is a true observation about the
+# renderers and a deliberate non-fix. Timeline node circles and bullet markers
+# are placed by dividing the safe area by the number of items, which lands on
+# eighths only by accident. Quantising them to 8 units would visibly unbalance
+# a three-item row to buy alignment nobody can see. It is a warning for exactly
+# this reason: it is evidence for the art-direction reviewer, not a build
+# failure. Chart plot geometry no longer appears here -- bars and bands are
+# placed by the value they encode, and the rule now exempts anything inside a
+# `data-pptx-role="chart"` group rather than firing once per bar.
 #
 # `occupancy` outside 0.30..0.78 on four archetypes is also true and also not a
 # defect. A three-bullet slide and a three-event timeline are legitimately
@@ -126,18 +128,14 @@ _ARCHITECTURE_SVG = """\
 # The rule exists to raise the question, and the answer here is "yes,
 # deliberately".
 #
-# `bullet-budget` on `table` is a false positive, and it is recorded rather
-# than fixed. The rule counts runs whose style role is `body`, and
-# `render_table` gives every data cell that role; eight cells in a 2x4 table is
-# not eight bullets. Narrowing it needs a role that distinguishes prose from
-# tabular text, which is a token-contract change and belongs in its own commit,
-# not smuggled into this one.
+# `bar_chart` reports nothing at all. That is the shape a clean slide has, and
+# it is worth one line of its own: the entry is not an oversight.
 _EXPECTED: Dict[str, Set[str]] = {
     "bullets": {"occupancy", "off-grid"},
-    "bar_chart": {"off-grid"},
+    "bar_chart": set(),
     "two_column": {"occupancy", "off-grid"},
     "timeline": {"occupancy", "off-grid"},
-    "table": {"bullet-budget", "occupancy", "off-grid"},
+    "table": {"occupancy", "off-grid"},
     "architecture": {"occupancy"},
 }
 

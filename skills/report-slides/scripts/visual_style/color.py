@@ -13,8 +13,14 @@ from .scene import Box, Scene
 RULES: Tuple[str, ...] = ("text-contrast", "graphic-contrast", "token-color")
 
 _NON_COLOURS = frozenset({"none", "transparent", "currentcolor"})
-_LARGE_SIZE = 24.0
-_LARGE_BOLD_SIZE = 18.66
+# WCAG defines large text as 18pt, or 14pt at bold weight. The familiar 24 and
+# 18.66 are those same thresholds expressed in CSS pixels at 96dpi. These units
+# are points: the plan fixes SVG `font-size` as mapping 1:1 to PowerPoint points
+# and the converter passes it straight to `Pt()`. Using the pixel numbers held
+# the 21-unit `body` role -- the most common text in any deck -- to a floor it
+# does not have to meet.
+_LARGE_SIZE = 18.0
+_LARGE_BOLD_SIZE = 14.0
 _BOLD_WEIGHT = 700
 
 
@@ -181,10 +187,18 @@ def background_at(x: float, y: float, scene: Scene, tokens: DesignTokens,
         and normalize_hex(box.fill) is not None
     ]
     if covering:
-        smallest = min(covering, key=lambda box: box.area)
-        normalised = normalize_hex(smallest.fill)
+        # SVG has no z-index. The element painted last is the one the viewer
+        # sees, so paint order decides -- not area. Picking the smallest box
+        # gets it backwards whenever a small shape is painted underneath a
+        # larger one and reports the contrast of a colour nobody can see.
+        topmost = max(covering, key=lambda box: box.paint_order)
+        normalised = normalize_hex(topmost.fill)
         if normalised is not None:
             return normalised
+    if scene.background is not None and scene.background.element_id != exclude:
+        canvas = normalize_hex(scene.background.fill)
+        if canvas is not None:
+            return canvas
     fallback = normalize_hex(tokens.color("bg"))
     if fallback is None:
         raise ValueError("color.roles.bg is not a literal hex colour")
@@ -270,6 +284,50 @@ def check_graphic_contrast(scene: Scene, tokens: DesignTokens) -> List[Finding]:
                 message=f"{box.element_id} is {paint} on {background} at "
                         f"{ratio:.2f}:1; the graphic floor is {floor:.1f}",
                 element_id=box.element_id, location=(box.x, box.y)))
+    findings.extend(_connector_contrast(scene, tokens, floor))
+    return findings
+
+
+def _connector_contrast(scene: Scene, tokens: DesignTokens,
+                        floor: float) -> List[Finding]:
+    """Report connectors below the WCAG non-text floor.
+
+    A connector is load-bearing -- it says which node feeds which -- so it is
+    never decorative, and a stroke nobody can see loses the reader the diagram.
+
+    `<path>` is deliberately absent: this rule needs a point to sample the
+    background at, and the parser does not reconstruct path geometry. Paths are
+    still held to the palette by `check_token_colors`.
+
+    Args:
+        scene: The parsed slide.
+        tokens: The resolved token set.
+        floor: The `contrast.graphic_min` threshold.
+
+    Returns:
+        One `graphic-contrast` error per offending connector.
+    """
+    findings: List[Finding] = []
+    for connector in scene.connectors:
+        paint = normalize_hex(connector.stroke)
+        if paint is None:
+            continue
+        # No decorative exemption here. `decorative_roles` excuses dividers and
+        # card fills, which carry no meaning; a connector carries the diagram's
+        # entire argument about what feeds what, whichever colour role it
+        # happens to borrow.
+        mid_x = (connector.x1 + connector.x2) / 2
+        mid_y = (connector.y1 + connector.y2) / 2
+        background = background_at(mid_x, mid_y, scene, tokens,
+                                   exclude=connector.element_id)
+        ratio = contrast_ratio(paint, background)
+        if ratio < floor:
+            findings.append(Finding(
+                rule="graphic-contrast", severity="error",
+                message=f"{connector.element_id} is {paint} on {background} at "
+                        f"{ratio:.2f}:1; the graphic floor is {floor:.1f}",
+                element_id=connector.element_id,
+                location=(connector.x1, connector.y1)))
     return findings
 
 
@@ -292,9 +350,31 @@ def check_token_colors(scene: Scene, tokens: DesignTokens) -> List[Finding]:
             if normalised is not None:
                 used.append((box.element_id, normalised, box.x, box.y))
     for run in scene.texts:
-        normalised = normalize_hex(run.fill)
+        # A `<tspan>` can override its parent's fill, so the element's own
+        # `fill` is not the whole story.
+        for paint in (run.fills or (run.fill,)):
+            normalised = normalize_hex(paint)
+            if normalised is not None:
+                used.append((run.element_id, normalised, run.x, run.y))
+    # Connectors, arrowheads and pie wedges are painted too. Leaving them out
+    # meant an off-palette arrow, or a whole pie chart, passed untouched.
+    for connector in scene.connectors:
+        normalised = normalize_hex(connector.stroke)
         if normalised is not None:
-            used.append((run.element_id, normalised, run.x, run.y))
+            used.append((connector.element_id, normalised,
+                         connector.x1, connector.y1))
+    for polygon in scene.polygons:
+        anchor = polygon.points[0] if polygon.points else (0.0, 0.0)
+        for paint in (polygon.fill, polygon.stroke):
+            normalised = normalize_hex(paint)
+            if normalised is not None:
+                used.append((polygon.element_id, normalised,
+                             anchor[0], anchor[1]))
+    for path in scene.paths:
+        for paint in (path.fill, path.stroke):
+            normalised = normalize_hex(paint)
+            if normalised is not None:
+                used.append((path.element_id, normalised, 0.0, 0.0))
     for element_id, paint, x, y in used:
         if paint in palette:
             continue

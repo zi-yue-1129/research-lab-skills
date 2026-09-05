@@ -102,6 +102,28 @@ def _same_node(a: Box, b: Box) -> bool:
     return a.node_id is not None and a.node_id == b.node_id
 
 
+def _intended_containment(inner: Box, outer: Box) -> bool:
+    """Return whether one box containing another is deliberate composition.
+
+    A label inside its own node, or a card inside an unscoped panel, is how
+    slides are built. Two *different* semantic nodes where one swallows the
+    other is not composition, it is the worst-looking defect a diagram can
+    carry -- and it used to pass, because `check_overlap` waved containment
+    through and `check_node_gap` skips pairs that intersect on the grounds
+    that overlap covers them.
+
+    Args:
+        inner: The contained box.
+        outer: The containing box.
+
+    Returns:
+        True unless both boxes carry different non-null node ids.
+    """
+    if inner.node_id is None or outer.node_id is None:
+        return True
+    return inner.node_id == outer.node_id
+
+
 def _overlap_finding(first: str, second: str, x: float, y: float) -> Finding:
     """Build one overlap finding.
 
@@ -140,7 +162,11 @@ def check_overlap(scene: Scene, tokens: DesignTokens) -> List[Finding]:
     for a, b in combinations(scene.boxes, 2):
         if not _material_overlap(a, b):
             continue
-        if a.contains_box(b) or b.contains_box(a) or _same_node(a, b):
+        if _same_node(a, b):
+            continue
+        if a.contains_box(b) and _intended_containment(b, a):
+            continue
+        if b.contains_box(a) and _intended_containment(a, b):
             continue
         findings.append(_overlap_finding(a.element_id, b.element_id, a.x, a.y))
 
@@ -225,11 +251,23 @@ def _enclosing_box(run: TextRun, scene: Scene) -> Optional[Box]:
     bbox = run.bbox()
     cx = bbox.x + bbox.w / 2
     cy = bbox.y + bbox.h / 2
-    candidates = [box for box in scene.boxes
-                  if box.node_id == run.node_id and box.contains_point(cx, cy)]
-    if not candidates:
+    own = [box for box in scene.boxes if box.node_id == run.node_id]
+    if not own:
         return None
-    return min(candidates, key=lambda box: box.area)
+    candidates = [box for box in own if box.contains_point(cx, cy)]
+    if candidates:
+        return min(candidates, key=lambda box: box.area)
+    # The label's centre is outside every box of its node. Half in and half out
+    # is a label that has escaped the surface it is meant to sit on, and
+    # returning None there meant the further it drifted the more certainly it
+    # was ignored. Wholly outside is a different idiom, not a defect: a
+    # timeline's node is a ten-unit dot with its label deliberately placed
+    # beyond it on a stem, and holding that to node padding reports every
+    # event on every timeline slide.
+    overlapping = [box for box in own if box.intersects(bbox)]
+    if not overlapping:
+        return None
+    return max(overlapping, key=lambda box: box.area)
 
 
 def check_node_padding(scene: Scene, tokens: DesignTokens) -> List[Finding]:
@@ -285,7 +323,12 @@ def _is_data_mark(box: Box) -> bool:
         True for boxes whose style role marks them as chart geometry.
     """
     role = box.style_role or ""
-    return role.startswith("chart") or role.startswith("mark")
+    if role.startswith("chart") or role.startswith("mark"):
+        return True
+    # The renderers do not put a style role on generated bars and plot bands;
+    # they wrap the whole plot in `data-pptx-role="chart"`. Keying only on the
+    # style role produced an `off-grid` warning per bar on every chart slide.
+    return box.pptx_role == "chart"
 
 
 def _grid_delta(value: float, grid: float) -> float:

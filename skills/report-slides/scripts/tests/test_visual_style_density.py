@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Optional
 
 import pytest
@@ -175,13 +176,30 @@ def test_differentiated_cards_are_not_flagged(tokens: DesignTokens) -> None:
 
 
 def test_check_runs_every_density_rule(tokens: DesignTokens) -> None:
-    """The module entry point aggregates all five rules."""
-    scene = _scene(boxes=[_box("a", 100, 100, radius=8),
-                          _box("b", 400, 100, radius=0)])
-    rules = {f.rule for f in density.check(scene, tokens)}
-    assert "component-drift" in rules
-    assert "occupancy" in rules
-    assert set(density.RULES) == {
-        "component-drift", "spacing-variance", "bullet-budget", "occupancy",
-        "equal-card-repetition",
-    }
+    """The module entry point aggregates all five rules.
+
+    Four identical cards with uneven gaps trip repetition and spacing at once,
+    the square box drifts from the shared corner radius, seven body runs
+    exceed the bullet budget, and the whole slide is far under the occupancy
+    floor.
+    """
+    boxes = [_box("c1", 100, 400, 100, 90), _box("c2", 350, 400, 100, 90),
+             _box("c3", 600, 400, 100, 90), _box("c4", 900, 400, 100, 90),
+             _box("odd", 100, 100, 200, 90, radius=0)]
+    texts = [_label(f"t{i}", 100, 150 + 30 * i, role="body") for i in range(7)]
+    rules = {f.rule for f in density.check(_scene(boxes, texts), tokens)}
+    assert rules == set(density.RULES)
+
+
+
+def test_table_cells_are_not_bullets(tokens: DesignTokens) -> None:
+    """Eight cells in a 2x4 table are not eight bullets.
+
+    `render_table` gives every data cell the `body` role, so the budget rule
+    counted a perfectly ordinary results table as a wall of bullets and warned
+    on every table slide in every deck.
+    """
+    cells = [replace(_label(f"t{i}", 100, 150, role="body"),
+                     pptx_role="table")
+             for i in range(8)]
+    assert density.check_bullet_budget(_scene(texts=cells), tokens) == []

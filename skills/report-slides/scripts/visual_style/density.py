@@ -187,8 +187,12 @@ def check_bullet_budget(scene: Scene, tokens: DesignTokens) -> List[Finding]:
         At most one `bullet-budget` warning.
     """
     budget = int(tokens.raw["density"]["max_bullets"])
+    # `render_table` gives every data cell the `body` role, so a 2x4 results
+    # table looked like eight bullets and warned on every table slide. Tabular
+    # text is not prose and does not spend the prose budget.
     bullets = [run for run in scene.texts
-               if (run.style_role or "").replace(".", "_") == "body"]
+               if (run.style_role or "").replace(".", "_") == "body"
+               and run.pptx_role != "table"]
     if len(bullets) <= budget:
         return []
     return [Finding(

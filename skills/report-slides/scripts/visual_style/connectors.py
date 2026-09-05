@@ -119,7 +119,11 @@ def _segments_intersect(x1: float, y1: float, x2: float, y2: float,
     d2 = _orientation(x3, y3, x4, y4, x2, y2)
     d3 = _orientation(x1, y1, x2, y2, x3, y3)
     d4 = _orientation(x1, y1, x2, y2, x4, y4)
-    return ((d1 > 0) != (d2 > 0)) and ((d3 > 0) != (d4 > 0))
+    # Strict opposite signs. A zero determinant means an endpoint lies exactly
+    # on the other segment, which is a T-junction -- a deliberate join in any
+    # routed diagram, and not a crossing. Comparing `d > 0` puts zero on the
+    # negative side and counted every such join against the crossing budget.
+    return d1 * d2 < 0 and d3 * d4 < 0
 
 
 def segment_crosses_box(x1: float, y1: float, x2: float, y2: float,

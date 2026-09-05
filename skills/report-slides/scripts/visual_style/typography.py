@@ -45,6 +45,23 @@ def _smallest_role(tokens: DesignTokens) -> Tuple[str, float]:
     return name, float(roles[name]["size"])
 
 
+def _rendered_size(run: TextRun) -> float:
+    """Return the smallest size the run actually paints.
+
+    A `<text>` can declare a conformant `font-size` and then set an 8-unit
+    `<tspan>` inside it. Judging the element's own declaration lets that
+    through, so the floor is measured against the smallest size the parser
+    found anywhere in the element.
+
+    Args:
+        run: The text run.
+
+    Returns:
+        The rendered floor in SVG units.
+    """
+    return run.min_size or run.size
+
+
 def check_type_floor(scene: Scene, tokens: DesignTokens) -> List[Finding]:
     """Report text rendered below the floor its role sets.
 
@@ -58,12 +75,13 @@ def check_type_floor(scene: Scene, tokens: DesignTokens) -> List[Finding]:
     fallback_name, fallback_size = _smallest_role(tokens)
     findings: List[Finding] = []
     for run in scene.texts:
+        size = _rendered_size(run)
         name = _role_name(run)
         if name is None:
-            if run.size < fallback_size - _SIZE_TOLERANCE:
+            if size < fallback_size - _SIZE_TOLERANCE:
                 findings.append(Finding(
                     rule="type-floor", severity="error",
-                    message=f"{run.element_id} is {run.size:g} with no declared "
+                    message=f"{run.element_id} is {size:g} with no declared "
                             f"style role; the smallest role {fallback_name} is "
                             f"{fallback_size:g}",
                     element_id=run.element_id, location=(run.x, run.y)))
@@ -78,10 +96,10 @@ def check_type_floor(scene: Scene, tokens: DesignTokens) -> List[Finding]:
                         f"not defined in the token file",
                 element_id=run.element_id, location=(run.x, run.y)))
             continue
-        if run.size < role.size - _SIZE_TOLERANCE:
+        if size < role.size - _SIZE_TOLERANCE:
             findings.append(Finding(
                 rule="type-floor", severity="error",
-                message=f"{run.element_id} is {run.size:g}; role {name} "
+                message=f"{run.element_id} is {size:g}; role {name} "
                         f"requires at least {role.size:g}",
                 element_id=run.element_id, location=(run.x, run.y)))
     return findings

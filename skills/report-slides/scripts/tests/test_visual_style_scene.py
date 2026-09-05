@@ -197,3 +197,153 @@ def test_parse_scene_raises_on_missing_viewbox(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="viewBox") as excinfo:
         parse_scene(path, _FAMILY)
     assert "viewBox" in str(excinfo.value)
+
+
+def _parse(tmp_path: Path, body: str):
+    """Parse an SVG fragment wrapped in a default canvas.
+
+    Args:
+        tmp_path: Directory to write the fixture into.
+        body: Markup placed inside the root `<svg>` element.
+
+    Returns:
+        The parsed scene.
+    """
+    path = tmp_path / "fragment.svg"
+    path.write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675">'
+        f"{body}</svg>", encoding="utf-8")
+    return parse_scene(path, _FAMILY)
+
+
+def test_a_translated_group_shifts_the_geometry_it_contains(
+        tmp_path: Path) -> None:
+    """A `transform` on an ancestor moves everything the rules measure.
+
+    Without this every rule measures a translated group at its authored
+    coordinates, so a node group pushed 400 units to the right is judged where
+    it is not. The failure is silent, which makes it worse than a crash.
+    """
+    scene = _parse(tmp_path, '<g transform="translate(100, 50)">'
+                             '<rect x="10" y="20" width="30" height="40"/></g>')
+    assert (scene.boxes[0].x, scene.boxes[0].y) == (110.0, 70.0)
+
+
+def test_nested_translations_accumulate(tmp_path: Path) -> None:
+    """Transforms compose down the tree."""
+    scene = _parse(tmp_path,
+                   '<g transform="translate(100,0)">'
+                   '<g transform="translate(0,50)">'
+                   '<rect x="10" y="20" width="30" height="40"/></g></g>')
+    assert (scene.boxes[0].x, scene.boxes[0].y) == (110.0, 70.0)
+
+
+def test_a_transform_that_cannot_be_measured_is_refused(
+        tmp_path: Path) -> None:
+    """An unsupported transform raises rather than mismeasuring in silence.
+
+    The linter turns this into an `unreadable-input` error, which tells the
+    author their slide was not checked. Quietly ignoring the rotation and
+    reporting a clean gate would be a lie.
+    """
+    with pytest.raises(ValueError, match="transform"):
+        _parse(tmp_path, '<g transform="rotate(45)"><rect x="10" y="20" '
+                         'width="30" height="40"/></g>')
+
+
+def test_a_path_is_captured_for_colour_linting(tmp_path: Path) -> None:
+    """Pie wedges are `<path>` elements and their fill must be linted.
+
+    Geometry is deliberately not extracted: a bounding box guessed from the
+    `d` string is wrong for arcs in one direction or the other, and a wrong
+    box is worse than a declared absence.
+    """
+    scene = _parse(tmp_path, '<path d="M0,0 L10,0 L10,10 Z" fill="#ff00ff" '
+                             'data-style-role="chart.series"/>')
+    assert len(scene.paths) == 1
+    assert scene.paths[0].fill == "#ff00ff"
+    assert scene.paths[0].style_role == "chart.series"
+
+
+def test_the_canvas_background_is_kept_for_colour_resolution(
+        tmp_path: Path) -> None:
+    """A full-canvas rect is excluded from layout but drives contrast.
+
+    Discarding it entirely makes every rule judge white text on a navy section
+    divider against the token background, which is white: a contrast error on
+    a slide that is correct.
+    """
+    scene = _parse(tmp_path, '<rect width="1200" height="675" fill="#1e3a5f"/>')
+    assert scene.boxes == ()
+    assert scene.background is not None
+    assert scene.background.fill == "#1e3a5f"
+
+
+def test_boxes_record_the_order_they_are_painted_in(tmp_path: Path) -> None:
+    """Paint order decides which fill a point actually sits on."""
+    scene = _parse(tmp_path,
+                   '<rect x="0" y="0" width="100" height="100" fill="#ffffff"/>'
+                   '<rect x="0" y="0" width="100" height="100" fill="#1e3a5f"/>')
+    assert scene.boxes[0].paint_order < scene.boxes[1].paint_order
+
+
+def test_a_tspan_smaller_than_its_parent_is_recorded(tmp_path: Path) -> None:
+    """The type floor has to see the smallest size actually rendered.
+
+    A 21-unit `<text>` carrying an 8-unit `<tspan>` renders 8-unit glyphs. The
+    element's own `font-size` says nothing about them.
+    """
+    scene = _parse(tmp_path,
+                   '<text x="10" y="20" font-size="21" fill="#374151">'
+                   'big<tspan font-size="8">tiny</tspan></text>')
+    assert scene.texts[0].size == 21.0
+    assert scene.texts[0].min_size == 8.0
+
+
+def test_tspan_fills_are_collected(tmp_path: Path) -> None:
+    """Contrast has to see every colour the element actually paints."""
+    scene = _parse(tmp_path,
+                   '<text x="10" y="20" font-size="21" fill="#374151">'
+                   'a<tspan fill="#e2e8f0">b</tspan></text>')
+    assert set(scene.texts[0].fills) == {"#374151", "#e2e8f0"}
+
+
+def test_the_marker_role_is_inherited_from_the_wrapping_group(
+        tmp_path: Path) -> None:
+    """`data-pptx-role` tells a rule whether it is looking at chart furniture."""
+    scene = _parse(tmp_path, '<g data-pptx-role="chart">'
+                             '<rect x="10" y="20" width="30" height="40"/></g>')
+    assert scene.boxes[0].pptx_role == "chart"
+
+
+def test_an_elbow_polyline_only_attaches_at_its_two_ends(
+        tmp_path: Path) -> None:
+    """A routed connector's corners are not attachment points.
+
+    Every segment used to inherit both `data-from` and `data-to`, so a
+    three-segment elbow produced four spurious `connector-port-drift` errors
+    for corners that are not meant to touch a node at all.
+    """
+    scene = _parse(tmp_path,
+                   '<polyline points="0,0 100,0 100,100 200,100" '
+                   'stroke="#475569" marker-end="url(#a)" '
+                   'data-from="n1" data-to="n2"/>')
+    assert len(scene.connectors) == 3
+    assert [c.from_node for c in scene.connectors] == ["n1", None, None]
+    assert [c.to_node for c in scene.connectors] == [None, None, "n2"]
+
+
+def test_a_tspan_is_measured_at_its_own_size(tmp_path: Path) -> None:
+    """Line width has to use the size each line is actually set in.
+
+    Measuring an 8-unit span at the parent's 21 units overstates its advance
+    by more than a factor of two, which pushes the run's bounding box far to
+    one side and invents overlap that is not there.
+    """
+    wide = _parse(tmp_path,
+                  '<text x="10" y="20" font-size="21" fill="#374151">'
+                  '<tspan font-size="21">MMMMM</tspan></text>')
+    narrow = _parse(tmp_path,
+                    '<text x="10" y="20" font-size="21" fill="#374151">'
+                    '<tspan font-size="8">MMMMM</tspan></text>')
+    assert narrow.texts[0].width < wide.texts[0].width / 2

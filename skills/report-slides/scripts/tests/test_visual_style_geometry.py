@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Optional
 
 import pytest
@@ -177,18 +178,23 @@ def test_data_marks_are_exempt_from_the_grid(tokens: DesignTokens) -> None:
 def test_check_runs_every_geometry_rule(tokens: DesignTokens) -> None:
     """The module entry point aggregates all five rules.
 
-    b2 hangs below b1 rather than sitting inside it. A wholly contained box is
-    intended composition by this module's own rule, so a nested fixture would
-    report no overlap however the aggregate entry point behaved.
+    The scene trips every one of them, so a `check()` that stopped dispatching
+    a rule fails here. Asserting `set(geometry.RULES)` against a hand-written
+    literal, as this test used to, is a statement about a constant.
+
+    `far` leaves the right margin, `b1` and `b2` are different nodes that
+    overlap, `g1` and `g2` are 10 apart against a 24-unit floor, `label` hangs
+    half out of its own node, and every box here is off the 8-unit grid.
     """
-    scene = _scene(boxes=[_box("b1", 900, 100, 260, 90, node_id="n1"),
-                          _box("b2", 1010, 150, 100, 90, node_id="n2")])
+    scene = _scene(
+        boxes=[_box("far", 1100, 100, 200, 90),
+               _box("b1", 200, 300, 200, 90, node_id="n1"),
+               _box("b2", 300, 330, 200, 90, node_id="n2"),
+               _box("g1", 601, 500, 100, 50, node_id="n3"),
+               _box("g2", 711, 500, 100, 50, node_id="n4")],
+        texts=[_text("label", 380, 340, 120, node_id="n1")])
     rules = {f.rule for f in geometry.check(scene, tokens)}
-    assert "safe-area" in rules
-    assert "element-overlap" in rules
-    assert set(geometry.RULES) == {
-        "safe-area", "element-overlap", "node-gap", "node-padding", "off-grid",
-    }
+    assert rules == set(geometry.RULES)
 
 
 def test_abutting_tiles_are_not_an_overlap(tokens: DesignTokens) -> None:
@@ -203,3 +209,73 @@ def test_abutting_tiles_are_not_an_overlap(tokens: DesignTokens) -> None:
     scene = _scene(boxes=[_box("b1", 100, 160, 400, 49.0),
                           _box("b2", 100, 208.9, 400, 49.0)])
     assert geometry.check_overlap(scene, tokens) == []
+
+
+def test_one_node_swallowing_another_is_an_error(
+        tokens: DesignTokens) -> None:
+    """Containment is composition only inside a single node.
+
+    `check_overlap` treated any containment as intended and `check_node_gap`
+    skips pairs that intersect on the grounds that overlap covers them, so a
+    node drawn wholly inside another node passed both rules. That is the
+    worst-looking defect a diagram can have and it had a clear path through.
+    """
+    scene = _scene(boxes=[_box("b1", 96, 96, 400, 200, node_id="n1"),
+                          _box("b2", 160, 128, 120, 80, node_id="n2")])
+    rules = {f.rule for f in geometry.check_overlap(scene, tokens)}
+    assert rules == {"element-overlap"}
+
+
+def test_a_box_inside_an_unscoped_container_is_still_composition(
+        tokens: DesignTokens) -> None:
+    """A card inside a panel that carries no node id stays exempt.
+
+    Panels, plates and backing shapes are laid out without a `data-node-id`.
+    Reporting those would fire on every two-column and metric-card slide.
+    """
+    scene = _scene(boxes=[_box("panel", 96, 96, 400, 200),
+                          _box("card", 160, 128, 120, 80, node_id="n2")])
+    assert geometry.check_overlap(scene, tokens) == []
+
+
+def test_chart_furniture_is_exempt_from_the_grid(
+        tokens: DesignTokens) -> None:
+    """Bars are placed by the value they encode, not by the layout grid.
+
+    The exemption keyed on `data-style-role` starting with `chart`, but the
+    renderers do not put a style role on generated bars -- they wrap the whole
+    plot in `data-pptx-role="chart"`. Every bar on every chart slide therefore
+    produced an `off-grid` warning, which is the noise that gets a rule muted.
+    """
+    bar = _box("rect#21", 163, 211.4, 47, 268.6)
+    plain = _scene(boxes=[bar])
+    assert {f.rule for f in geometry.check_grid(plain, tokens)} == {"off-grid"}
+    charted = _scene(boxes=[replace(bar, pptx_role="chart")])
+    assert geometry.check_grid(charted, tokens) == []
+
+
+def test_a_label_that_escapes_its_node_is_reported(
+        tokens: DesignTokens) -> None:
+    """A label hanging outside its own box is the defect padding exists for.
+
+    `_enclosing_box` returned None when no box of the node contained the
+    label's centre, and the rule then skipped the run entirely. The further
+    the label escaped, the more certainly it was ignored.
+
+    Half in and half out is the shape of the defect. A label placed wholly
+    outside its node is a different idiom -- a timeline dot with its label on
+    a stem -- and is checked by `test_a_label_placed_beside_its_node_is_fine`.
+    """
+    scene = _scene(
+        boxes=[_box("plate", 96, 96, 200, 88, node_id="n1")],
+        texts=[_text("label", 280, 175, 120, node_id="n1")])
+    findings = geometry.check_node_padding(scene, tokens)
+    assert {f.rule for f in findings} == {"node-padding"}
+
+
+def test_a_label_placed_beside_its_node_is_fine(tokens: DesignTokens) -> None:
+    """A timeline dot carries its label outside itself, on purpose."""
+    scene = _scene(
+        boxes=[_box("dot", 300, 300, 20, 20, node_id="n1")],
+        texts=[_text("label", 260, 260, 100, node_id="n1")])
+    assert geometry.check_node_padding(scene, tokens) == []

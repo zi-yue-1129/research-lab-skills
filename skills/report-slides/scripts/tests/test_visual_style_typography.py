@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Optional
 
 import pytest
@@ -132,11 +133,28 @@ def test_body_within_the_word_budget_is_clean(tokens: DesignTokens) -> None:
 
 
 def test_check_runs_every_typography_rule(tokens: DesignTokens) -> None:
-    """The module entry point aggregates all three rules."""
+    """The module entry point aggregates all three rules.
+
+    `t1` is below its role floor, five distinct sizes breach the variety
+    budget, and `t6` carries more words than a body run is allowed.
+    """
+    prose = " ".join(["word"] * (typography.BODY_WORD_BUDGET + 1))
     scene = _scene([_text("t1", 10), _text("t2", 26), _text("t3", 18),
-                    _text("t4", 16), _text("t5", 32)])
+                    _text("t4", 16), _text("t5", 32),
+                    _text("t6", 21, role="body", lines=8, content=prose)])
     rules = {f.rule for f in typography.check(scene, tokens)}
-    assert rules == {"type-floor", "type-variety"}
-    assert set(typography.RULES) == {
-        "type-floor", "type-variety", "overlong-text",
-    }
+    assert rules == set(typography.RULES)
+
+
+
+def test_a_tspan_below_the_floor_is_caught(tokens: DesignTokens) -> None:
+    """The floor has to see the smallest size the element actually renders.
+
+    A 21-unit `<text>` carrying an 8-unit `<tspan>` renders 8-unit glyphs. The
+    element's own `font-size` says nothing about them, so a run could declare a
+    conformant size and paint something unreadable inside it.
+    """
+    run = replace(_text("t1", 21), min_size=8.0)
+    findings = typography.check_type_floor(_scene(texts=[run]), tokens)
+    assert {f.rule for f in findings} == {"type-floor"}
+    assert "8" in findings[0].message
