@@ -167,7 +167,7 @@ This is an interpretive caveat only. ARS does **not** detect, prevent, or correc
 - In ordinary reviewer / judge paths, cross-model is **opt-in, "for best results"** — the citation-claim alignment judge already supports a non-default judge model, and the suite is designed to work single-model.
 - **Calibration mode is the exception**: calibration itself is opt-in, but once invoked `ARS_CROSS_MODEL` is **default-on** (see "Cross-model verification" under Phase 1) — at least one of the runs should use a different family when configured.
 - Absent cross-model is **warn-and-continue**, never a gate.
-- Sending a user's manuscript to another provider still requires the explicit consent / privacy step in `shared/cross_model_verification.md` — this recommendation does not weaken that boundary.
+- Sending a user's manuscript to another provider still requires the explicit consent / privacy step in `shared/protocols/cross_model_verification.md` — this recommendation does not weaken that boundary.
 
 **A single-model spot-check (weak, optional).** With no second model, you can reword the rubric and re-judge, then check whether the verdict changed. Be clear about what this does: it only tells you whether a *change of wording* shifts the judgment — surface wording sensitivity. It does **not** reveal whether the model is quietly optimizing toward the grader (that can be unverbalized), and a verdict that survives rewording is **not** evidence the judgment is correct — only that it is stable to that paraphrase. It is one model checking itself, so its power against grader-awareness is limited. No score, no threshold, no gate.
 
@@ -198,7 +198,7 @@ This is an interpretive caveat only. ARS does **not** detect, prevent, or correc
 
 - Lu, C. et al. (2026). Towards end-to-end automation of AI research. *Nature* 651, 914-919. doi:10.1038/s41586-026-10265-5 — Table 1 (reviewer validation), Methods A.1.1 (ensembling).
 - Efron, B. & Tibshirani, R. J. (1993). *An Introduction to the Bootstrap*. Chapman & Hall/CRC — bootstrap CI methodology.
-- ARS `shared/cross_model_verification.md` — cross-model reviewer integration.
+- ARS `shared/protocols/cross_model_verification.md` — cross-model reviewer integration.
 - ARS `academic-paper-reviewer/references/quality_rubrics.md` — scoring rubric definitions.
 
 ## v3.6.2 sprint contract status

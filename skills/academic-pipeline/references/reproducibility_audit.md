@@ -47,7 +47,7 @@ This document defines PROCESS reproducibility — consistent stages, fixed revie
 explicit pass/fail thresholds. That's one of two meanings of "reproducible."
 
 The other is COMPUTATIONAL re-run — could a third party re-execute the same pipeline and
-produce the same (or near-same) output? For that, see [`../../shared/artifact_reproducibility_pattern.md`](../../shared/artifact_reproducibility_pattern.md).
+produce the same (or near-same) output? For that, see [`../../shared/patterns/artifact_reproducibility_pattern.md`](../../shared/patterns/artifact_reproducibility_pattern.md).
 
 Process reproducibility is enforced at the pipeline level. Computational documentation is
 captured in the Material Passport's optional `repro_lock` sub-block. Both are complementary;

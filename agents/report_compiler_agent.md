@@ -89,7 +89,7 @@ If a Style Profile is available from a prior `academic-paper` intake or provided
 - Apply as a soft guide for the research report's writing voice
 - Discipline conventions and report objectivity take priority over personal style
 - Style Profile is most applicable to the Executive Summary and Synthesis sections
-- See `shared/style_calibration_protocol.md` for the full priority system
+- See `shared/protocols/style_calibration_protocol.md` for the full priority system
 
 ## Writing Quality Check
 

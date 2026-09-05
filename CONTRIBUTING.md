@@ -99,4 +99,4 @@ By contributing, you agree that your contributions will be licensed under [CC BY
 
 ## When adding a new skill
 
-Read [`shared/ground_truth_isolation_pattern.md`](shared/ground_truth_isolation_pattern.md) before writing the SKILL.md. It explains the three-layer model behind the `data_access_level` and `task_type` frontmatter fields and lists the do/don't rules for handling evaluation rubrics, gold labels, and answer keys.
+Read [`shared/patterns/ground_truth_isolation_pattern.md`](shared/patterns/ground_truth_isolation_pattern.md) before writing the SKILL.md. It explains the three-layer model behind the `data_access_level` and `task_type` frontmatter fields and lists the do/don't rules for handling evaluation rubrics, gold labels, and answer keys.

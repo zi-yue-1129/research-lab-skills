@@ -10,10 +10,10 @@ status: active
 related_skills: [academic-pipeline, deep-research, academic-paper]
 last_updated: "2026-04-20"
 related_protocols:
-  - shared/prisma_trAIce_protocol.md
-  - shared/raise_framework.md
-  - shared/compliance_checkpoint_protocol.md
-  - shared/compliance_report.schema.json
+  - shared/external/prisma_trAIce_protocol.md
+  - shared/external/raise_framework.md
+  - shared/protocols/compliance_checkpoint_protocol.md
+  - shared/schemas/compliance_report.schema.json
   - academic-paper/references/anti_leakage_protocol.md
   - academic-pipeline/references/ai_research_failure_modes.md
 ---
@@ -26,7 +26,7 @@ Mode-aware agent that runs PRISMA-trAIce + RAISE compliance checks at Stage 2.5 
 
 - **Reads:** manuscript draft, methodology blueprint, bibliography, material passport, user-provided AI tool metadata
 - **Writes nothing to the manuscript.** Output is a separate `compliance_report` handed to the orchestrator.
-- **Does not hallucinate missing items.** Anti-Leakage Protocol applies: missing material → `[MATERIAL GAP: <item_id>]` in the gap reason (see [`shared/compliance_checkpoint_protocol.md#canonical-gap-tag-vocabulary`](../compliance_checkpoint_protocol.md#canonical-gap-tag-vocabulary)).
+- **Does not hallucinate missing items.** Anti-Leakage Protocol applies: missing material → `[MATERIAL GAP: <item_id>]` in the gap reason (see [`shared/protocols/compliance_checkpoint_protocol.md#canonical-gap-tag-vocabulary`](../protocols/compliance_checkpoint_protocol.md#canonical-gap-tag-vocabulary)).
 
 ## Input contract
 
@@ -46,7 +46,7 @@ user_metadata:
 
 ## Output contract
 
-`compliance_report` conforming to `shared/compliance_report.schema.json` (Schema 12). Appended to `material_passport.compliance_history[]` by the orchestrator.
+`compliance_report` conforming to `shared/schemas/compliance_report.schema.json` (Schema 12). Appended to `material_passport.compliance_history[]` by the orchestrator.
 
 ## Dispatch logic
 
@@ -89,7 +89,7 @@ Multiple tier contributions aggregate using `max_severity` (see `compliance_chec
 
 When a Mandatory-tier PRISMA-trAIce item triggers `block_decision = block`, the surfaced block message MUST include the following maturity note alongside the gap reason and override-ladder reference, so the user understands what authority is blocking them:
 
-> *Note: PRISMA-trAIce is currently a foundational proposal (Holst et al. 2025, *JMIR AI*, doi:[10.2196/80247](https://doi.org/10.2196/80247)), developed via systematic adaptation rather than a formal Delphi consensus study. Items have not yet been empirically validated across diverse research contexts. See `shared/prisma_trAIce_protocol.md` § Status disclaimer.*
+> *Note: PRISMA-trAIce is currently a foundational proposal (Holst et al. 2025, *JMIR AI*, doi:[10.2196/80247](https://doi.org/10.2196/80247)), developed via systematic adaptation rather than a formal Delphi consensus study. Items have not yet been empirically validated across diverse research contexts. See `shared/external/prisma_trAIce_protocol.md` § Status disclaimer.*
 
 This note is informational only — it does not lower the block severity. The Mandatory-as-block design choice follows the authors' own argument (Holst et al. 2025) that non-transparent AI use is the higher-cost failure mode. Surfacing the maturity note mirrors the disclosure pattern in [`academic-pipeline/references/plagiarism_detection_protocol.md`](../../academic-pipeline/references/plagiarism_detection_protocol.md), which discloses heuristic-screening scope to the user.
 
@@ -99,7 +99,7 @@ Before finalising the report, the agent runs four self-checks. Any flagged check
 
 | ID | Question | On fail |
 |---|---|---|
-| CA-1 | Am I quoting PRISMA-trAIce items from memory or from `shared/prisma_trAIce_protocol.md`? | Re-read the protocol file; requote. |
+| CA-1 | Am I quoting PRISMA-trAIce items from memory or from `shared/external/prisma_trAIce_protocol.md`? | Re-read the protocol file; requote. |
 | CA-2 | Are my block decisions anchored to each item's stated tier, not promoted/demoted from memory? | Re-read tier assignments; correct any drift. |
 | CA-3 | **SR mode only.** Did all 17 items pass AND `evidence[]` is empty? (Sycophancy risk) | Do a second pass over the 3 most-commonly-missed Mandatory items (M4, M6, M8); require explicit evidence path citation. |
 | CA-4 | For each RAISE principle marked `pass`, is `principle_evidence[<principle>]` non-empty? | Downgrade the principle to `warn` with note `[WEAK EVIDENCE]`. |
@@ -127,8 +127,8 @@ The orchestrator (or standalone skill) passes the input contract via the Agent t
 
 ## Related reading
 
-- `shared/prisma_trAIce_protocol.md` — item-level checks
-- `shared/raise_framework.md` — principle definitions and role matrix
-- `shared/compliance_checkpoint_protocol.md` — checkpoint behaviour and override ladder
+- `shared/external/prisma_trAIce_protocol.md` — item-level checks
+- `shared/external/raise_framework.md` — principle definitions and role matrix
+- `shared/protocols/compliance_checkpoint_protocol.md` — checkpoint behaviour and override ladder
 - `academic-paper/references/anti_leakage_protocol.md` — gap-marking discipline
 - `academic-pipeline/references/pipeline_state_machine.md` — FAIL-loop integration

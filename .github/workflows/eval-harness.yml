@@ -31,7 +31,7 @@ on:
       - "evals/gold/**"
       - "scripts/run_evals.py"
       - "scripts/check_ranking_lift.py"
-      - "shared/evals_lift_report.schema.json"
+      - "shared/schemas/evals_lift_report.schema.json"
       - ".github/workflows/eval-harness.yml"
   push:
     branches: [main]
@@ -53,7 +53,7 @@ on:
       - "evals/gold/**"
       - "scripts/run_evals.py"
       - "scripts/check_ranking_lift.py"
-      - "shared/evals_lift_report.schema.json"
+      - "shared/schemas/evals_lift_report.schema.json"
       - ".github/workflows/eval-harness.yml"
 
 concurrency:

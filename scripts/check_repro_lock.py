@@ -71,7 +71,7 @@ def validate_block(lock: dict) -> list[str]:
         if ht is not None and ht not in SUPPORTED_HASH_TIMINGS:
             errors.append(
                 f"repro_lock.prompts.hash_timing = {ht!r}, "
-                f"must be one of {sorted(SUPPORTED_HASH_TIMINGS)} (see shared/artifact_reproducibility_pattern.md)"
+                f"must be one of {sorted(SUPPORTED_HASH_TIMINGS)} (see shared/patterns/artifact_reproducibility_pattern.md)"
             )
 
     return errors
@@ -112,7 +112,7 @@ def main() -> int:
             print(f"ERROR: {e}")
         print(
             f"\n{len(errors)} violation(s). "
-            f"See shared/artifact_reproducibility_pattern.md for required fields.",
+            f"See shared/patterns/artifact_reproducibility_pattern.md for required fields.",
             file=sys.stderr,
         )
         return 1

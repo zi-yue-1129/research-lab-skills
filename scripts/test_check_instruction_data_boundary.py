@@ -20,7 +20,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CHECKER = REPO_ROOT / "scripts" / "check_instruction_data_boundary.py"
 
-AUTHORITATIVE_REL = "shared/ground_truth_isolation_pattern.md"
+AUTHORITATIVE_REL = "shared/patterns/ground_truth_isolation_pattern.md"
 AGENT_REL = "skills/deep-research/agents/source_verification_agent.md"
 AGENT2_REL = "skills/deep-research/agents/bibliography_agent.md"
 
@@ -119,7 +119,7 @@ def test_m5_backpoint_removed_from_agent(tmp_path):
     """Agent loses its backpoint citation."""
     root = _mirror(tmp_path)
     _edit(root, AGENT_REL,
-          lambda t: t.replace("shared/ground_truth_isolation_pattern.md", "(removed)")
+          lambda t: t.replace("shared/patterns/ground_truth_isolation_pattern.md", "(removed)")
                      .replace("§ 2A", "(removed)"))
     code, err = _run2(root)
     assert code == 1
@@ -179,7 +179,7 @@ def test_m11_backpoint_only_inside_fence(tmp_path):
     root = _mirror(tmp_path)
     def fence_the_backpoint(t: str) -> str:
         bp = ("Authoritative source:\n"
-              "`shared/ground_truth_isolation_pattern.md` § 2A.")
+              "`shared/patterns/ground_truth_isolation_pattern.md` § 2A.")
         # wrap the real backpoint in a code fence so it is excluded. The fence
         # markers must stand on their own lines (the stripper anchors ``` at line
         # start), so prepend/append a newline around each marker.

@@ -2,7 +2,7 @@
 """ARS multi-task eval harness (#184 Delta 2, Phase 1b).
 
 Discovers every ``evals/gold/<task>/manifest.yaml``, runs the measurement for
-each task, and emits a report shaped by ``shared/evals_lift_report.schema.json``.
+each task, and emits a report shaped by ``shared/schemas/evals_lift_report.schema.json``.
 
 Per-task measurement dispatch:
 

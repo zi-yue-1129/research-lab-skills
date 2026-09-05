@@ -6,7 +6,7 @@ on:
     - cron: "0 9 * * 1"
   push:
     paths:
-      - "shared/prisma_trAIce_protocol.md"
+      - "shared/external/prisma_trAIce_protocol.md"
       - "scripts/check_prisma_trAIce_freshness.py"
   workflow_dispatch:
 
