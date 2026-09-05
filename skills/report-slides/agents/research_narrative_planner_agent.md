@@ -37,7 +37,7 @@ Begin by analyzing the narrative arc in the source material using the `follows:`
    - A `purpose` explaining what this slide does in the narrative (e.g., "Establish the baseline", "Present key finding", "Highlight contrasting evidence").
    - A non-empty `key_takeaway` that captures the single most important message from this slide.
    - `evidence_refs` listing all source materials (log entry IDs, page numbers, or reference keys) that support this slide.
-   - An `intended_visual_type` that accurately reflects how this content should be visualized: `native` (text/simple formatting), `data` (charts, graphs, tables), `generative` (diagrams, conceptual illustrations), `hybrid` (mix of data and visuals), or `none` (text-only).
+   - An `intended_visual_type` that accurately reflects how this content should be visualized: `native` (text/simple formatting), `data` (charts, graphs, tables), `generative` (runtime-generated illustration), `hybrid` (mix of data and visuals), or `none` (text-only). Prefer `native` for structural diagrams: a deterministic diagram is authored, reviewable, and editable, and a generated raster is none of those. Choose `generative` only when the slide's claim needs imagery that no diagram can carry, and say so in `visual_rationale` — that sentence becomes the `illustration_rationale` the prompt record requires.
    - A `visual_rationale` explaining why that visual type is appropriate for this content.
    - A `speaker_message` that captures what the presenter will say (a concise script or talking points).
    - `dependencies` listing earlier `slide_id`s that must appear before this one.

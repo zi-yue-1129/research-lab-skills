@@ -99,6 +99,10 @@ def test_conceptual_illustration_worker_agent_names_stage_and_route() -> None:
     assert "Stage Boundary" in text
     assert "modify scientific content" in text.lower()
     assert "generative" in text
+    assert "last" in text.lower()
+    assert "style anchor" in text.lower()
+    assert "validate_generative_prompt.py" in text
+    assert "Downgrade rule" in text
 
 
 def test_annotation_worker_agent_names_stage_and_route() -> None:

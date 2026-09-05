@@ -2,10 +2,14 @@
 
 ## Selection gate
 
-Use a generative image only when illustration adds explanatory value that
-native shapes or deterministic SVG cannot provide efficiently. Do not use an
-image model for statistical marks, chart values, authoritative technical
-labels, legends, exact numbers, or other factual structure.
+The generative route is opt-in and last. Before it is available for a module,
+two deterministic candidates must have been produced and ranked, and both must
+have failed to carry the module's claim. Record which candidates were tried and
+why they failed; that record is the `illustration_rationale` field of the prompt
+record, and a generative asset without it does not pass the module gate.
+
+Do not use an image model for statistical marks, chart values, authoritative
+technical labels, legends, exact numbers, or other factual structure.
 
 Creation and editing are runtime operations. Invoke the runtime image-generation
 capability for the current visual; an existing file alone is not evidence that
@@ -13,17 +17,29 @@ the requested generation or edit occurred. Do not replace a required runtime
 generation or edit with an arbitrary web image, an untracked download, or an
 unrelated redraw.
 
+**Why the default changed.** A generative illustration that could have been a
+diagram costs the deck twice: it cannot be edited when the content changes, and
+it drifts towards the image model's prior for "technical illustration" — glowing
+networks, light ribbons, abstract data cities — which reads as generic
+regardless of how well it is rendered. See
+`references/style-anchors/README.md`.
+
 ## Prompt record
 
 Store the prompt record as `prompt.md` in the asset directory. It must contain
 all of these fields:
 
 ```yaml
-purpose: Support the explanation of the researcher and AI evaluation loop.
-composition: One focal researcher at left, abstract model activity at right, open space above.
-subject: Researcher, lab environment, and non-literal machine-learning forms.
-palette: Deep navy, warm amber, muted teal, and neutral background.
-lighting: Soft directional light with a calm, readable center.
+purpose: Support the explanation of the retrieval and ranking loop.
+illustration_rationale: >-
+  Two deterministic candidates were produced (a staged flow diagram and a
+  layered block diagram); both rendered the stages but neither carried the
+  claim that ranking is continuous rather than discrete.
+style_anchor: technical-schematic
+composition: Three stages left to right, open annotation margin above.
+subject: A retrieval pipeline and the ranked passages leaving it.
+palette: Design-token roles primary, body, line, card, bg.
+lighting: Flat, no directional light.
 empty_annotation_regions: Upper third and lower-right margin.
 exclusions:
   - prose
@@ -33,10 +49,54 @@ exclusions:
   - watermarks
   - signatures
 aspect_ratio: 16:9
-references:
-  - source-reference.png
+references: []
 changed_regions: []
+
+# Spec D6: three candidates, ranked blind against the anchor's reference images.
+# `matches_anchor` is the ranker's verdict, not the author's preference. If the
+# top-ranked candidate does not match, set `selected: null` and
+# `downgraded_to: native-editorial` -- accepting the least-bad image is
+# prohibited, and validate_generative_prompt.py refuses it.
+candidates:
+  - id: c1
+    asset: renders/candidate-01.png
+    rank: 1
+    matches_anchor: true
+  - id: c2
+    asset: renders/candidate-02.png
+    rank: 2
+    matches_anchor: false
+  - id: c3
+    asset: renders/candidate-03.png
+    rank: 3
+    matches_anchor: false
+ranking:
+  blinded: true
+  ranked_by: art_direction
+selected: c1
 ```
+
+**On "ranked blind".** The ranker must not know which candidate came from which
+generation attempt, which prompt variant produced it, or which one the author
+prefers. Present the three renders in a shuffled order against the anchor's
+reference images and record the verdict. `ranking.blinded: false` is refused
+rather than merely noted: an unblinded ranking of three images the author
+already has an opinion about is a rationalisation, not a ranking, and it would
+let the exact failure in spec §2.1 through with three times the paperwork.
+
+`style_anchor` and `illustration_rationale` are required. Validate the record
+before generating:
+
+```bash
+VGP="$(find ~/.claude -path "*/report-slides/scripts/validate_generative_prompt.py" | head -1)"
+timeout 120 python3 "$VGP" --prompt "$ASSET_DIR/prompt.md" --json
+```
+
+The validator refuses a record that omits a required field, cites an
+unregistered anchor, drops a required exclusion, or asks anywhere in its text
+for a banned motif. It reads the prompt, not the produced image: a model may
+still return a banned motif unasked, and that case is caught at review as an
+`art_direction` `visual-cliche` finding.
 
 For a new image, `references` and `changed_regions` may be empty. For an edit,
 name the earlier image in `references` and list each requested region in

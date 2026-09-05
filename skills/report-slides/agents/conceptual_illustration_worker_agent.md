@@ -27,7 +27,39 @@ Run the full mandatory visual-authoring gate exactly as defined in this skill's 
 
 1. **Plan:** Create `diagram-plan.yaml` with one entry for your module.
 2. **Discover:** Search project `manifest.yaml` files by purpose, conceptual theme, and semantic region before rendering, to find any existing conceptual-illustration assets that might be reused or modified.
-3. **Classify:** Select exactly one route: `generative` ([V:AI]) is the default for conceptual illustrations when native shapes or data-driven routes cannot adequately represent the idea.
+3. **Classify:** Select exactly one route. `generative` ([V:AI]) is the **last**
+   route, not the default. Produce at least two deterministic candidates first —
+   a diagram from `references/diagram-patterns.md` and one alternative
+   composition — and rank them against the module's `purpose`. Take the
+   generative route only when both candidates fail to carry the claim, and
+   record why in the prompt record's `illustration_rationale`.
+
+   **Downgrade rule.** If, at any point after generation, the illustration is
+   found to carry no information a deterministic diagram could not carry, the
+   module is downgraded to the deterministic candidate. This is not a failure
+   of the module; it is the route correcting itself. A generative asset that
+   survives is one that earned its place.
+
+   **The registry may be empty, and that is a valid answer.** Spec D6 ships the
+   style-anchor registry unpopulated, because curating reference images is a
+   human action. While it is empty, every generative record is refused and the
+   module downgrades to a native editorial composition. Do not add a prose-only
+   anchor to reopen the route: `style_anchors.load_anchors` refuses an entry
+   without verified `reference_images`. See
+   `references/style-anchors/README.md` for the population procedure.
+
+   Every generative prompt record must name a registered style anchor, carry
+   three candidates ranked blind against that anchor's reference images, and
+   pass:
+
+   ```bash
+   VGP="$(find ~/.claude -path "*/report-slides/scripts/validate_generative_prompt.py" | head -1)"
+   timeout 120 python3 "$VGP" --prompt "$ASSET_DIR/prompt.md" --json
+   ```
+
+   Anchors are listed in `references/style-anchors/README.md`. There is no
+   default anchor: if no anchor fits the subject, that is evidence the slide
+   does not need a generative illustration.
 4. **Reference:** Load only the relevant references for the generative route from this skill's `references/` directory.
 
 4b. **Resolve tokens:** Load the design-token file named by your
