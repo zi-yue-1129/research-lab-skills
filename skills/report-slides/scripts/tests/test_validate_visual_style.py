@@ -185,3 +185,41 @@ def test_every_rule_module_shares_the_entry_point(module) -> None:
     assert callable(module.check)
     assert isinstance(module.RULES, tuple)
     assert module.RULES
+
+
+def test_the_documented_gate_command_can_actually_be_run() -> None:
+    """Stage 10's command must name a script that exists, the way the file does.
+
+    The gate block was written as `python3 "$SCRIPTS/validate_visual_style.py"`,
+    and `$SCRIPTS` is defined nowhere in this skill. `setup.sh` copies three
+    scripts into a project and the validator is not one of them, nor are the
+    `visual_style/` package, `fonts.py`, or `design_tokens.py` it imports. In a
+    fresh project the documented command expands to
+    `python3 "/validate_visual_style.py"`. A gate nobody can run is prose.
+
+    Every other validator in SKILL.md resolves out of the installed skill
+    bundle with `find ~/.claude -path ...`, which is also what makes the
+    sibling imports resolve. This pins the gate to that convention.
+    """
+    text = (_SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+    assert "$SCRIPTS/validate_visual_style.py" not in text
+    assert ('find ~/.claude -path "*/report-slides/scripts/'
+            'validate_visual_style.py"') in text
+    assert _CLI.is_file()
+
+
+def test_malformed_xml_is_a_finding_not_a_traceback(tmp_path: Path) -> None:
+    """A broken SVG must come back inside the envelope like any other input.
+
+    `lxml.etree.XMLSyntaxError` derives from `SyntaxError`, not from `OSError`
+    or `ValueError`, so the guard that was meant to turn a bad file into an
+    `unreadable-input` finding did not catch it. One malformed file crashed the
+    run with a traceback and took every later file in the same invocation with
+    it -- the findings in those files were never reported at all.
+    """
+    svg = _write(tmp_path, "broken.svg",
+                 '<svg viewBox="0 0 1200 675"><rect></svg>')
+    good = _write(tmp_path, "clean.svg", _CLEAN_SVG)
+    result = lint_paths([svg, good], DEFAULT_TOKENS_PATH)
+    assert result["files"][0]["findings"][0]["rule"] == "unreadable-input"
+    assert result["files"][1]["path"] == str(good)

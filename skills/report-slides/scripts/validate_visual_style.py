@@ -13,6 +13,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, Dict, List, Sequence, Tuple
 
+from lxml.etree import LxmlError
+
 from design_tokens import DEFAULT_TOKENS_PATH, DesignTokens, TokenError
 from fonts import FontError, resolve_font_stack
 from visual_style import color, connectors, density, geometry, typography
@@ -41,7 +43,10 @@ def lint_svg(svg_path: Path, tokens: DesignTokens,
     report = LintReport()
     try:
         scene = parse_scene(svg_path, font_family)
-    except (OSError, ValueError) as exc:
+    # `XMLSyntaxError` derives from `SyntaxError`, not from `ValueError`, so a
+    # malformed file used to escape this guard entirely: the run died on a
+    # traceback and every later file in the same invocation went unlinted.
+    except (OSError, ValueError, LxmlError) as exc:
         report.add(Finding(
             rule="unreadable-input", severity="error",
             message=f"cannot lint {svg_path}: {exc}",

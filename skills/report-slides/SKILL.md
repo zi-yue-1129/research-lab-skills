@@ -721,9 +721,18 @@ the Complex Visual Specification, per §5 of the design spec).
 dispatched for a slide, run the linter over that slide's authored SVG:
 
 ```bash
-timeout 120 python3 "$SCRIPTS/validate_visual_style.py" \
+VVS="$(find ~/.claude -path "*/report-slides/scripts/validate_visual_style.py" | head -1)"
+# $SLIDE_SVG is the integrated SVG this stage just wrote; $STYLE_TOKENS_REF is
+# the `_effective.tokens.yaml` from §"Tokens and style", not the file passed to
+# `--tokens` at generation time.
+timeout 120 python3 "$VVS" \
   --svg "$SLIDE_SVG" --tokens "$STYLE_TOKENS_REF" --json
 ```
+
+The validator is run out of the installed skill bundle, like every other
+validator in this file. It is not copied into the project by `setup.sh`: it
+imports `visual_style/`, `fonts.py`, and `design_tokens.py` from beside itself,
+and those resolve only in the bundle.
 
 Exit code 1 blocks the slide: the module returns to `revision_required` with the
 findings attached, and Stages 11–12 are not entered. This gate is deterministic
