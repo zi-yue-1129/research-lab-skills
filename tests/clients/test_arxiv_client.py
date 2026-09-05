@@ -232,7 +232,7 @@ def test_429_triggers_2s_backoff_3_retries(monkeypatch):
         )
 
     sleeps = []
-    monkeypatch.setattr("arxiv_client.time.sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr("scripts.clients.arxiv_client.time.sleep", lambda s: sleeps.append(s))
 
     with patch("urllib.request.urlopen", side_effect=mock_urlopen):
         client = ArxivClient()
@@ -367,9 +367,9 @@ def test_throttle_uses_monotonic_clock(monkeypatch):
     monotonic_calls = []
     time_calls = []
 
-    monkeypatch.setattr("arxiv_client.time.monotonic",
+    monkeypatch.setattr("scripts.clients.arxiv_client.time.monotonic",
                         lambda: (monotonic_calls.append(1), 100.0)[1])
-    monkeypatch.setattr("arxiv_client.time.time",
+    monkeypatch.setattr("scripts.clients.arxiv_client.time.time",
                         lambda: (time_calls.append(1), 100.0)[1])
 
     client = ArxivClient()

@@ -126,7 +126,7 @@ def test_429_triggers_2s_backoff_3_retries(monkeypatch):
         )
 
     sleeps = []
-    monkeypatch.setattr("crossref_client.time.sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr("scripts.clients.crossref_client.time.sleep", lambda s: sleeps.append(s))
 
     with patch("urllib.request.urlopen", side_effect=mock_urlopen):
         client = CrossrefClient()
@@ -326,8 +326,8 @@ def test_throttle_uses_monotonic_clock(monkeypatch):
         time_calls.append(1)
         return 100.0
 
-    monkeypatch.setattr("crossref_client.time.monotonic", fake_monotonic)
-    monkeypatch.setattr("crossref_client.time.time", fake_time)
+    monkeypatch.setattr("scripts.clients.crossref_client.time.monotonic", fake_monotonic)
+    monkeypatch.setattr("scripts.clients.crossref_client.time.time", fake_time)
 
     client = CrossrefClient()
     # Initial state: no prior request — _throttle short-circuits.
