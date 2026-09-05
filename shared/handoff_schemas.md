@@ -499,8 +499,8 @@ score_trajectory: {
 | `integrity_pass_date` | string | ISO 8601 timestamp of last integrity verification pass (if applicable) |
 | `content_hash` | string | SHA-256 hash of the content (for change detection) |
 | `upstream_dependencies` | list[string] | Version labels of artifacts this one depends on |
-| `repro_lock` | object \| null | configuration lockfile for artifact reproducibility. See [`artifact_reproducibility_pattern.md`](artifact_reproducibility_pattern.md). `null` = honest opt-out. Required from v3.3.5+ — omitted key fails lint. |
-| `compliance_history` | list[object] | Append-only audit trail of `compliance_report` entries (Schema 12). Added v3.4.0+. See [Schema 12](#schema-12--compliance-report-v340) and [`shared/compliance_report.schema.json`](compliance_report.schema.json). |
+| `repro_lock` | object \| null | configuration lockfile for artifact reproducibility. See [`artifact_reproducibility_pattern.md`](patterns/artifact_reproducibility_pattern.md). `null` = honest opt-out. Required from v3.3.5+ — omitted key fails lint. |
+| `compliance_history` | list[object] | Append-only audit trail of `compliance_report` entries (Schema 12). Added v3.4.0+. See [Schema 12](#schema-12--compliance-report-v340) and [`shared/schemas/compliance_report.schema.json`](schemas/compliance_report.schema.json). |
 | `reset_boundary` | list[object] | Append-only ledger. Two entry kinds: `boundary` (recorded at FULL checkpoints when `ARS_PASSPORT_RESET=1`) and `resume` (recorded when `resume_from_passport` consumes a boundary). Added v3.6.3+. Entry shape: [`shared/contracts/passport/reset_ledger_entry.schema.json`](contracts/passport/reset_ledger_entry.schema.json). See [`academic-pipeline/references/passport_as_reset_boundary.md`](../academic-pipeline/references/passport_as_reset_boundary.md). |
 | `literature_corpus` | list[object] | Optional append-friendly literature corpus. Each entry conforms to [`shared/contracts/passport/literature_corpus_entry.schema.json`](contracts/passport/literature_corpus_entry.schema.json). Produced by user-written adapters (see [`academic-pipeline/references/adapters/overview.md`](../academic-pipeline/references/adapters/overview.md)); ARS does not produce these entries itself. Added v3.6.4+. |
 | `audit_artifact` | list[object] | Optional append-only ledger of cross-model audit runs for v3.6.7 downstream-agent deliverables. Each entry conforms to [`shared/contracts/passport/audit_artifact_entry.schema.json`](contracts/passport/audit_artifact_entry.schema.json). Produced by the pipeline orchestrator after Layer 2 + Layer 3 verification of wrapper-emitted proposal entries; only `persisted` entries are stored here. Added v3.6.7+. |
@@ -703,7 +703,7 @@ Priority 2 (STRONG): Target journal conventions — if specified
 Priority 3 (SOFT):   Author's personal style — only where it does not conflict with 1 or 2
 ```
 
-See `shared/style_calibration_protocol.md` for full consumption rules and conflict resolution.
+See `shared/protocols/style_calibration_protocol.md` for full consumption rules and conflict resolution.
 
 ### Example
 
@@ -770,7 +770,7 @@ See `shared/style_calibration_protocol.md` for full consumption rules and confli
 
 ## Schema 12 — Compliance Report (v3.4.0+)
 
-**Source of truth:** [`shared/compliance_report.schema.json`](compliance_report.schema.json)
+**Source of truth:** [`shared/schemas/compliance_report.schema.json`](schemas/compliance_report.schema.json)
 
 Mode-aware output of [`compliance_agent`](agents/compliance_agent.md). Three top-level subtrees: `prisma_trAIce` (null for primary research), `raise` (always present), and decision aggregation fields.
 
@@ -783,7 +783,7 @@ Mode-aware output of [`compliance_agent`](agents/compliance_agent.md). Three top
 - `mode`: dispatches payload (see [`shared/agents/compliance_agent.md`](agents/compliance_agent.md) §Dispatch logic)
 - `stage`: `"2.5"` or `"4.5"`
 - `prisma_trAIce`: `null` when `mode != "systematic_review"`; otherwise tier-bucketed item results
-- `prisma_trAIce.protocol_maturity` *(optional, added per issue #95)*: snapshot of the upstream protocol's self-described maturity status (`foundational_proposal` / `delphi_consensus` / `empirically_validated`) plus citation, snapshot date, and a one-paragraph caveat summary. Populated by `compliance_agent` from [`shared/prisma_trAIce_protocol.md`](prisma_trAIce_protocol.md) — its frontmatter (`citation`, `snapshot_date`) is the deterministic source for `upstream_citation` and `snapshot_date`; `status` is derived from the protocol authors' self-description (currently `foundational_proposal` per Holst et al. 2025, until upstream graduates the checklist via formal consensus); `caveat_summary` is composed from the protocol's framing. (Issue #93 / PR #94 add a `§ Status disclaimer` section to the protocol file as the canonical prose source for `caveat_summary`; until that PR lands, agents derive the summary from the Holst 2025 framing.) Omittable for byte-equivalent compatibility with pre-#95 entries (zero-touch).
+- `prisma_trAIce.protocol_maturity` *(optional, added per issue #95)*: snapshot of the upstream protocol's self-described maturity status (`foundational_proposal` / `delphi_consensus` / `empirically_validated`) plus citation, snapshot date, and a one-paragraph caveat summary. Populated by `compliance_agent` from [`shared/external/prisma_trAIce_protocol.md`](external/prisma_trAIce_protocol.md) — its frontmatter (`citation`, `snapshot_date`) is the deterministic source for `upstream_citation` and `snapshot_date`; `status` is derived from the protocol authors' self-description (currently `foundational_proposal` per Holst et al. 2025, until upstream graduates the checklist via formal consensus); `caveat_summary` is composed from the protocol's framing. (Issue #93 / PR #94 add a `§ Status disclaimer` section to the protocol file as the canonical prose source for `caveat_summary`; until that PR lands, agents derive the summary from the Holst 2025 framing.) Omittable for byte-equivalent compatibility with pre-#95 entries (zero-touch).
 - `raise.mode`: `"full"` (SR + other_evidence_synthesis) or `"principles_only"` (primary_research)
 - `raise.principles`: 4 keys, each with `pass` / `warn` / `fail`
 - `raise.roles`: 8 keys, populated only when `raise.mode == "full"`
@@ -791,7 +791,7 @@ Mode-aware output of [`compliance_agent`](agents/compliance_agent.md). Three top
 - `user_override`: only present after a user overrides a block; rationale required
 - `upstream_sync_status`: `"current"` or `"stale"` (from freshness check)
 
-Full field spec: [`shared/compliance_report.schema.json`](compliance_report.schema.json).
+Full field spec: [`shared/schemas/compliance_report.schema.json`](schemas/compliance_report.schema.json).
 
 ### Material Passport extension
 
@@ -844,10 +844,10 @@ This is a declarative truth-in-advertising signal. All current ARS skills are `o
 
 Enforced by `scripts/check_task_type.py` in CI.
 
-See [`ground_truth_isolation_pattern.md`](ground_truth_isolation_pattern.md) for the rationale and rules behind this annotation.
+See [`ground_truth_isolation_pattern.md`](patterns/ground_truth_isolation_pattern.md) for the rationale and rules behind this annotation.
 
 
 ## v3.3.5 additions
 
-- `benchmark_report.schema.json` + [`benchmark_report_pattern.md`](benchmark_report_pattern.md) — schema for publishing ARS benchmark comparisons with required human baseline + independence fields.
-- `repro_lock` sub-block on Material Passport + [`artifact_reproducibility_pattern.md`](artifact_reproducibility_pattern.md) — configuration lockfile (NOT replay guarantee).
+- `benchmark_report.schema.json` + [`benchmark_report_pattern.md`](patterns/benchmark_report_pattern.md) — schema for publishing ARS benchmark comparisons with required human baseline + independence fields.
+- `repro_lock` sub-block on Material Passport + [`artifact_reproducibility_pattern.md`](patterns/artifact_reproducibility_pattern.md) — configuration lockfile (NOT replay guarantee).

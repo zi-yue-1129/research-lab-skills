@@ -67,7 +67,7 @@ observed* in ARS-style retrieval, not hypothetical. Two design conclusions follo
 
 State the instruction/data boundary as an explicit **standing principle** of the suite:
 
-- **Authoritative source**: add a section to `shared/ground_truth_isolation_pattern.md`,
+- **Authoritative source**: add a section to `shared/patterns/ground_truth_isolation_pattern.md`,
   extending its existing Layer 1 ("raw inputs … untrusted by default") treatment. The section
   carries an explicit subsection header marking it as a **distinct retrieved-content
   instruction/data boundary, not an eval-leakage rule** (the two are related trust concerns
@@ -195,7 +195,7 @@ backpoint string present) is **not enough** — a contributor could keep the anc
 body, and pass. So the lint asserts a minimal *canonical block*, still without any semantic
 analysis:
 
-- **(a) canonical section** — `shared/ground_truth_isolation_pattern.md` contains exactly one
+- **(a) canonical section** — `shared/patterns/ground_truth_isolation_pattern.md` contains exactly one
   authoritative section under the stable heading/marker, and that section contains the
   required **normative sentence(s) verbatim** (a short fixed string constant in the lint).
   Missing heading, missing/weakened normative sentence, or a duplicate/fake second anchor →
@@ -275,7 +275,7 @@ visible and un-ignorable, not left to issue-tracker memory.
 
 | File | Action |
 |---|---|
-| `shared/ground_truth_isolation_pattern.md` | Add authoritative section w/ distinct-concern subsection header + canonical normative sentence(s) (Layer 1 extension) |
+| `shared/patterns/ground_truth_isolation_pattern.md` | Add authoritative section w/ distinct-concern subsection header + canonical normative sentence(s) (Layer 1 extension) |
 | `deep-research/agents/source_verification_agent.md` | Inline verbatim normative sentence(s) + correctly-targeted backpoint |
 | `deep-research/agents/bibliography_agent.md` | Inline verbatim normative sentence(s) + correctly-targeted backpoint |
 | `scripts/check_instruction_data_boundary.py` | New lint (canonical section + verbatim sync) |

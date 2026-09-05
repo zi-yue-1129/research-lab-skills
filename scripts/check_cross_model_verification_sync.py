@@ -1,7 +1,7 @@
 """Doc-sync lint for the cross-model grounding guards (#346 / #349).
 
 The contract-bearing jq for the cross-model verifier lives in canonical files under
-`scripts/cross_model_verification/`; `shared/cross_model_verification.md` consumes them via
+`scripts/cross_model_verification/`; `shared/protocols/cross_model_verification.md` consumes them via
 `jq -f`. The behavioral tests (`test_cross_model_verification_guards.py`) pin what the jq DOES;
 this lint pins that the documented bash actually WIRES to the canonical files and still carries
 the fail-closed control flow — so a doc edit cannot quietly re-inline a (possibly weaker) filter
@@ -24,7 +24,7 @@ import re
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-DOC = REPO / "shared" / "cross_model_verification.md"
+DOC = REPO / "shared" / "protocols" / "cross_model_verification.md"
 GUARD_DIR = REPO / "scripts" / "cross_model_verification"
 
 # Canonical filters that MUST exist on disk and be referenced by the doc via `jq -f`.

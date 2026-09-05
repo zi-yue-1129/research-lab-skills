@@ -6,7 +6,7 @@
 
 ## Honest framing
 
-These fixtures are **behavioral smoke tests + cross-model spot-check**, not deterministic green/red unit tests. The unit-under-test is a Large Language Model (Claude / GPT / Gemini) following the routing rules in `.claude/CLAUDE.md` "Routing Discipline (v3.9.2)" + `shared/references/intent_clarification_protocol.md`.
+These fixtures are **behavioral smoke tests + cross-model spot-check**, not deterministic green/red unit tests. The unit-under-test is a Large Language Model (Claude / GPT / Gemini) following the routing rules in `.claude/CLAUDE.md` "Routing Discipline (v3.9.2)" + `shared/protocols/intent_clarification_protocol.md`.
 
 LLM-behavior assertions are flaky in the way model-behavior tests always are:
 

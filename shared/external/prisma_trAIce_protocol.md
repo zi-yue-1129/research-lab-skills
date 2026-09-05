@@ -27,12 +27,12 @@ ARS adopts the authors' Mandatory / Highly Recommended / Recommended / Optional 
 
 | Tier | Behaviour when item FAILs |
 |---|---|
-| Mandatory (M) | **Block**: pipeline halts; user must backfill, retreat a stage, or use the 3-round override ladder (see [`shared/compliance_checkpoint_protocol.md#override-ladder-3-round-friction`](./compliance_checkpoint_protocol.md#override-ladder-3-round-friction)) |
+| Mandatory (M) | **Block**: pipeline halts; user must backfill, retreat a stage, or use the 3-round override ladder (see [`shared/protocols/compliance_checkpoint_protocol.md#override-ladder-3-round-friction`](../protocols/compliance_checkpoint_protocol.md#override-ladder-3-round-friction)) |
 | Highly Recommended (HR) | **Warn**: surfaced at checkpoint; user can skip |
 | Recommended (R) | **Info**: logged in compliance_report, shown as dashboard bullet |
 | Optional (O) | **Info**: same as R |
 
-> **Gap-tag vocabulary.** Tags `[MATERIAL GAP]`, `[WEAK EVIDENCE]`, `[GAP]` used in this protocol's `reason` fields are defined in [`shared/compliance_checkpoint_protocol.md#canonical-gap-tag-vocabulary`](./compliance_checkpoint_protocol.md#canonical-gap-tag-vocabulary).
+> **Gap-tag vocabulary.** Tags `[MATERIAL GAP]`, `[WEAK EVIDENCE]`, `[GAP]` used in this protocol's `reason` fields are defined in [`shared/protocols/compliance_checkpoint_protocol.md#canonical-gap-tag-vocabulary`](../protocols/compliance_checkpoint_protocol.md#canonical-gap-tag-vocabulary).
 
 ## Stage assignment
 

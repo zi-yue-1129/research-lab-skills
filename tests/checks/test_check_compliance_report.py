@@ -8,7 +8,7 @@ from tempfile import TemporaryDirectory
 from tests.test_helpers import run_script
 
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "check_compliance_report.py"
-SCHEMA = Path(__file__).resolve().parents[2] / "shared" / "compliance_report.schema.json"
+SCHEMA = Path(__file__).resolve().parents[2] / "shared" / "schemas" / "compliance_report.schema.json"
 
 
 def _valid_sr_report() -> dict:

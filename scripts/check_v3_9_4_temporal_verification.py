@@ -39,7 +39,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SCHEMAS = REPO_ROOT / "shared/contracts/passport"
 
 BIBLIOGRAPHY_AGENT_PATH = REPO_ROOT / "skills/deep-research/agents/bibliography_agent.md"
-BIBLIOGRAPHY_AGENT_SHA256 = "c8b02f51c4393316cc291fcd98dbbb45a60b7f3b0425dee19397b07a1c6e86e9"  # updated for the agent-state Source/Evidence registration section: adds structured-data bookkeeping instructions (--create-source / --set-source-screening calls plus a Source ID Map for downstream agents), no temporal/version-family logic. Previous baseline d0ef5a1… was the post-skills/-path-migration state.
+BIBLIOGRAPHY_AGENT_SHA256 = "ef211df8177814cec78b5195f06a7722f24c588dfc162085d9255dcecae25083"  # updated for the shared/ reorganization: the file's only delta is one authoritative-source reference moving from shared/ground_truth_isolation_pattern.md to shared/patterns/ground_truth_isolation_pattern.md. No temporal, version-family, or M5/M6 ownership change, so the F2 invariant this gate protects is untouched. Previous baseline c8b02f5… was the agent-state Source/Evidence registration state.
 
 
 def _validate(yaml_path: Path, schema_path: Path) -> list[str]:

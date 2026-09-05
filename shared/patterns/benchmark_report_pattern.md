@@ -1,7 +1,7 @@
 # Benchmark Report Pattern (v3.3.5+)
 
 **Status**: v3.3.5 — hub doc for benchmark disclosure schema  
-**Schema**: `shared/benchmark_report.schema.json`  
+**Schema**: `shared/schemas/benchmark_report.schema.json`  
 **Validator**: `scripts/check_benchmark_report.py`  
 **Template**: `examples/benchmark_report_template.json`
 

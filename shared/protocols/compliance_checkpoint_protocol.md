@@ -71,7 +71,7 @@ Compliance reports and fixture templates use these canonical tags in `gaps[].rea
 
 | Tag | Where it appears | Meaning |
 |---|---|---|
-| `[MATERIAL GAP]` | `gaps[].reason`, `principle_evidence[]`, `evidence[]` | The item cannot be verified because the underlying material (passport field, manuscript section, supplementary file) is missing. Apply [Anti-Leakage Protocol](../academic-paper/references/anti_leakage_protocol.md) — do not hallucinate. |
+| `[MATERIAL GAP]` | `gaps[].reason`, `principle_evidence[]`, `evidence[]` | The item cannot be verified because the underlying material (passport field, manuscript section, supplementary file) is missing. Apply [Anti-Leakage Protocol](../../skills/academic-paper/references/anti_leakage_protocol.md) — do not hallucinate. |
 | `[WEAK EVIDENCE]` | `principle_evidence[]` | The item is nominally reported but the description is too vague for auditor use. Triggers CA-4 downgrade: a RAISE principle marked `pass` with `[WEAK EVIDENCE]` in its evidence should be downgraded to `warn`. |
 | `[GAP]` | `roles[].evidence_synthesists` narrative and similar role-level fields | Short form for a role-level gap carried forward from item-level fails. Permitted only in the 8-role matrix narrative; item-level reasons MUST use the long `[MATERIAL GAP]` form. |
 
@@ -106,7 +106,7 @@ The authors acknowledge the following compliance limitations for this <evidence 
 - `<evidence synthesis|manuscript>`: pick `evidence synthesis` when `mode in {systematic_review, other_evidence_synthesis}`; pick `manuscript` when `mode == primary_research`.
 - `<partial|not met>`: pick `partial` when the principle's original status was `warn`; pick `not met` when it was `fail`.
 - `<item_id>`: the PRISMA-trAIce item ID as listed in `user_override.scope[]`.
-- `<item_title>`: look up the short title from `shared/prisma_trAIce_protocol.md` (e.g. `M4` → "Input data").
+- `<item_title>`: look up the short title from `shared/external/prisma_trAIce_protocol.md` (e.g. `M4` → "Input data").
 - `<principle_name>`: one of `human_oversight`, `transparency`, `reproducibility`, `fit_for_purpose`.
 - `<user text>`: verbatim copy of `user_override.rationale`, truncated to first 500 chars if longer (the addendum keeps prose; the full rationale lives in the compliance_history).
 

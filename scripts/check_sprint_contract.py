@@ -17,7 +17,7 @@ from pathlib import Path
 
 import jsonschema
 
-SCHEMA_PATH = Path(__file__).resolve().parent.parent / "shared" / "sprint_contract.schema.json"
+SCHEMA_PATH = Path(__file__).resolve().parent.parent / "shared" / "schemas" / "sprint_contract.schema.json"
 
 
 def load_schema() -> dict:
@@ -269,7 +269,7 @@ def main() -> int:
             print(f"ERROR: {e}", file=sys.stderr)
         print(
             f"\n{len(errors)} schema violation(s). "
-            "See shared/sprint_contract.schema.json for field definitions.",
+            "See shared/schemas/sprint_contract.schema.json for field definitions.",
             file=sys.stderr,
         )
         return 1

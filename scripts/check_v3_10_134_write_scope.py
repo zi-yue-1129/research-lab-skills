@@ -110,18 +110,19 @@ BUCKET_BCD_AGENT_FILES = [
 # Being listed here is an assertion that the agent takes no ARS phase fence.
 # I3 therefore also refuses to see these names as manifest keys.
 NON_ARS_AGENT_FILES = [
-    # report-slides/agents/ (11) -- presentation authoring, not an ARS phase
+    # report-slides/agents/ (12) -- presentation authoring, not an ARS phase
     "skills/report-slides/agents/annotation_worker_agent.md",
     "skills/report-slides/agents/architecture_diagram_worker_agent.md",
+    "skills/report-slides/agents/art_direction_reviewer_agent.md",
     "skills/report-slides/agents/complex_visual_decomposer_agent.md",
     "skills/report-slides/agents/conceptual_illustration_worker_agent.md",
     "skills/report-slides/agents/content_reviewer_agent.md",
     "skills/report-slides/agents/data_visualization_worker_agent.md",
+    "skills/report-slides/agents/render_integrity_reviewer_agent.md",
     "skills/report-slides/agents/research_narrative_planner_agent.md",
     "skills/report-slides/agents/scientific_visual_reviewer_agent.md",
     "skills/report-slides/agents/slide_architect_agent.md",
     "skills/report-slides/agents/visual_integration_agent.md",
-    "skills/report-slides/agents/visual_quality_reviewer_agent.md",
 ]
 
 _NAME_RE = re.compile(r"^name:\s*(.+?)\s*$", re.MULTILINE)

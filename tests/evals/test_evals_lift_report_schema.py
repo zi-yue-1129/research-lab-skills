@@ -1,4 +1,4 @@
-"""Schema tests for shared/evals_lift_report.schema.json (#184 Delta 2).
+"""Schema tests for shared/schemas/evals_lift_report.schema.json (#184 Delta 2).
 
 Includes the mandatory TRIVIAL-ACCEPT-ALL mutation: swapping the schema for
 ``{}`` must make a known-bad report validate, proving the real schema's
@@ -14,7 +14,7 @@ import pytest
 from jsonschema import Draft202012Validator
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SCHEMA_PATH = REPO_ROOT / "shared" / "evals_lift_report.schema.json"
+SCHEMA_PATH = REPO_ROOT / "shared" / "schemas" / "evals_lift_report.schema.json"
 
 
 @pytest.fixture(scope="module")

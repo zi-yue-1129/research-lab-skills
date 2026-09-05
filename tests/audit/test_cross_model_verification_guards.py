@@ -1,6 +1,6 @@
 """Behavioral tests for the cross-model grounding guards (#346 / #349).
 
-The grounding guards in `shared/cross_model_verification.md` are the load-bearing safety
+The grounding guards in `shared/protocols/cross_model_verification.md` are the load-bearing safety
 boundary of the cross-model citation verifier: they must emit NOT_SEARCHED (and discard the
 verdict) whenever the API response carries no grounding evidence, so a from-memory guess can
 never be laundered into VERIFIED. The contract-bearing jq lives in canonical files under

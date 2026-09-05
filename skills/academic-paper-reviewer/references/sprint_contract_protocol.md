@@ -1,7 +1,7 @@
 # Sprint Contract Protocol (v3.6.2)
 
 > Authoritative orchestration reference for the ARS v3.6.2 sprint-contract hard gate.
-> Schema: `shared/sprint_contract.schema.json` (Schema 13.1 since v3.6.6).
+> Schema: `shared/schemas/sprint_contract.schema.json` (Schema 13.1 since v3.6.6).
 > Templates: `shared/contracts/reviewer/*.json`.
 > Design spec: `docs/design/2026-04-23-ars-v3.6.2-sprint-contract-design.md`.
 >
