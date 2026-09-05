@@ -347,3 +347,33 @@ def test_a_tspan_is_measured_at_its_own_size(tmp_path: Path) -> None:
                     '<text x="10" y="20" font-size="21" fill="#374151">'
                     '<tspan font-size="8">MMMMM</tspan></text>')
     assert narrow.texts[0].width < wide.texts[0].width / 2
+
+
+def test_a_translate_in_scientific_notation_is_honoured(
+        tmp_path: Path) -> None:
+    """`translate(1e2,0)` is a hundred units, not nothing.
+
+    The first argument matcher accepted only digits and dots, so an exponent
+    made the whole call fail to match and the translation was silently dropped
+    -- the element was then measured a hundred units from where it is drawn,
+    and the linter reported a clean slide. Silently mismeasuring is the one
+    outcome this parser must never have.
+    """
+    scene = _parse(tmp_path, '<g transform="translate(1e2,0)">'
+                             '<rect x="10" y="20" width="30" height="40"/></g>')
+    assert scene.boxes[0].x == 110.0
+
+
+def test_a_translate_with_unreadable_arguments_is_refused(
+        tmp_path: Path) -> None:
+    """Arguments that are not plain numbers are refused, not ignored."""
+    with pytest.raises(ValueError, match="transform"):
+        _parse(tmp_path, '<g transform="translate(10px, 20px)">'
+                         '<rect x="10" y="20" width="30" height="40"/></g>')
+
+
+def test_trailing_junk_after_a_transform_is_refused(tmp_path: Path) -> None:
+    """Anything the parser cannot account for has to raise."""
+    with pytest.raises(ValueError, match="transform"):
+        _parse(tmp_path, '<g transform="translate(10,20) 3 4">'
+                         '<rect x="10" y="20" width="30" height="40"/></g>')

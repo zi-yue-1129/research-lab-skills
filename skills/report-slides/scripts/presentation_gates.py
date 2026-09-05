@@ -45,7 +45,7 @@ _APPROVED_STATUSES = frozenset(
 # `MODULE_REVIEW_ROLE_SETS` below. See the Phase 4 note in
 # docs/superpowers/plans/2026-09-04-report-slides-visual-review.md.
 _REVIEW_ROLES = frozenset(
-    {"scientific", "visual_quality", "render_integrity"})
+    {"scientific", "visual_quality", "render_integrity", "art_direction"})
 _CONTENT_ROLES = frozenset({"content", "content_reviewer"})
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 class GateError(RuntimeError):
@@ -539,17 +539,32 @@ def assert_module_publishable(project_root: Path, module_id: str, artifact: dict
     return {"deck": deck, "slide": slide, "module": module, "assignment": assignment, "artifact": artifact}
 
 _FINDING_KINDS = frozenset({"clipping", "overlap", "text-reflow", "connector-drift", "crop", "unreadably-small-text", "missing-image", "z-order", "alignment", "other", "unsupported-claim", "duplicated-content", "missing-limitation", "excessive-background", "unnecessary-visual", "weak-continuity"})
-_RENDERING_KINDS = frozenset(_FINDING_KINDS - {"unsupported-claim", "duplicated-content", "missing-limitation", "excessive-background", "unnecessary-visual", "weak-continuity"})
+# Spec D5, verbatim and in the spec's order, plus the repository-wide "other".
+# A defect with no name cannot be tracked, counted, or fixed on purpose, and
+# "the output looks generically AI" had no name in this vocabulary at all.
+_ART_DIRECTION_KINDS = frozenset({
+    "visual-cliche", "decorative-noise", "style-drift",
+    "synthetic-detail", "meaningless-interface", "stock-ai-composition",
+    "weak-hierarchy", "undifferentiated-repetition", "other",
+})
+_FINDING_KINDS = frozenset(_FINDING_KINDS | _ART_DIRECTION_KINDS)
+_RENDERING_KINDS = frozenset(
+    _FINDING_KINDS
+    - {"unsupported-claim", "duplicated-content", "missing-limitation",
+       "excessive-background", "unnecessary-visual", "weak-continuity"}
+    - (_ART_DIRECTION_KINDS - {"other"})
+)
 _FINDING_ROLE_KINDS = {
     "scientific": frozenset({"unsupported-claim", "other"}),
     "visual_quality": _RENDERING_KINDS,
     "render_integrity": _RENDERING_KINDS,
+    "art_direction": _ART_DIRECTION_KINDS,
 }
 
 # Workflow order, not alphabetical order: a "what next" suggestion should send
 # the operator to the next stage, and `art_direction` sorts before `scientific`.
 SLIDE_REVIEW_ROLE_ORDER: tuple[str, ...] = (
-    "scientific", "render_integrity",
+    "scientific", "render_integrity", "art_direction",
 )
 SLIDE_REVIEW_ROLE_SETS: tuple[frozenset[str], ...] = (
     frozenset(SLIDE_REVIEW_ROLE_ORDER),

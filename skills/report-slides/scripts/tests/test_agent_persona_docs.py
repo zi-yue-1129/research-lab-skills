@@ -139,3 +139,16 @@ def test_render_integrity_reviewer_agent_names_stage_and_finding_kinds() -> None
         "unreadably-small-text", "missing-image", "z-order", "alignment",
     ):
         assert kind in text, f"missing finding kind: {kind}"
+
+
+def test_art_direction_reviewer_agent_names_stage_and_finding_kinds() -> None:
+    text = _read("art_direction_reviewer_agent.md")
+    assert "name: art_direction_reviewer_agent" in text
+    assert "Stage 12" in text
+    assert "Stage Boundary" in text
+    assert "validate_visual_style.py" in text
+    for kind in ("visual-cliche", "decorative-noise", "style-drift",
+                 "synthetic-detail", "meaningless-interface",
+                 "stock-ai-composition", "weak-hierarchy",
+                 "undifferentiated-repetition"):
+        assert kind in text, f"missing finding kind: {kind}"

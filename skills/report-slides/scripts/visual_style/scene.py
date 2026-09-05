@@ -372,9 +372,9 @@ class Scene:
         return grouped
 
 
-_TRANSLATE_RE = re.compile(
-    r"translate\(\s*(-?[0-9.]+)\s*[, ]?\s*(-?[0-9.]+)?\s*\)")
-_TRANSFORM_CALL_RE = re.compile(r"([a-zA-Z]+)\s*\(")
+_TRANSFORM_CALL_RE = re.compile(r"([a-zA-Z]+)\s*\(([^)]*)\)")
+_NUMBER_RE = re.compile(r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?")
+_ARGUMENT_SEPARATORS = " \t\r\n,"
 
 
 def _parse_transform(raw: Optional[str], element_id: str
@@ -383,8 +383,15 @@ def _parse_transform(raw: Optional[str], element_id: str
 
     Only `translate` is supported. Anything else changes the shape of what is
     drawn, and measuring a rotated group at its authored coordinates reports a
-    clean gate for a slide nobody checked. Refusing is the honest outcome: the
-    linter turns the error into `unreadable-input`, which names the file.
+    clean gate for a slide nobody checked.
+
+    Every character of the attribute has to be accounted for. An earlier
+    version matched translate arguments with a digits-and-dots pattern, so
+    `translate(1e2,0)` matched nothing at all and the translation was silently
+    dropped -- the element was then measured a hundred units from where it is
+    drawn and the slide passed. Refusing is the honest outcome for anything
+    this parser cannot read: the linter turns the error into
+    `unreadable-input`, which names the file.
 
     Args:
         raw: The raw `transform` attribute, or None.
@@ -394,20 +401,32 @@ def _parse_transform(raw: Optional[str], element_id: str
         `(dx, dy)` in SVG units.
 
     Raises:
-        ValueError: If the transform uses anything other than `translate`.
+        ValueError: If the transform uses anything other than `translate`, or
+            carries anything this parser cannot read as a number.
     """
     if not raw or not raw.strip():
         return 0.0, 0.0
-    functions = set(_TRANSFORM_CALL_RE.findall(raw))
-    unsupported = sorted(functions - {"translate"})
-    if unsupported:
-        raise ValueError(
-            f"{element_id} carries an unsupported transform "
-            f"{', '.join(unsupported)}; only translate can be measured")
     dx = dy = 0.0
-    for match in _TRANSLATE_RE.finditer(raw):
-        dx += float(match.group(1))
-        dy += float(match.group(2) or 0.0)
+    seen = False
+    for match in _TRANSFORM_CALL_RE.finditer(raw):
+        seen = True
+        name, arguments = match.group(1), match.group(2)
+        if name != "translate":
+            raise ValueError(
+                f"{element_id} carries an unsupported transform {name}; "
+                f"only translate can be measured")
+        numbers = _NUMBER_RE.findall(arguments)
+        residue = _NUMBER_RE.sub("", arguments).strip(_ARGUMENT_SEPARATORS)
+        if residue or not 1 <= len(numbers) <= 2:
+            raise ValueError(
+                f"{element_id} has a transform this parser cannot read: "
+                f"translate({arguments})")
+        dx += float(numbers[0])
+        dy += float(numbers[1]) if len(numbers) > 1 else 0.0
+    outside = _TRANSFORM_CALL_RE.sub("", raw).strip()
+    if outside or not seen:
+        raise ValueError(
+            f"{element_id} has a transform this parser cannot read: {raw!r}")
     return dx, dy
 
 

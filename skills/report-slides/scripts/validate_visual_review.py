@@ -47,6 +47,15 @@ _ALLOWED_FINDING_KINDS: Tuple[str, ...] = (
     "excessive-background",
     "unnecessary-visual",
     "weak-continuity",
+    # Art-direction finding kinds (art_direction_reviewer_agent, Stage 12).
+    "visual-cliche",
+    "decorative-noise",
+    "style-drift",
+    "synthetic-detail",
+    "meaningless-interface",
+    "stock-ai-composition",
+    "weak-hierarchy",
+    "undifferentiated-repetition",
 )
 _ALLOWED_FINDING_SOURCES: Tuple[str, ...] = (
     "svg-preview",
