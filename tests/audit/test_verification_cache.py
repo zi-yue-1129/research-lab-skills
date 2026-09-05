@@ -11,9 +11,18 @@ touched and runs are isolated.
 from __future__ import annotations
 
 import sqlite3
+import sys
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
+
+# The subject under test is imported from scripts/ inside the test bodies below.
+# While this file lived in scripts/, pytest's prepend import mode put that
+# directory on sys.path for free; from tests/<group>/ it has to be explicit.
+# Do not delete this as redundant: a whole-suite run passes on some other test's
+# insert, but the per-file run in scripts/_ci_pytest_manifest.toml does not.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
 
 @pytest.fixture()

@@ -11,10 +11,19 @@ Spec: docs/design/2026-05-21-v3.10-182-promote-citation-gate-spec.md §2 Delta 1
 from __future__ import annotations
 
 import http.client
+import sys
 import urllib.error
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+# The subject under test is imported from scripts/ inside the test bodies below.
+# While this file lived in scripts/, pytest's prepend import mode put that
+# directory on sys.path for free; from tests/<group>/ it has to be explicit.
+# Do not delete this as redundant: a whole-suite run passes on some other test's
+# insert, but the per-file run in scripts/_ci_pytest_manifest.toml does not.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
 
 def _atom(entries: list[str]) -> bytes:
