@@ -37,7 +37,7 @@ jobs:
 
       - name: Install lint dependencies
         # pytest is installed once here so the unified manifest runner (#156)
-        # and the legacy `python3 -m unittest scripts.test_*` steps share one
+        # and the legacy `python3 -m unittest tests.<group>.test_*` steps share one
         # pip install. Previously each pytest step did its own `pip install
         # pytest [pyyaml] [jsonschema]`; consolidating saves ~12 redundant
         # installs per workflow run.
@@ -49,7 +49,7 @@ jobs:
       - name: Lint CI pytest manifest (#156)
         # Drift guard for scripts/_ci_pytest_manifest.toml — verifies entry
         # path existence, id/(path,args) uniqueness, args shape, and that
-        # spec-consistency.yml contains no direct `pytest scripts/test_*.py`
+        # spec-consistency.yml contains no direct `pytest tests/<group>/test_*.py`
         # outside the runner. Runs before the runner so a malformed manifest
         # fails fast.
         run: python3 scripts/check_ci_pytest_manifest.py
@@ -80,7 +80,7 @@ jobs:
       - name: Run #105 migration unit tests
         env:
           PYTHONPATH: .
-        run: python3 -m unittest scripts.test_contamination_signals scripts.test_migrate_literature_corpus_to_v3_7_3 scripts.test_semantic_scholar_client -v
+        run: python3 -m unittest tests.audit.test_contamination_signals tests.migrations.test_migrate_literature_corpus_to_v3_7_3 tests.clients.test_semantic_scholar_client -v
 
       - name: Check data_access_level declarations
         env:
@@ -104,7 +104,7 @@ jobs:
       - name: Run compliance validator + fixture unit tests
         env:
           PYTHONPATH: .
-        run: python3 -m unittest scripts.test_check_compliance_report scripts.test_validate_compliance_fixtures -v
+        run: python3 -m unittest tests.checks.test_check_compliance_report tests.tooling.test_validate_compliance_fixtures -v
 
       - name: Check collaboration depth rubric + observer contract
         env:
@@ -114,7 +114,7 @@ jobs:
       - name: Run collaboration depth rubric unit tests
         env:
           PYTHONPATH: .
-        run: python3 -m unittest scripts.test_check_collaboration_depth_rubric -v
+        run: python3 -m unittest tests.checks.test_check_collaboration_depth_rubric -v
 
       - name: Check version consistency (CLAUDE.md / SKILL.md / CHANGELOG)
         env:
@@ -124,17 +124,17 @@ jobs:
       - name: Run version consistency unit tests
         env:
           PYTHONPATH: .
-        run: python3 -m unittest scripts.test_check_version_consistency -v
+        run: python3 -m unittest tests.checks.test_check_version_consistency -v
 
       - name: Run spec consistency unit tests
         env:
           PYTHONPATH: .
-        run: python3 -m unittest scripts.test_check_spec_consistency -v
+        run: python3 -m unittest tests.checks.test_check_spec_consistency -v
 
       - name: Run check_sprint_contract unit tests
         env:
           PYTHONPATH: .
-        run: python3 -m unittest scripts.test_check_sprint_contract -v
+        run: python3 -m unittest tests.checks.test_check_sprint_contract -v
 
       - name: Validate sprint contract templates
         shell: bash
@@ -181,7 +181,7 @@ jobs:
       - name: Run passport reset contract tests
         env:
           PYTHONPATH: .
-        run: python3 -m unittest scripts.test_check_passport_reset_contract -v
+        run: python3 -m unittest tests.checks.test_check_passport_reset_contract -v
 
       - name: Validate v3.6.7 downstream-agent pattern protection
         run: python3 scripts/check_v3_6_7_pattern_protection.py
@@ -189,7 +189,7 @@ jobs:
       - name: Run v3.6.7 pattern-protection mutation tests
         env:
           PYTHONPATH: .
-        run: python3 -m unittest scripts.test_check_v3_6_7_pattern_protection -v
+        run: python3 -m unittest tests.checks.test_check_v3_6_7_pattern_protection -v
 
       - name: Validate v3.7.1 byte-equivalence SHA gate (v3.6.7 boundary)
         # v3.7.1 work must NOT mutate v3.6.7-tagged PATTERN PROTECTION blocks.
@@ -228,7 +228,7 @@ jobs:
       - name: Run v3.6.8 /ars-mark-read CLI tests (#190)
         env:
           PYTHONPATH: .
-        run: python3 -m unittest scripts.test_ars_mark_read scripts.test_check_v3_6_8_mark_read_commands -v
+        run: python3 -m unittest tests.tooling.test_ars_mark_read tests.checks.test_check_v3_6_8_mark_read_commands -v
 
       - name: v3.9.0 cross-index triangulation lint
         # §3.8 rules 5-6 (R3 P2 closure): verifies formatter pass-through
@@ -360,7 +360,7 @@ jobs:
       - name: Run v3.8 annotation-literal sync lint tests (#103)
         env:
           PYTHONPATH: .
-        run: python3 -m unittest scripts.test_check_v3_8_annotation_literal_sync -v
+        run: python3 -m unittest tests.checks.test_check_v3_8_annotation_literal_sync -v
 
       - name: Check cross-model grounding-guard doc sync (#346 / #349)
         # Drift guard: asserts shared/protocols/cross_model_verification.md references the canonical jq
@@ -398,24 +398,24 @@ jobs:
           PYTHONPATH: .
         run: |
           python3 -m unittest \
-            scripts.test_claim_audit_schema \
-            scripts.test_claim_audit_pipeline \
-            scripts.test_uncited_assertion \
-            scripts.test_claim_intent_manifest \
-            scripts.test_claim_audit_finalizer \
-            scripts.test_e2e_claim_audit \
-            scripts.test_claim_audit_calibration \
+            tests.audit.test_claim_audit_schema \
+            tests.audit.test_claim_audit_pipeline \
+            tests.audit.test_uncited_assertion \
+            tests.audit.test_claim_intent_manifest \
+            tests.audit.test_claim_audit_finalizer \
+            tests.audit.test_e2e_claim_audit \
+            tests.audit.test_claim_audit_calibration \
             -v
 
       - name: Run v3.6.7 Step 6 audit schema + helper tests (Phase 6.2 + 6.4)
         env:
           PYTHONPATH: .
-        run: python3 -m unittest scripts.test_audit_schemas scripts.test__next_verified_at_ms -v
+        run: python3 -m unittest tests.audit.test_audit_schemas tests.tooling.test__next_verified_at_ms -v
 
       - name: Run v3.6.7 Step 6 Phase 6.6 orchestrator prompt static checks
         env:
           PYTHONPATH: .
-        run: python3 -m unittest scripts.test_v3_6_7_phase_6_6 -v
+        run: python3 -m unittest tests.tooling.test_v3_6_7_phase_6_6 -v
 
       - name: Validate v3.6.7 Step 8 pattern-eval fixture manifests (Phase 6.8)
         run: python3 scripts/check_pattern_eval_manifest.py
@@ -426,7 +426,7 @@ jobs:
       - name: "Run policy anchor table validator unit tests (#108)"
         env:
           PYTHONPATH: .
-        run: python3 -m unittest scripts.test_check_policy_anchor_table -v
+        run: python3 -m unittest tests.checks.test_check_policy_anchor_table -v
 
       - name: "Check policy anchor disclosure protocol lint (#108)"
         run: python3 scripts/check_policy_anchor_protocol.py
@@ -434,12 +434,12 @@ jobs:
       - name: "Run policy anchor protocol validator unit tests (#108)"
         env:
           PYTHONPATH: .
-        run: python3 -m unittest scripts.test_check_policy_anchor_protocol -v
+        run: python3 -m unittest tests.checks.test_check_policy_anchor_protocol -v
 
       - name: "Run policy anchor disclosure conformance suite — referee (#108)"
         env:
           PYTHONPATH: .
-        run: python3 -m unittest scripts.test_policy_anchor_disclosure -v
+        run: python3 -m unittest tests.audit.test_policy_anchor_disclosure -v
 
       - name: Validate evals gold sets (#184)
         # Phase 1a citation-extraction gold subset validator.

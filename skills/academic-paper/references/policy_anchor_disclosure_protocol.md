@@ -189,4 +189,4 @@ For audit traceability, this protocol implements each Decision Doc §4.4 open co
 - v3.2 venue disclosure policies (Nature dedup peer): `venue_disclosure_policies.md`
 - Shared Nature policy source (canonical pointer, forthcoming): `shared/policy_data/nature_policy.md`
 - Lint contract: `../../scripts/check_policy_anchor_protocol.py`
-- Conformance test suite: `../../scripts/test_policy_anchor_disclosure.py` (Task #7)
+- Conformance test suite: `../../tests/audit/test_policy_anchor_disclosure.py` (Task #7)

@@ -128,7 +128,7 @@ Since Schema 11 has no JSON-schema, the lint operates on the seed YAML + asserts
 - **N4:** the schema prose (`handoff_schemas.md` Schema 11) contains NO surviving `unfulfilled_rationale[i]` / `fulfillment_status[i]` index-notation (cascade-completeness guard — catches a missed reword in the residual_action coherence section).
 - **N5:** `re_review_mode_protocol` Commitment Ledger Verification contains no surviving index-notation either.
 
-Mutation tests (`scripts/test_check_268_nested_commitment_ledger.py`): a trivial accept-all replacement of each invariant must make a deliberately-mutated fixture FAIL, confirming the invariant is load-bearing (N1 missing field / non-mapping, N2 reintroduced parallel list, N3 fulfilled-with-rationale + non-fulfilled-with-empty + non-fulfilled-with-null rationale + bad enum + orphan rationale, N3b incoherent gap oracle + quoted-boolean flag, N4/N5 reintroduced index notation).
+Mutation tests (`tests/checks/test_check_268_nested_commitment_ledger.py`): a trivial accept-all replacement of each invariant must make a deliberately-mutated fixture FAIL, confirming the invariant is load-bearing (N1 missing field / non-mapping, N2 reintroduced parallel list, N3 fulfilled-with-rationale + non-fulfilled-with-empty + non-fulfilled-with-null rationale + bad enum + orphan rationale, N3b incoherent gap oracle + quoted-boolean flag, N4/N5 reintroduced index notation).
 
 Wire into `.github/workflows/spec-consistency.yml` + `_ci_pytest_manifest.toml`.
 

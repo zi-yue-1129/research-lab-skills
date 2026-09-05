@@ -37,7 +37,7 @@ Confirmed accurate (no drift): `intake_agent.md:37-50, :110-204, :204 (Step 11 e
 | `academic-paper/agents/intake_agent.md` | T2 | **Modify.** Producer: new `### Step 12: Domain Evidence Profile` + new PCR row. |
 | `academic-paper/agents/literature_strategist_agent.md` | T3 | **Modify.** Sole consumer: new `### Domain Evidence Profile Resolution` block + 4 gate loosenings + 2 upstream-filter loosenings (all monotonic admit-only). |
 | `scripts/check_domain_evidence_profile.py` | T4 | **New.** 7 documentation-surface checks (C1–C7). |
-| `scripts/test_check_domain_evidence_profile.py` | T4 | **New.** Mutation suite: 7 negative fixtures must each FAIL + scope-lock positive tests. |
+| `tests/checks/test_check_domain_evidence_profile.py` | T4 | **New.** Mutation suite: 7 negative fixtures must each FAIL + scope-lock positive tests. |
 | `.github/workflows/spec-consistency.yml` | T4 | **Modify.** One step wiring the new lint into CI. |
 | `scripts/_ci_pytest_manifest.toml` | T4 | **Modify.** One `[[pytest]]` entry so the mutation suite runs in CI. |
 
@@ -371,7 +371,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 **Files:**
 - Create: `scripts/check_domain_evidence_profile.py`
-- Create: `scripts/test_check_domain_evidence_profile.py`
+- Create: `tests/checks/test_check_domain_evidence_profile.py`
 - Modify: `.github/workflows/spec-consistency.yml` (add the lint step)
 - Modify: `scripts/_ci_pytest_manifest.toml` (add the mutation-suite `[[pytest]]` entry so it runs in CI)
 
@@ -379,7 +379,7 @@ The linter is **honest about its reach**: it verifies *documentation surface* (p
 
 - [ ] **Step 1: Write the failing test first (TDD) — test asserts the lint exists and passes on the real repo**
 
-Create `scripts/test_check_domain_evidence_profile.py` starting with the integration positive test (it will fail until the lint script exists):
+Create `tests/checks/test_check_domain_evidence_profile.py` starting with the integration positive test (it will fail until the lint script exists):
 
 ```python
 """Mutation suite for check_domain_evidence_profile.py (#259).
@@ -420,7 +420,7 @@ def test_integration_passes_against_real_repo():
     assert result.returncode == 0, result.stderr
 ```
 
-Run: `python3 -m pytest scripts/test_check_domain_evidence_profile.py::test_integration_passes_against_real_repo -v`
+Run: `python3 -m pytest tests/checks/test_check_domain_evidence_profile.py::test_integration_passes_against_real_repo -v`
 Expected: FAIL (lint script does not exist yet — `FileNotFoundError` / non-zero).
 
 - [ ] **Step 2: Write `scripts/check_domain_evidence_profile.py` with checks C1–C7**
@@ -824,12 +824,12 @@ if __name__ == "__main__":
 
 - [ ] **Step 3: Run the integration test — now it should pass**
 
-Run: `python3 -m pytest scripts/test_check_domain_evidence_profile.py::test_integration_passes_against_real_repo -v`
+Run: `python3 -m pytest tests/checks/test_check_domain_evidence_profile.py::test_integration_passes_against_real_repo -v`
 Expected: PASS (Tasks 1–3 landed the required surface). If it FAILS, the failure names the exact check + missing token — fix the agent prose from T1–T3 to supply it, then re-run.
 
 - [ ] **Step 4: Add the 7 negative-fixture mutation tests (each must make the lint FAIL)**
 
-Append to `scripts/test_check_domain_evidence_profile.py`. Each test copies the repo into `tmp_path`, mutates ONE file, and asserts the lint fails on the matching check:
+Append to `tests/checks/test_check_domain_evidence_profile.py`. Each test copies the repo into `tmp_path`, mutates ONE file, and asserts the lint fails on the matching check:
 
 ```python
 def _clone_repo(tmp_path: Path) -> Path:
@@ -1057,7 +1057,7 @@ def test_pos_historical_contrast_does_not_trip_c7(tmp_path):
     assert r.returncode == 0, r.stderr
 ```
 
-Run: `python3 -m pytest scripts/test_check_domain_evidence_profile.py -v`
+Run: `python3 -m pytest tests/checks/test_check_domain_evidence_profile.py -v`
 Expected: ALL PASS (7 core negatives (a-g) each FAIL the lint as asserted; g2 confirms the C7 false-negative guard; 2 positives confirm clean clone + scope-lock).
 
 - [ ] **Step 5: Wire the lint into CI**
@@ -1074,7 +1074,7 @@ In `.github/workflows/spec-consistency.yml`, after an existing `python3 scripts/
 ```toml
 [[pytest]]
 id = "kong-259-domain-evidence-profile"
-path = "scripts/test_check_domain_evidence_profile.py"
+path = "tests/checks/test_check_domain_evidence_profile.py"
 ```
 
 Then verify the manifest drift-guard accepts it: `python3 scripts/check_ci_pytest_manifest.py` (must pass — it checks path existence + id uniqueness) and smoke-run it: `python3 scripts/run_ci_pytest_manifest.py --id kong-259-domain-evidence-profile`. The lint step above + this manifest entry are BOTH required; `_ci_pytest_manifest.toml` must be in the Step 7 commit.
@@ -1084,7 +1084,7 @@ Then verify the manifest drift-guard accepts it: `python3 scripts/check_ci_pytes
 Run:
 ```bash
 python3 scripts/check_domain_evidence_profile.py          # expect: "... lint OK", exit 0
-python3 -m pytest scripts/test_check_domain_evidence_profile.py -v   # expect: all pass
+python3 -m pytest tests/checks/test_check_domain_evidence_profile.py -v   # expect: all pass
 git status --short deep-research/                          # expect: empty (INVARIANT 9)
 ```
 
@@ -1092,7 +1092,7 @@ git status --short deep-research/                          # expect: empty (INVA
 
 ```bash
 git add scripts/check_domain_evidence_profile.py \
-        scripts/test_check_domain_evidence_profile.py \
+        tests/checks/test_check_domain_evidence_profile.py \
         scripts/_ci_pytest_manifest.toml \
         .github/workflows/spec-consistency.yml
 git commit -m "Add domain evidence profile lint + mutation suite + CI wiring (#259 test/CI)  Ref #259 [skip-closes-check]

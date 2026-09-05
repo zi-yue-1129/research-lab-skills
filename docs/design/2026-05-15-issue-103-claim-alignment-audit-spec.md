@@ -25,7 +25,7 @@ Numbered list aligned to the implementation surfaces in #103 issue body + decisi
 7. **`academic-pipeline/references/claim_audit_calibration_protocol.md`** — new file (modeled on `shared/contracts/reviewer/` calibration convention).
 8. **`scripts/check_claim_audit_consistency.py`** — new lint enforcing per-claim invariants (anchor presence, defect_stage presence, precedence rules, audit_status/defect_stage coherence).
 9. **CI wiring** — extend `.github/workflows/spec-consistency.yml` (or matching workflow) to call the new lint.
-10. **Tests** — `scripts/test_claim_audit_schema.py` covers both schema validation and `check_claim_audit_consistency.py` lint coverage via subprocess pattern (T-S1..T-S8 invariants); plus per-stage unittest modules (`scripts/test_claim_audit_pipeline.py`, `scripts/test_uncited_assertion.py`, `scripts/test_claim_intent_manifest.py`, `scripts/test_claim_audit_finalizer.py`, `scripts/test_e2e_claim_audit.py` for the 5-citation end-to-end synthetic-paper test, `scripts/test_claim_audit_calibration.py`).
+10. **Tests** — `tests/audit/test_claim_audit_schema.py` covers both schema validation and `check_claim_audit_consistency.py` lint coverage via subprocess pattern (T-S1..T-S8 invariants); plus per-stage unittest modules (`tests/audit/test_claim_audit_pipeline.py`, `tests/audit/test_uncited_assertion.py`, `tests/audit/test_claim_intent_manifest.py`, `tests/audit/test_claim_audit_finalizer.py`, `tests/audit/test_e2e_claim_audit.py` for the 5-citation end-to-end synthetic-paper test, `tests/audit/test_claim_audit_calibration.py`).
 11. **CHANGELOG entry** + ROADMAP §3.8 anchor + decision-log entry.
 
 ## 2. Out of scope

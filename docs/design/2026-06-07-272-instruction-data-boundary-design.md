@@ -209,7 +209,7 @@ analysis:
 The mechanism mirrors the existing single-source-plus-by-reference pattern in
 `scripts/check_firm_rules_sync.py` (the lint owns the canonical normative string; the doc and
 agents must match it). A companion mutation test
-(`scripts/test_check_instruction_data_boundary.py`) confirms the lint is not a trivial
+(`tests/checks/test_check_instruction_data_boundary.py`) confirms the lint is not a trivial
 accept-all. Required mutations that MUST each make the lint FAIL:
 
 1. authoritative section deleted entirely;
@@ -233,11 +233,11 @@ The lint guards the text; it never inspects or gates a live retrieval.
 
 **CI wiring (both the lint and its test must run).** `spec-consistency.yml` runs *both*
 `python scripts/check_instruction_data_boundary.py` (the checker) and
-`python -m pytest scripts/test_check_instruction_data_boundary.py` (the mutation test) — if
+`python -m pytest tests/checks/test_check_instruction_data_boundary.py` (the mutation test) — if
 only the checker runs, the checker itself can regress while still appearing present. The
 workflow's path triggers must include `shared/**`, `deep-research/agents/**`,
 `scripts/check_instruction_data_boundary.py`,
-`scripts/test_check_instruction_data_boundary.py`, and the workflow file itself, so an edit
+`tests/checks/test_check_instruction_data_boundary.py`, and the workflow file itself, so an edit
 to any covered file or to the checker re-runs the gate.
 
 ---
@@ -260,7 +260,7 @@ Shipping a guidance layer creates a real risk: once the lint is green, "we alrea
 #272" becomes a standing excuse never to build the structural layer — and the guidance layer
 provides **no** verified runtime defense. To keep the deferred structural work alive as more
 than an open issue, the implementation adds a single **`xfail`-marked test** (e.g.
-`scripts/test_runtime_injection_boundary_xfail.py`) that represents the unbuilt runtime
+`tests/tooling/test_runtime_injection_boundary_xfail.py`) that represents the unbuilt runtime
 instruction/data defense. It is expected-to-fail, so CI stays green, but it is a persistent
 "pebble in the shoe": a named, in-repo marker that the runtime defense does not exist yet.
 The marker's docstring points at this design's §6 and at the structural-layer home
@@ -279,8 +279,8 @@ visible and un-ignorable, not left to issue-tracker memory.
 | `deep-research/agents/source_verification_agent.md` | Inline verbatim normative sentence(s) + correctly-targeted backpoint |
 | `deep-research/agents/bibliography_agent.md` | Inline verbatim normative sentence(s) + correctly-targeted backpoint |
 | `scripts/check_instruction_data_boundary.py` | New lint (canonical section + verbatim sync) |
-| `scripts/test_check_instruction_data_boundary.py` | Mutation test (7 mutations, §5) |
-| `scripts/test_runtime_injection_boundary_xfail.py` | Anti-false-closure pebble (xfail, §6) |
+| `tests/checks/test_check_instruction_data_boundary.py` | Mutation test (7 mutations, §5) |
+| `tests/tooling/test_runtime_injection_boundary_xfail.py` | Anti-false-closure pebble (xfail, §6) |
 | `.github/workflows/spec-consistency.yml` | Run both checker + mutation test; add path triggers |
 | `docs/design/2026-06-07-272-instruction-data-boundary-design.md` | This design doc |
 

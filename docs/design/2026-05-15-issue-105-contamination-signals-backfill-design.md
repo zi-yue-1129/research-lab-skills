@@ -116,8 +116,8 @@ Pure additive — existing v3.7.3 ingest-time entries (which don't carry this fi
 |---|---|
 | `scripts/contamination_signals.py` | new — Signal 1 + Signal 2 resolvers |
 | `scripts/migrate_literature_corpus_to_v3_7_3.py` | new — CLI migration tool |
-| `scripts/test_contamination_signals.py` | new — unit tests for resolvers |
-| `scripts/test_migrate_literature_corpus_to_v3_7_3.py` | new — pytest for migration tool (mocks SS API) |
+| `tests/audit/test_contamination_signals.py` | new — unit tests for resolvers |
+| `tests/migrations/test_migrate_literature_corpus_to_v3_7_3.py` | new — pytest for migration tool (mocks SS API) |
 | `shared/contracts/passport/literature_corpus_entry.schema.json` | additive — new optional `contamination_signals_backfilled_at` field |
 | `scripts/adapters/tests/test_literature_corpus_entry_schema.py` | extend — 2-3 tests for the new field (valid present / valid absent / invalid type) |
 | `docs/migration/v3.7.3-contamination-signals-backfill.md` | new — user-facing migration guide |

@@ -96,4 +96,4 @@ The warning is advisory. The scholar chooses whether to cite one version, cite m
 - `shared/contracts/passport/timeline.schema.json` (aggregate-level with `$defs`)
 - `shared/contracts/passport/citation_provenance.schema.json` (aggregate-level)
 - `shared/contracts/passport/version_records.schema.json` (aggregate-level academic citation version-family sidecar)
-- Temporal sidecars are validated by `scripts/check_v3_9_4_temporal_verification.py`; `version_records.schema.json` is covered by `scripts/test_version_records_schema.py`.
+- Temporal sidecars are validated by `scripts/check_v3_9_4_temporal_verification.py`; `version_records.schema.json` is covered by `tests/tooling/test_version_records_schema.py`.

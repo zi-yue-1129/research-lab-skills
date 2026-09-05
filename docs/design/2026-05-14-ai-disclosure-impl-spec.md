@@ -44,9 +44,9 @@ This terminology mapping is **load-bearing** for the test design: ARS lint valid
 | `academic-paper/references/policy_anchor_disclosure_protocol.md` | LLM-execution prose: 4 anchor-conditioned render flows + lookup mechanism + §3 G10 7-row decision table + §4.3 invariants + §4.4 11 resolved concerns + auto-promotion forbiddance |
 | `scripts/check_policy_anchor_table.py` | Static lint: each anchor has all 16 fields; each cell has verbatim policy quote + snapshot ref; Nature cell content equals the source-of-truth shared with v3.2 venue renderer (de-dup guard); `ai_used: true` substantive-content forbiddance encoded |
 | `scripts/check_policy_anchor_protocol.py` | Static lint: protocol doc references each §4.3 invariant by name; §4.4 11 concerns each have a resolved-path section; 7-row precedence table preserved verbatim from Decision Doc §3 G10; auto-promote-UNCERTAIN forbiddance present |
-| `scripts/test_policy_anchor_disclosure.py` | Conformance unit tests: each §4.3 invariant + each §4.4 #1–#11 resolved path has at least one positive fixture; each forbidden path has at least one negative fixture that raises `AssertionError` or returns `non-conformant` decision |
-| `scripts/test_check_policy_anchor_table.py` | Validator mutation tests: assert lint fails on each of (missing field cell / missing verbatim quote / missing snapshot ref / drift from Nature source of truth) |
-| `scripts/test_check_policy_anchor_protocol.py` | Validator mutation tests: assert lint fails on each of (missing invariant name / missing §4.4 concern resolution / 7-row table drift / missing forbiddance clause) |
+| `tests/audit/test_policy_anchor_disclosure.py` | Conformance unit tests: each §4.3 invariant + each §4.4 #1–#11 resolved path has at least one positive fixture; each forbidden path has at least one negative fixture that raises `AssertionError` or returns `non-conformant` decision |
+| `tests/checks/test_check_policy_anchor_table.py` | Validator mutation tests: assert lint fails on each of (missing field cell / missing verbatim quote / missing snapshot ref / drift from Nature source of truth) |
+| `tests/checks/test_check_policy_anchor_protocol.py` | Validator mutation tests: assert lint fails on each of (missing invariant name / missing §4.4 concern resolution / 7-row table drift / missing forbiddance clause) |
 
 ### 2.2 Modified files
 

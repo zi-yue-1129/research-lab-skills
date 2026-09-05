@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 # Allow both CLI invocations (`python3 scripts/claim_audit_pipeline.py`) AND
-# package-style invocations (`python -m unittest scripts.test_*`) to resolve
+# package-style invocations (`python -m unittest tests.<group>.test_*`) to resolve
 # the shared constants module via the same import.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _claim_audit_constants import (  # noqa: E402
@@ -1006,7 +1006,7 @@ def run_audit_pipeline(
     (D4-c)" in claim_ref_alignment_audit_agent.md) is NOT invoked here.
     Callers pre-process the full uncited set through
     `detect_uncited_assertions` to get `uncited_sentences`; pass the raw
-    full set as `all_uncited_sentences`. `scripts/test_e2e_claim_audit.py`
+    full set as `all_uncited_sentences`. `tests/audit/test_e2e_claim_audit.py`
     exercises the full detector → pipeline → finalizer chain end-to-end.
 
     Sentence-dict shape:
