@@ -9,12 +9,12 @@ Validates `scripts/_ci_pytest_manifest.toml` and the surrounding workflow:
    source of truth; same path with DIFFERENT args is the legitimate -k case)
 4. when present, `args` is a list of strings
 5. `.github/workflows/spec-consistency.yml` contains no direct
-   `pytest scripts/test_*.py` invocation outside the runner (the manifest
+   `pytest tests/<group>/test_*.py` invocation outside the runner (the manifest
    would otherwise become a parallel list nobody updates)
 
 Out of scope (deliberately, per issue #156):
-- whether every `scripts/test_*.py` on disk is listed in the manifest
-- `python3 -m unittest scripts.test_*` invocations (unittest is a separate
+- whether every `tests/<group>/test_*.py` on disk is listed in the manifest
+- `python3 -m unittest tests.<group>.test_*` invocations (unittest is a separate
   runner family; renaming the manifest to `_ci_test_manifest.toml` would
   require also migrating those, which expands scope)
 """
@@ -27,23 +27,27 @@ import tomllib
 from pathlib import Path
 
 
-# Drift guard regex: catches direct pytest invocations on `scripts/test_*.py`
-# files outside the manifest runner. Built to tolerate the bypass paths
-# observed in dual-track review (gemini P1 + codex empirical probe):
-#   - intermediate flags: `pytest -v scripts/test_x.py`, `pytest --tb=short ...`
-#   - quoted paths: `pytest "scripts/test_x.py"`, `pytest 'scripts/...'`
-#   - explicit relative prefix: `pytest ./scripts/test_x.py`
-#   - alt invocation: `python -m pytest scripts/...`, `python3 -m pytest scripts/...`,
-#     `py.test scripts/...`, `uv run pytest scripts/...`
-# Line continuations (`pytest \<newline>scripts/...`) are handled by collapsing
+# Drift guard regex: catches direct pytest invocations on a test module outside
+# the manifest runner. Built to tolerate the bypass paths observed in dual-track
+# review (gemini P1 + codex empirical probe):
+#   - intermediate flags: `pytest -v tests/checks/test_x.py`, `pytest --tb=short ...`
+#   - quoted paths: `pytest "tests/checks/test_x.py"`, `pytest 'tests/...'`
+#   - explicit relative prefix: `pytest ./tests/checks/test_x.py`
+#   - alt invocation: `python -m pytest tests/...`, `python3 -m pytest tests/...`,
+#     `py.test tests/...`, `uv run pytest tests/...`
+# Line continuations (`pytest \<newline>tests/...`) are handled by collapsing
 # backslash-newline sequences before scanning (see `_validate_workflow`).
+#
+# The location alternation covers both the current home of these tests
+# (`tests/<group>/`) and their former one (`scripts/`), so a test file added back
+# under scripts/ cannot quietly reopen the bypass this guard was written to close.
 DIRECT_PYTEST_RE = re.compile(
     r"\b(?:py\.test|pytest)\b"      # invocation token (pytest or py.test)
     r"(?:\s+(?:-[^\s]+|--[^\s]+))*"  # zero or more flag args (short -x or long --x=y)
     r"\s+"                           # whitespace before path
     r"['\"]?"                        # optional quote
     r"(?:\./)?"                      # optional ./ prefix
-    r"scripts/test_[A-Za-z0-9_]+\.py"
+    r"(?:scripts|tests/[A-Za-z0-9_]+)/test_[A-Za-z0-9_]+\.py"
     r"['\"]?"                        # optional closing quote
 )
 

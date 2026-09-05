@@ -8,7 +8,7 @@ caller-supplied `judge_fn` and emits a calibration report containing
 FNR / FPR aggregates, per-judgment-class FNR / FPR, and the threshold
 values used to gate the run.
 
-Test contract is pinned by `scripts/test_claim_audit_calibration.py`
+Test contract is pinned by `tests/audit/test_claim_audit_calibration.py`
 (T-C1 / T-C2 / T-C3 per spec §7.7). The default thresholds reflect the
 spec §7.7 + §9 acceptance criteria — FNR < 0.15 AND FPR < 0.10.
 

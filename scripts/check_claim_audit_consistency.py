@@ -18,7 +18,7 @@ corresponding shipped JSON Schema.
 Cross-field invariants are intentionally NOT expressed in JSON Schema —
 the matrix is conditional and the cross-array (scoped_manifest_id, *)
 integrity checks span aggregates. This lint is the contract under test
-in scripts/test_claim_audit_schema.py.
+in tests/audit/test_claim_audit_schema.py.
 
 CLI:
     python3 scripts/check_claim_audit_consistency.py --passport <path>
@@ -45,7 +45,7 @@ from typing import Any, Iterable
 from jsonschema import Draft202012Validator
 
 # Allow both CLI invocations (`python3 scripts/check_claim_audit_consistency.py`)
-# AND package-style invocations (`python -m unittest scripts.test_*`) to resolve
+# AND package-style invocations (`python -m unittest tests.<group>.test_*`) to resolve
 # the shared constants module. The CLI path puts scripts/ on sys.path, the
 # unittest path puts repo root on sys.path — the insert below covers the gap.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
