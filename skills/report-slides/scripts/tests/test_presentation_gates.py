@@ -134,7 +134,11 @@ def test_completion_requires_both_review_roles_and_final_pptx_gates(tmp_path: Pa
     document = yaml.safe_load(state_path.read_text(encoding="utf-8"))
     document["decks"][deck["id"]]["status"] = "validating"
     state_path.write_text(yaml.safe_dump(document), encoding="utf-8")
-    with pytest.raises(CompletionGateError, match="visual_quality"):
+    # The blocker names the review that is outstanding *now*. A deck with no
+    # slides is missing the current pair, and the current name for the
+    # rendering review is `render_integrity`; `visual_quality` survives only as
+    # an accepted legacy record on decks that already carry one.
+    with pytest.raises(CompletionGateError, match="render_integrity"):
         assert_deck_completable(
             project,
             deck["id"],

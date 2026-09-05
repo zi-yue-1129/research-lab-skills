@@ -11,7 +11,7 @@ from __future__ import annotations
 import hashlib
 import re
 from pathlib import Path
-from typing import Any, Mapping, NoReturn
+from typing import AbstractSet, Any, Mapping, NoReturn
 
 from presentation_contracts import contract_sha256, load_contract
 from presentation_events import (
@@ -36,7 +36,16 @@ from validate_visual_module import (
 _APPROVED_STATUSES = frozenset(
     {"approved", "producing", "draft_review", "revising", "validating", "completed"}
 )
-_REVIEW_ROLES = frozenset({"scientific", "visual_quality"})
+# Which role strings a reviewer may record itself under. This is the admissible
+# set, NOT the required set: `visual_quality` is retained because it is
+# persisted in existing review-result events, `render_integrity` is its current
+# name, and a subject needs only one accepted *pair*. Requiring every member
+# here would block every deck recorded before the split on a review nobody will
+# run again. The required sets are `SLIDE_REVIEW_ROLE_SETS` and
+# `MODULE_REVIEW_ROLE_SETS` below. See the Phase 4 note in
+# docs/superpowers/plans/2026-09-04-report-slides-visual-review.md.
+_REVIEW_ROLES = frozenset(
+    {"scientific", "visual_quality", "render_integrity"})
 _CONTENT_ROLES = frozenset({"content", "content_reviewer"})
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 class GateError(RuntimeError):
@@ -530,10 +539,105 @@ def assert_module_publishable(project_root: Path, module_id: str, artifact: dict
     return {"deck": deck, "slide": slide, "module": module, "assignment": assignment, "artifact": artifact}
 
 _FINDING_KINDS = frozenset({"clipping", "overlap", "text-reflow", "connector-drift", "crop", "unreadably-small-text", "missing-image", "z-order", "alignment", "other", "unsupported-claim", "duplicated-content", "missing-limitation", "excessive-background", "unnecessary-visual", "weak-continuity"})
+_RENDERING_KINDS = frozenset(_FINDING_KINDS - {"unsupported-claim", "duplicated-content", "missing-limitation", "excessive-background", "unnecessary-visual", "weak-continuity"})
 _FINDING_ROLE_KINDS = {
     "scientific": frozenset({"unsupported-claim", "other"}),
-    "visual_quality": frozenset(_FINDING_KINDS - {"unsupported-claim", "duplicated-content", "missing-limitation", "excessive-background", "unnecessary-visual", "weak-continuity"}),
+    "visual_quality": _RENDERING_KINDS,
+    "render_integrity": _RENDERING_KINDS,
 }
+
+# Workflow order, not alphabetical order: a "what next" suggestion should send
+# the operator to the next stage, and `art_direction` sorts before `scientific`.
+SLIDE_REVIEW_ROLE_ORDER: tuple[str, ...] = (
+    "scientific", "render_integrity",
+)
+SLIDE_REVIEW_ROLE_SETS: tuple[frozenset[str], ...] = (
+    frozenset(SLIDE_REVIEW_ROLE_ORDER),
+    frozenset({"scientific", "visual_quality"}),
+)
+# A module is a fragment, not a composition. Spec D5 scopes the art-direction
+# review to the complete slide, so the module set never gains that role. The two
+# tuples are equal today and are deliberately kept separate: making them one
+# name is how a module ends up waiting on a gate nothing will ever dispatch.
+MODULE_REVIEW_ROLE_ORDER: tuple[str, ...] = (
+    "scientific", "render_integrity",
+)
+MODULE_REVIEW_ROLE_SETS: tuple[frozenset[str], ...] = (
+    frozenset(MODULE_REVIEW_ROLE_ORDER),
+    frozenset({"scientific", "visual_quality"}),
+)
+
+
+def module_reviews_complete(roles: AbstractSet[str]) -> bool:
+    """Return whether a module's passing reviewer roles complete its review.
+
+    Args:
+        roles: Reviewer roles that have recorded a passing review.
+
+    Returns:
+        True when any accepted module role set is satisfied.
+    """
+    return any(roles >= required for required in MODULE_REVIEW_ROLE_SETS)
+
+
+def slide_reviews_complete(roles: AbstractSet[str]) -> bool:
+    """Return whether a subject's passing reviewer roles complete its review.
+
+    Args:
+        roles: Reviewer roles that have recorded a passing review.
+
+    Returns:
+        True when any accepted role set is satisfied. The legacy
+        ``visual_quality`` pair is accepted so decks recorded before the review
+        split still reach ``passed``.
+    """
+    return any(roles >= required for required in SLIDE_REVIEW_ROLE_SETS)
+
+
+def _missing_roles(roles: AbstractSet[str], complete: bool,
+                   order: tuple[str, ...]) -> tuple[str, ...]:
+    """Return the outstanding roles of one ordering.
+
+    Args:
+        roles: Reviewer roles that have recorded a passing review.
+        complete: Whether the review is already complete under any accepted set.
+        order: The workflow ordering to report against.
+
+    Returns:
+        The unmet roles, or an empty tuple when the review is complete.
+    """
+    if complete:
+        return ()
+    return tuple(role for role in order if role not in roles)
+
+
+def missing_slide_review_roles(roles: AbstractSet[str]) -> tuple[str, ...]:
+    """Return the slide roles still outstanding, in workflow order.
+
+    Args:
+        roles: Reviewer roles that have recorded a passing review.
+
+    Returns:
+        The unmet roles of ``SLIDE_REVIEW_ROLE_ORDER``, or an empty tuple when
+        the review is complete under any accepted set.
+    """
+    return _missing_roles(roles, slide_reviews_complete(roles),
+                          SLIDE_REVIEW_ROLE_ORDER)
+
+
+def missing_module_review_roles(roles: AbstractSet[str]) -> tuple[str, ...]:
+    """Return the module roles still outstanding, in workflow order.
+
+    Args:
+        roles: Reviewer roles that have recorded a passing review.
+
+    Returns:
+        The unmet roles of ``MODULE_REVIEW_ROLE_ORDER``, or an empty tuple when
+        the review is complete under any accepted set.
+    """
+    return _missing_roles(roles, module_reviews_complete(roles),
+                          MODULE_REVIEW_ROLE_ORDER)
+
 _TERMINAL_DISPOSITIONS = frozenset({"fixed", "resolved", "closed", "accepted", "rechecked", "done", "dismissed"})
 
 def review_result_blockers(
@@ -638,14 +742,22 @@ def assert_slide_passable(project_root: Path, slide_id: str) -> dict[str, Any]:
         blockers.extend(review_result_blockers(project_root, "slide", slide_id, review, str(review.get("id"))))
     reviews = effective_review_results(raw_reviews)
     by_role = {review.get("reviewer_role"): review for review in reviews}
-    for role in sorted(_REVIEW_ROLES):
-        review = by_role.get(role)
-        if review is None:
-            blockers.append({"reason": role})
-        elif not _review_identity(review):
-            blockers.append({"reason": f"{role}:reviewer_identity_unverifiable"})
+    # `_REVIEW_ROLES` is the admissible set, not the required one. A slide
+    # recorded before the review split carries `visual_quality` and will never
+    # carry `render_integrity`, so iterating the admissible set as if it were
+    # required would block every such slide forever. Judge the reviews that
+    # exist, then ask the role-set predicate what is still outstanding.
+    passing: set[str] = set()
+    for role in sorted(by_role, key=str):
+        review = by_role[role]
+        name = str(role)
+        if not _review_identity(review):
+            blockers.append({"reason": f"{name}:reviewer_identity_unverifiable"})
         elif review.get("status") != "passed":
-            blockers.append({"reason": f"{role}:{review.get('status')}", "findings": review.get("findings", [])})
+            blockers.append({"reason": f"{name}:{review.get('status')}", "findings": review.get("findings", [])})
+        else:
+            passing.add(name)
+    blockers.extend({"reason": role} for role in missing_slide_review_roles(passing))
     if slide.get("status") not in {"review_required", "passed"}:
         blockers.append({"reason": f"status:{slide.get('status')}"})
     if blockers:
@@ -683,7 +795,7 @@ def assert_module_passable(project_root: Path, module_id: str) -> dict[str, Any]
         blockers.extend(review_result_blockers(project_root, "module", module_id, review, str(review.get("id"))))
     reviews = effective_review_results(raw_reviews)
     roles = {review.get("reviewer_role") for review in reviews if review.get("status") == "passed"}
-    blockers.extend({"reason": role} for role in sorted(_REVIEW_ROLES - roles))
+    blockers.extend({"reason": role} for role in missing_module_review_roles({str(role) for role in roles}))
     if module.get("status") not in {"review_required", "passed"}:
         blockers.append({"reason": f"status:{module.get('status')}"})
     state = _state()
@@ -853,7 +965,7 @@ def assert_deck_completable(project_root: Path, deck_id: str, completion: dict[s
         if module.get("status") != "superseded" and module.get("slide_id") in slide_ids
     ]
     if not slides:
-        blockers.extend({"reason": role} for role in sorted(_REVIEW_ROLES))
+        blockers.extend({"reason": role} for role in SLIDE_REVIEW_ROLE_ORDER)
     for slide in slides:
         if slide.get("status") != "passed":
             blockers.append({"reason": f"slide:{slide.get('id')}:status:{slide.get('status')}"})

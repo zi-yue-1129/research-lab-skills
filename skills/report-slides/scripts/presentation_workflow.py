@@ -40,7 +40,9 @@ from presentation_gates import (
     assert_plan_approvable,
     assert_plan_reviewable,
     assert_production_allowed,
+    module_reviews_complete,
     review_result_blockers,
+    slide_reviews_complete,
 )
 from validate_deck_plan import validate_deck_plan
 
@@ -516,13 +518,17 @@ def record_production_review(project_root: Path, review_path: Path) -> dict[str,
         elif subject_type == "slide":
             raw_reviews = load_review_results(project_root, {subject_id}) + [event]
             roles = {item.get("reviewer_role") for item in effective_review_results(raw_reviews) if item.get("status") == "passed"}
-            if roles >= {"scientific", "visual_quality"}:
+            if slide_reviews_complete({str(role) for role in roles}):
                 target_records[subject_id].update({"status": "passed", "updated_at": _now()})
                 tx.stage_yaml(state_path, top_key, target_records)
         else:
+            # A module is a fragment, not a composition, and Task 10 gives the
+            # slide an art-direction gate that no module will ever be given.
+            # Two named predicates state that difference once; one shared
+            # predicate would hide it until it became a permanent stall.
             raw_reviews = load_review_results(project_root, {subject_id}) + [event]
             roles = {item.get("reviewer_role") for item in effective_review_results(raw_reviews) if item.get("status") == "passed"}
-            if roles >= {"scientific", "visual_quality"}:
+            if module_reviews_complete({str(role) for role in roles}):
                 target_records[subject_id].update({"status": "passed", "updated_at": _now()})
                 tx.stage_yaml(state_path, top_key, target_records)
         _stage_gitignore(tx, project_root / ".research/presentations/.gitignore")

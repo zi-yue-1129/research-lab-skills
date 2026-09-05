@@ -19,7 +19,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator, Sequence
+from typing import AbstractSet, Any, Iterator, Sequence
 
 import yaml
 
@@ -31,6 +31,23 @@ from presentation_artifact_provenance import (
 )
 from presentation_transactions import _open_sidecar, require_transaction_recovery
 from presentation_transaction_journal_admission import journal_admission_guard
+
+
+def _missing_slide_review_roles(roles: AbstractSet[str]) -> tuple[str, ...]:
+    """Return the outstanding slide review roles, in workflow order.
+
+    `presentation_gates` imports this module, so the import has to be deferred
+    to call time; a top-level import would be a cycle.
+
+    Args:
+        roles: Reviewer roles that have recorded a passing review.
+
+    Returns:
+        The unmet roles, or an empty tuple when the review is complete.
+    """
+    from presentation_gates import missing_slide_review_roles
+
+    return missing_slide_review_roles(roles)
 
 
 EVENTS_RELATIVE_DIR = Path(".research/presentations/events")
@@ -334,10 +351,12 @@ def next_actions(
             roles_by_subject.setdefault(subject_key, set()).discard(role)
     for slide in slides:
         roles = roles_by_subject.get(("slide", slide["id"]), set())
-        if "scientific" in roles and "visual_quality" not in roles:
-            return ["record_visual_quality_review"]
-        if "visual_quality" in roles and "scientific" not in roles:
-            return ["record_scientific_review"]
+        outstanding = _missing_slide_review_roles({str(role) for role in roles})
+        # `and roles` preserves the existing behaviour that a slide with no
+        # recorded review at all falls through to the later checks rather than
+        # being reported as awaiting one specific reviewer.
+        if outstanding and roles:
+            return [f"record_{outstanding[0]}_review"]
     if not plans:
         return ["register_plan"]
     if deck.get("status") == "planning":

@@ -611,7 +611,7 @@ def test_query_includes_review_history_and_next_actions(tmp_path: Path) -> None:
 
     resumed = json.loads(_run(project, "--query", "--deck-id", deck_id, "--json").stdout)
     assert resumed["review_results"][0]["reviewer_role"] == "scientific"
-    assert resumed["next_actions"] == ["record_visual_quality_review"]
+    assert resumed["next_actions"] == ["record_render_integrity_review"]
 
 
 def test_query_has_exact_resume_key_set(tmp_path: Path) -> None:
@@ -709,7 +709,7 @@ def test_latest_review_round_controls_effective_next_action(tmp_path: Path) -> N
     snapshot = json.loads(_run(project, "--query", "--deck-id", deck_id, "--json").stdout)
 
     assert len(snapshot["review_results"]) == 2
-    assert snapshot["next_actions"] != ["record_visual_quality_review"]
+    assert snapshot["next_actions"] != ["record_render_integrity_review"]
     assert any(blocker["reason"] == "review:failed" for blocker in snapshot["blockers"])
 
 

@@ -128,9 +128,9 @@ def test_scientific_visual_reviewer_agent_names_stage_and_boundary() -> None:
     assert "reviewer_role: scientific" in text
 
 
-def test_visual_quality_reviewer_agent_names_stage_and_finding_kinds() -> None:
-    text = _read("visual_quality_reviewer_agent.md")
-    assert "name: visual_quality_reviewer_agent" in text
+def test_render_integrity_reviewer_agent_names_stage_and_finding_kinds() -> None:
+    text = _read("render_integrity_reviewer_agent.md")
+    assert "name: render_integrity_reviewer_agent" in text
     assert "Stage 12" in text
     assert "Stage Boundary" in text
     assert "scientific" in text.lower() and "semantic" in text.lower()

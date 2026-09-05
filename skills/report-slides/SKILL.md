@@ -745,13 +745,20 @@ slide itself) moves to `revision_required`, a new Revision Request is created
 `producing` (Stage 9) — siblings stay `passed`, satisfying the
 partial-regeneration requirement.
 
-### 12. Visual quality review
+### 12. Visual review (two independent gates)
 
-Dispatch `visual_quality_reviewer_agent`, same mechanics as Stage 11 but
-`--reviewer-role visual_quality`, and explicitly independent of Stage 11 — a
-slide only reaches `passed` when both reviews pass; either one failing alone
-triggers the same `revision_required` path scoped to that reviewer's
-findings.
+Dispatch `render_integrity_reviewer_agent` with `--reviewer-role
+render_integrity`, same mechanics as Stage 11. It judges the rendered pixels
+against the source and nothing else; the deterministic gate at the end of Stage
+10 has already settled every measurable property.
+
+Dispatch `art_direction_reviewer_agent` with `--reviewer-role art_direction`.
+It judges composition, hierarchy, imagery, and whether the slide states its
+claim, and it receives the linter's warnings as context.
+
+All three reviews — scientific, render integrity, art direction — are
+independent. A slide reaches `passed` only when all three pass; any one failing
+triggers the `revision_required` path scoped to that reviewer's findings.
 
 ### 13. Draft review gate
 
