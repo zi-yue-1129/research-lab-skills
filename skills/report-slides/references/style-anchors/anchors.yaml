@@ -1,0 +1,32 @@
+# Style anchors for generative illustration.
+#
+# THIS REGISTRY SHIPS EMPTY, BY DESIGN. Spec D6: "Populating the anchor registry
+# with reference images is a human action; this design specifies the mechanism
+# and ships the registry empty with a documented procedure."
+#
+# While it is empty, `scripts/style_anchors.py` refuses every anchor lookup and
+# the generative illustration route is closed: modules downgrade to a native
+# editorial composition. That is the intended state, not a defect.
+#
+# An anchor is identified by ACTUAL REFERENCE IMAGES with recorded digests, not
+# by an adjective list. See README.md for the procedure and for the three
+# candidate anchors this deck expects to curate first.
+#
+# Entry shape:
+#
+#   - id: technical-schematic
+#     name: Technical schematic
+#     summary: >-
+#       One sentence saying what the anchor is.
+#     applies_to: [system architectures, data pipelines]
+#     composition: >-
+#       What to attend to in the frame arrangement of the references.
+#     line_treatment: >-
+#       How lines, fills, and light behave in the references.
+#     palette_roles: [primary, body, line, bg]   # roles the token file defines
+#     forbidden: [glow or bloom, photographic texture]
+#     reference_images:                          # required, never empty
+#       - path: technical-schematic/01-retrieval-pipeline.png
+#         sha256: <64 hex characters, verified on load>
+
+anchors: []
