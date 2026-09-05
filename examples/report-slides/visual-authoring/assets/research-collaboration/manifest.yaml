@@ -2,8 +2,8 @@ schema_version: 1
 diagram_id: research-collaboration
 purpose: Show a researcher and an AI laboratory connected by an editable collaboration loop.
 diagram_type: conceptual
-authoring_route: hybrid
-editability: hybrid
+authoring_route: native
+editability: native
 source_files:
   - source.svg
 source_path: source.svg
@@ -16,43 +16,27 @@ used_in:
     slide: 2
 derived_from: null
 based_on_revision: null
-changes: []
+changes:
+  - region: collaboration-actors
+    bbox: [48, 160, 1152, 632]
+    change: Removed the generated raster base and redrew the whole slide as a native diagram.
+    reason: >-
+      The bitmap carried no information the diagram could not carry, so it was
+      downgraded out of the deck. See WHY-THIS-FAILS.md.
 regions:
-  - name: researcher-zone
-    id: researcher-zone
-  - name: ai-lab-zone
-    id: ai-lab-zone
+  - name: collaboration-actors
+    id: collaboration-actors
   - name: collaboration-loop
     id: collaboration-loop
-  - name: disclosure-footer
-    id: disclosure-footer
-raster_layers:
-  - id: generated-raster-background
-    source: generated.png
-    role: Illustration-only background.
-    editable: false
-    contains_factual_labels: false
-editable_overlay:
-  id: editable-overlay
-  source: source.svg
-  elements:
-    - researcher-zone
-    - ai-lab-zone
-    - collaboration-loop
-    - disclosure-footer
-  bbox: [44, 38, 1156, 627]
-  change: Added editable labels, callouts, arrows, and disclosure text above the raster base.
-  reason: Keep all factual annotations and collaboration structure editable in SVG and PPTX.
 editable_element_ids:
-  - editable-overlay
-  - researcher-zone
-  - ai-lab-zone
+  - collaboration-actors
+  - researcher
+  - ai-lab
   - collaboration-loop
-  - disclosure-footer
-generation:
-  prompt: prompt.md
-  output: generated.png
-  references: []
+  - stage-question
+  - stage-experiment
+  - stage-judgment
+generation: null
 review:
-  status: passed
+  status: failed
   artifact: review.json

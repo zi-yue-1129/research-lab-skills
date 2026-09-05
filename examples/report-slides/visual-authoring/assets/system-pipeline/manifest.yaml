@@ -21,10 +21,14 @@ reuse:
   asset_id: system-pipeline
   reused_source: git:1634a372819632f66ddcf0aeebc3ca174e73f5b1
 changes:
-  - region: evaluation-stage
-    bbox: [600, 151, 954, 356]
+  - region: evaluation
+    bbox: [596, 432, 1044, 592]
     change: Added an editable human review gate, approval handoff, and failure return path.
     reason: Make manual approval explicit while routing failed evaluation back to re-run training.
+  - region: pipeline-stages
+    bbox: [48, 160, 1152, 632]
+    change: Redrew every stage, connector, and label on the default design tokens.
+    reason: Satisfy the visual-style gate the skill now applies to users' decks.
 regions:
   - name: ingestion
     id: ingestion
@@ -32,21 +36,20 @@ regions:
     id: feature-processing
   - name: training
     id: training
-  - name: evaluation-stage
-    id: evaluation-stage
+  - name: evaluation
+    id: evaluation
   - name: human-review-branch
     id: human-review-branch
-  - name: failure-return-path
-    id: failure-return-path
   - name: publishing
     id: publishing
 editable_element_ids:
   - human-review-branch
-  - human-review-gate
-  - human-approval-connector-line
-  - human-approval-path
-  - failure-return-path
-  - failure-return-arrow
+  - human-review
+  - connector-evaluation-human-review
+  - connector-human-review-publishing
+  - connector-human-review-training
+  - human-approval-label
+  - human-return-label
 generation: null
 review:
   status: passed

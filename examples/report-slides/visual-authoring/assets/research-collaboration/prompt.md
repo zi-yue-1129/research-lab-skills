@@ -1,3 +1,7 @@
+# RETAINED AS A COUNTER-EXAMPLE. This record predates the generative contract in
+# references/generative-visuals.md and is rejected by
+# scripts/validate_generative_prompt.py. See WHY-THIS-FAILS.md.
+
 purpose: Support a research report slide about researcher and AI collaboration.
 composition: Wide 16:9-friendly scene with the human researcher on the left, abstract AI compute and data motifs on the right, and clean negative space along the lower third and center-right for editable SVG callouts.
 subject: A researcher collaborating with an abstract AI laboratory in a calm modern workspace.

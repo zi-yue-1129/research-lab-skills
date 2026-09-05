@@ -70,16 +70,17 @@
         "width": 1200,
         "height": 675
       },
-      "mean_absolute_pixel_delta_rgb_0_255": 9.333373,
-      "p95_absolute_channel_delta_rgb_0_255": 60.0,
-      "p99_per_pixel_mean_delta_rgb_0_255": 199.333333,
+      "mean_absolute_pixel_delta_rgb_0_255": 11.533788,
+      "p95_absolute_channel_delta_rgb_0_255": 102.0,
+      "p99_per_pixel_mean_delta_rgb_0_255": 194.0,
       "pass_threshold_mean_absolute_pixel_delta_rgb_0_255": 12.0,
       "normalization": "Dropped the rightmost one-pixel PDF raster rounding column (1601x900 to 1600x900), then resized with Pillow LANCZOS to the approved 1200x675 preview size."
     },
     "known_renderer_differences": [
       "LibreOffice PDF rasterization and CairoSVG preview rendering use different anti-aliasing and font rasterization/metrics.",
       "The 1601x900 PDF PNG dimensions require the documented one-pixel width normalization before comparison.",
-      "The verdict is threshold-based and does not claim byte-identical or pixel-identical output."
+      "The verdict is threshold-based and does not claim byte-identical or pixel-identical output.",
+      "LibreOffice grows an autofit text box about its centre where PowerPoint grows it to the right, so a left-aligned heading wider than its measured box shifts horizontally in the LibreOffice column. This is the largest single contributor to the slide-1 delta."
     ]
   },
   "remaining_raster_layers": []

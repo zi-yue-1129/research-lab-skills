@@ -20,9 +20,9 @@
     {
       "diagram_id": "research-collaboration",
       "slide": 2,
-      "authoring_route": "hybrid",
+      "authoring_route": "native",
       "review": "passed",
-      "revision_rounds": 2,
+      "revision_rounds": 3,
       "subfigure_render": "passed",
       "slide_render": "passed",
       "model_vision": "passed",
@@ -31,7 +31,12 @@
       "pptx_render_status": "passed",
       "pptx_comparison_status": "passed",
       "pptx_equivalence_status": "passed_with_renderer_differences",
-      "remaining_raster_layer": "generated.png is illustrative only; factual overlays are editable SVG objects."
+      "downgraded_from": {
+        "route": "generative",
+        "verdict": "failed",
+        "gate": "art_direction",
+        "record": "assets/research-collaboration/WHY-THIS-FAILS.md"
+      }
     },
     {
       "diagram_id": "accuracy-comparison",
@@ -86,7 +91,8 @@
     "known_renderer_differences": [
       "LibreOffice PDF rasterization and CairoSVG preview rendering use different anti-aliasing and font rasterization/metrics.",
       "The 1601x900 PDF PNG dimensions require the documented one-pixel width normalization before comparison.",
-      "The verdict is threshold-based and does not claim byte-identical or pixel-identical output."
+      "The verdict is threshold-based and does not claim byte-identical or pixel-identical output.",
+      "LibreOffice grows an autofit text box about its centre where PowerPoint grows it to the right, so a left-aligned heading wider than its measured box shifts horizontally in the LibreOffice column. This is the largest single contributor to the slide-1 delta."
     ]
   },
   "pptx_comparison": {
@@ -119,9 +125,9 @@
           "width": 1200,
           "height": 675
         },
-        "mean_absolute_pixel_delta_rgb_0_255": 9.333373,
-        "p95_absolute_channel_delta_rgb_0_255": 60.0,
-        "p99_per_pixel_mean_delta_rgb_0_255": 199.333333,
+        "mean_absolute_pixel_delta_rgb_0_255": 11.533788,
+        "p95_absolute_channel_delta_rgb_0_255": 102.0,
+        "p99_per_pixel_mean_delta_rgb_0_255": 194.0,
         "verdict": "passed"
       },
       {
@@ -142,9 +148,9 @@
           "width": 1200,
           "height": 675
         },
-        "mean_absolute_pixel_delta_rgb_0_255": 6.867255,
-        "p95_absolute_channel_delta_rgb_0_255": 27.0,
-        "p99_per_pixel_mean_delta_rgb_0_255": 131.0,
+        "mean_absolute_pixel_delta_rgb_0_255": 9.03853,
+        "p95_absolute_channel_delta_rgb_0_255": 64.0,
+        "p99_per_pixel_mean_delta_rgb_0_255": 192.666667,
         "verdict": "passed"
       },
       {
@@ -165,9 +171,9 @@
           "width": 1200,
           "height": 675
         },
-        "mean_absolute_pixel_delta_rgb_0_255": 5.432014,
-        "p95_absolute_channel_delta_rgb_0_255": 27.0,
-        "p99_per_pixel_mean_delta_rgb_0_255": 142.333333,
+        "mean_absolute_pixel_delta_rgb_0_255": 6.523523,
+        "p95_absolute_channel_delta_rgb_0_255": 29.0,
+        "p99_per_pixel_mean_delta_rgb_0_255": 188.0,
         "verdict": "passed"
       }
     ]

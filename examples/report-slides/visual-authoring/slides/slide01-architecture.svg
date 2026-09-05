@@ -6,677 +6,256 @@
      role="img"
      aria-labelledby="diagram-title diagram-description">
   <title id="diagram-title">Training pipeline architecture</title>
-  <desc id="diagram-description">A linear baseline pipeline from source data through feature processing, model training, evaluation, and publishing.</desc>
+  <desc id="diagram-description">A linear baseline pipeline from source data through feature processing, model training, evaluation, and publishing, with a human review gate that can return a run to training.</desc>
 
-  <rect id="canvas-background" x="0" y="0" width="1200" height="675" fill="#F7FAFC"/>
+  <defs>
+    <marker id="pipeline-arrowhead"
+            viewBox="0 0 10 10"
+            refX="9"
+            refY="5"
+            markerWidth="7"
+            markerHeight="7"
+            orient="auto-start-reverse"
+            markerUnits="strokeWidth">
+      <path d="M0 1 L9 5 L0 9 Z" fill="#475569"/>
+    </marker>
+  </defs>
+
+  <rect id="canvas-background"
+        x="0"
+        y="0"
+        width="1200"
+        height="675"
+        fill="#ffffff"/>
 
   <text id="diagram-kicker"
+        data-style-role="footnote"
         x="48"
-        y="48"
-        fill="#5B7890"
-        font-family="Arial, Helvetica, sans-serif"
-        font-size="13"
-        font-weight="700"
-        letter-spacing="2">REFERENCE ARCHITECTURE • BASELINE</text>
+        y="64"
+        fill="#64748b"
+        font-family="Inter, 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif"
+        font-size="12"
+        letter-spacing="1.8">REFERENCE ARCHITECTURE • BASELINE</text>
   <text id="diagram-heading"
+        data-style-role="slide.title"
         x="48"
-        y="82"
-        fill="#15334A"
-        font-family="Arial, Helvetica, sans-serif"
-        font-size="30"
+        y="104"
+        fill="#1e3a5f"
+        font-family="Inter, 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif"
+        font-size="32"
         font-weight="700">Training pipeline architecture</text>
   <text id="diagram-subtitle"
+        data-style-role="caption"
         x="48"
-        y="111"
-        fill="#5B7890"
-        font-family="Arial, Helvetica, sans-serif"
-        font-size="15">Data moves through a controlled sequence of native, editable stages.</text>
+        y="136"
+        fill="#374151"
+        font-family="Inter, 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif"
+        font-size="16">Data moves through a controlled sequence of native, editable stages.</text>
   <path id="header-rule"
-        d="M48 137 H1152"
+        d="M48 160 H1152"
         fill="none"
-        stroke="#D9E5EC"
+        stroke="#e2e8f0"
         stroke-width="2"/>
+
   <text id="flow-label"
+        data-style-role="footnote"
         x="48"
-        y="174"
-        fill="#7892A4"
-        font-family="Arial, Helvetica, sans-serif"
-        font-size="11"
-        font-weight="700"
+        y="192"
+        fill="#64748b"
+        font-family="Inter, 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif"
+        font-size="12"
         letter-spacing="1.6">DIRECTED DATA FLOW</text>
 
-  <g id="connector-layer" aria-label="Forward data connectors">
-    <path id="connector-ingestion-feature-processing"
-          class="connector"
-          data-element="connector"
-          d="M236 350 H268"
-          fill="none"
-          stroke="#6B9AB2"
-          stroke-width="2.5"
-          stroke-linecap="round"/>
-    <path id="arrow-ingestion-feature-processing"
-          class="connector-arrow"
-          d="M261 344 L270 350 L261 356"
-          fill="none"
-          stroke="#6B9AB2"
-          stroke-width="2.5"
-          stroke-linecap="round"
-          stroke-linejoin="round"/>
+  <g id="pipeline-stages"
+     data-region="pipeline-stages"
+     role="group"
+     aria-label="The five pipeline stages">
 
-    <path id="connector-feature-processing-training"
-          class="connector"
-          data-element="connector"
-          d="M464 350 H496"
-          fill="none"
-          stroke="#6B9AB2"
-          stroke-width="2.5"
-          stroke-linecap="round"/>
-    <path id="arrow-feature-processing-training"
-          class="connector-arrow"
-          d="M489 344 L498 350 L489 356"
-          fill="none"
-          stroke="#6B9AB2"
-          stroke-width="2.5"
-          stroke-linecap="round"
-          stroke-linejoin="round"/>
+    <g id="ingestion" data-node-id="ingestion">
+      <rect id="ingestion-card" x="48" y="216" width="200" height="216" rx="8"
+            fill="#f8fafc" stroke="#e2e8f0" stroke-width="1.5"/>
+      <text id="ingestion-step" data-style-role="footnote" x="72" y="248"
+            fill="#64748b"
+            font-family="Inter, 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif"
+            font-size="12" letter-spacing="1.2">01</text>
+      <text id="ingestion-title" data-style-role="node.label" x="72" y="288"
+            fill="#1e3a5f"
+            font-family="Inter, 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif"
+            font-size="18" font-weight="600"><tspan x="72" dy="0">Data</tspan><tspan x="72" dy="24">sources</tspan></text>
+      <text id="ingestion-detail" data-style-role="caption" x="72" y="344"
+            fill="#374151"
+            font-family="Inter, 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif"
+            font-size="16"><tspan x="72" dy="0">Raw inputs</tspan><tspan x="72" dy="20">and metadata</tspan></text>
+      <text id="ingestion-output" data-style-role="footnote" x="72" y="408"
+            fill="#64748b"
+            font-family="Inter, 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif"
+            font-size="12">OUTPUT: DATASET</text>
+    </g>
 
-    <path id="connector-training-evaluation-stage"
-          class="connector"
-          data-element="connector"
-          d="M692 350 H724"
-          fill="none"
-          stroke="#6B9AB2"
-          stroke-width="2.5"
-          stroke-linecap="round"/>
-    <path id="arrow-training-evaluation-stage"
-          class="connector-arrow"
-          d="M717 344 L726 350 L717 356"
-          fill="none"
-          stroke="#6B9AB2"
-          stroke-width="2.5"
-          stroke-linecap="round"
-          stroke-linejoin="round"/>
+    <g id="feature-processing" data-node-id="feature-processing">
+      <rect id="feature-processing-card" x="272" y="216" width="200" height="216" rx="8"
+            fill="#f8fafc" stroke="#e2e8f0" stroke-width="1.5"/>
+      <text id="feature-processing-step" data-style-role="footnote" x="296" y="248"
+            fill="#64748b"
+            font-family="Inter, 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif"
+            font-size="12" letter-spacing="1.2">02</text>
+      <text id="feature-processing-title" data-style-role="node.label" x="296" y="288"
+            fill="#1e3a5f"
+            font-family="Inter, 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif"
+            font-size="18" font-weight="600"><tspan x="296" dy="0">Feature</tspan><tspan x="296" dy="24">processing</tspan></text>
+      <text id="feature-processing-detail" data-style-role="caption" x="296" y="344"
+            fill="#374151"
+            font-family="Inter, 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif"
+            font-size="16"><tspan x="296" dy="0">Normalize,</tspan><tspan x="296" dy="20">encode, split</tspan></text>
+      <text id="feature-processing-output" data-style-role="footnote" x="296" y="408"
+            fill="#64748b"
+            font-family="Inter, 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif"
+            font-size="12">OUTPUT: FEATURES</text>
+    </g>
 
-    <path id="connector-evaluation-stage-publishing"
-          class="connector"
-          data-element="connector"
-          d="M920 350 H952"
-          fill="none"
-          stroke="#6B9AB2"
-          stroke-width="2.5"
-          stroke-linecap="round"/>
-    <path id="arrow-evaluation-stage-publishing"
-          class="connector-arrow"
-          d="M945 344 L954 350 L945 356"
-          fill="none"
-          stroke="#6B9AB2"
-          stroke-width="2.5"
-          stroke-linecap="round"
-          stroke-linejoin="round"/>
-  </g>
+    <g id="training" data-node-id="training">
+      <rect id="training-card" x="496" y="216" width="200" height="216" rx="8"
+            fill="#f8fafc" stroke="#e2e8f0" stroke-width="1.5"/>
+      <text id="training-step" data-style-role="footnote" x="520" y="248"
+            fill="#64748b"
+            font-family="Inter, 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif"
+            font-size="12" letter-spacing="1.2">03</text>
+      <text id="training-title" data-style-role="node.label" x="520" y="288"
+            fill="#1e3a5f"
+            font-family="Inter, 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif"
+            font-size="18" font-weight="600"><tspan x="520" dy="0">Model</tspan><tspan x="520" dy="24">training</tspan></text>
+      <text id="training-detail" data-style-role="caption" x="520" y="344"
+            fill="#374151"
+            font-family="Inter, 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif"
+            font-size="16"><tspan x="520" dy="0">Fit model</tspan><tspan x="520" dy="20">parameters</tspan></text>
+      <text id="training-output" data-style-role="footnote" x="520" y="408"
+            fill="#64748b"
+            font-family="Inter, 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif"
+            font-size="12">OUTPUT: MODEL</text>
+    </g>
 
-  <g id="ingestion" data-region="ingestion" role="group" aria-labelledby="ingestion-title">
-    <rect id="ingestion-card"
-          x="48"
-          y="207"
-          width="188"
-          height="300"
-          rx="14"
-          fill="#FFFFFF"
-          stroke="#B9CCD9"
-          stroke-width="2"/>
-    <rect id="ingestion-accent"
-          x="48"
-          y="207"
-          width="188"
-          height="7"
-          rx="3.5"
-          fill="#4F86A3"/>
-    <text id="ingestion-step"
-          x="70"
-          y="244"
-          fill="#6E899D"
-          font-family="Arial, Helvetica, sans-serif"
-          font-size="12"
-          font-weight="700"
-          letter-spacing="1.2">01</text>
-    <rect id="ingestion-icon-panel"
-          x="70"
-          y="263"
-          width="50"
-          height="50"
-          rx="10"
-          fill="#EEF5F8"/>
-    <path id="ingestion-icon"
-          d="M81 275 H109 M81 286 H109 M81 297 H100"
-          fill="none"
-          stroke="#4F86A3"
-          stroke-width="3"
-          stroke-linecap="round"/>
-    <text id="ingestion-title"
-          x="70"
-          y="350"
-          fill="#15334A"
-          font-family="Arial, Helvetica, sans-serif"
-          font-size="18"
-          font-weight="700">Data sources</text>
-    <text id="ingestion-detail-primary"
-          x="70"
-          y="393"
-          fill="#557085"
-          font-family="Arial, Helvetica, sans-serif"
-          font-size="14">Raw inputs &amp;</text>
-    <text id="ingestion-detail-secondary"
-          x="70"
-          y="414"
-          fill="#557085"
-          font-family="Arial, Helvetica, sans-serif"
-          font-size="14">metadata</text>
-    <path id="ingestion-divider"
-          d="M70 449 H214"
-          fill="none"
-          stroke="#E2EBF0"
-          stroke-width="1.5"/>
-    <text id="ingestion-output-label"
-          x="70"
-          y="474"
-          fill="#7892A4"
-          font-family="Arial, Helvetica, sans-serif"
-          font-size="10"
-          font-weight="700"
-          letter-spacing="1.2">OUTPUT</text>
-    <text id="ingestion-output"
-          x="214"
-          y="474"
-          text-anchor="end"
-          fill="#4F86A3"
-          font-family="Arial, Helvetica, sans-serif"
-          font-size="11"
-          font-weight="700"
-          letter-spacing="0.8">DATASET</text>
-  </g>
+    <g id="evaluation" data-node-id="evaluation">
+      <rect id="evaluation-card" x="720" y="216" width="200" height="216" rx="8"
+            fill="#f8fafc" stroke="#e2e8f0" stroke-width="1.5"/>
+      <text id="evaluation-step" data-style-role="footnote" x="744" y="248"
+            fill="#64748b"
+            font-family="Inter, 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif"
+            font-size="12" letter-spacing="1.2">04</text>
+      <text id="evaluation-title" data-style-role="node.label" x="744" y="288"
+            fill="#1e3a5f"
+            font-family="Inter, 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif"
+            font-size="18" font-weight="600"><tspan x="744" dy="0">Evaluation</tspan><tspan x="744" dy="24">stage</tspan></text>
+      <text id="evaluation-detail" data-style-role="caption" x="744" y="344"
+            fill="#374151"
+            font-family="Inter, 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif"
+            font-size="16"><tspan x="744" dy="0">Holdout</tspan><tspan x="744" dy="20">metrics</tspan></text>
+      <text id="evaluation-output" data-style-role="footnote" x="744" y="408"
+            fill="#64748b"
+            font-family="Inter, 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif"
+            font-size="12">OUTPUT: METRICS</text>
+    </g>
 
-  <g id="feature-processing" data-region="feature-processing" role="group" aria-labelledby="feature-processing-title">
-    <rect id="feature-processing-card"
-          x="276"
-          y="207"
-          width="188"
-          height="300"
-          rx="14"
-          fill="#FFFFFF"
-          stroke="#B9CCD9"
-          stroke-width="2"/>
-    <rect id="feature-processing-accent"
-          x="276"
-          y="207"
-          width="188"
-          height="7"
-          rx="3.5"
-          fill="#4F9A9A"/>
-    <text id="feature-processing-step"
-          x="298"
-          y="244"
-          fill="#6E899D"
-          font-family="Arial, Helvetica, sans-serif"
-          font-size="12"
-          font-weight="700"
-          letter-spacing="1.2">02</text>
-    <rect id="feature-processing-icon-panel"
-          x="298"
-          y="263"
-          width="50"
-          height="50"
-          rx="10"
-          fill="#EEF7F7"/>
-    <path id="feature-processing-icon"
-          d="M309 274 H337 M309 287 H337 M309 300 H337 M320 269 V279 M332 282 V292 M315 295 V305"
-          fill="none"
-          stroke="#4F9A9A"
-          stroke-width="2.5"
-          stroke-linecap="round"/>
-    <text id="feature-processing-title"
-          x="298"
-          y="345"
-          fill="#15334A"
-          font-family="Arial, Helvetica, sans-serif"
-          font-size="17"
-          font-weight="700">Feature</text>
-    <text id="feature-processing-title-secondary"
-          x="298"
-          y="367"
-          fill="#15334A"
-          font-family="Arial, Helvetica, sans-serif"
-          font-size="17"
-          font-weight="700">processing</text>
-    <text id="feature-processing-detail-primary"
-          x="298"
-          y="407"
-          fill="#557085"
-          font-family="Arial, Helvetica, sans-serif"
-          font-size="14">Normalize, encode</text>
-    <text id="feature-processing-detail-secondary"
-          x="298"
-          y="428"
-          fill="#557085"
-          font-family="Arial, Helvetica, sans-serif"
-          font-size="14">and split</text>
-    <path id="feature-processing-divider"
-          d="M298 449 H442"
-          fill="none"
-          stroke="#E2EBF0"
-          stroke-width="1.5"/>
-    <text id="feature-processing-output-label"
-          x="298"
-          y="474"
-          fill="#7892A4"
-          font-family="Arial, Helvetica, sans-serif"
-          font-size="10"
-          font-weight="700"
-          letter-spacing="1.2">OUTPUT</text>
-    <text id="feature-processing-output"
-          x="442"
-          y="474"
-          text-anchor="end"
-          fill="#4F9A9A"
-          font-family="Arial, Helvetica, sans-serif"
-          font-size="11"
-          font-weight="700"
-          letter-spacing="0.8">FEATURE SET</text>
-  </g>
-
-  <g id="training" data-region="training" role="group" aria-labelledby="training-title">
-    <rect id="training-card"
-          x="504"
-          y="207"
-          width="188"
-          height="300"
-          rx="14"
-          fill="#FFFFFF"
-          stroke="#B9CCD9"
-          stroke-width="2"/>
-    <rect id="training-accent"
-          x="504"
-          y="207"
-          width="188"
-          height="7"
-          rx="3.5"
-          fill="#6C78B7"/>
-    <text id="training-step"
-          x="526"
-          y="244"
-          fill="#6E899D"
-          font-family="Arial, Helvetica, sans-serif"
-          font-size="12"
-          font-weight="700"
-          letter-spacing="1.2">03</text>
-    <rect id="training-icon-panel"
-          x="526"
-          y="263"
-          width="50"
-          height="50"
-          rx="10"
-          fill="#F0F2FA"/>
-    <path id="training-icon"
-          d="M537 301 V274 M537 301 H565 M541 294 L548 287 L555 290 L563 277"
-          fill="none"
-          stroke="#6C78B7"
-          stroke-width="2.8"
-          stroke-linecap="round"
-          stroke-linejoin="round"/>
-    <text id="training-title"
-          x="526"
-          y="350"
-          fill="#15334A"
-          font-family="Arial, Helvetica, sans-serif"
-          font-size="18"
-          font-weight="700">Model training</text>
-    <text id="training-detail-primary"
-          x="526"
-          y="393"
-          fill="#557085"
-          font-family="Arial, Helvetica, sans-serif"
-          font-size="14">Fit model</text>
-    <text id="training-detail-secondary"
-          x="526"
-          y="414"
-          fill="#557085"
-          font-family="Arial, Helvetica, sans-serif"
-          font-size="14">parameters</text>
-    <path id="training-divider"
-          d="M526 449 H670"
-          fill="none"
-          stroke="#E2EBF0"
-          stroke-width="1.5"/>
-    <text id="training-output-label"
-          x="526"
-          y="474"
-          fill="#7892A4"
-          font-family="Arial, Helvetica, sans-serif"
-          font-size="10"
-          font-weight="700"
-          letter-spacing="1.2">OUTPUT</text>
-    <text id="training-output"
-          x="670"
-          y="474"
-          text-anchor="end"
-          fill="#6C78B7"
-          font-family="Arial, Helvetica, sans-serif"
-          font-size="11"
-          font-weight="700"
-          letter-spacing="0.8">MODEL</text>
-  </g>
-
-  <g id="evaluation-stage" data-region="evaluation-stage" role="group" aria-labelledby="evaluation-stage-title">
-    <rect id="evaluation-stage-card"
-          x="732"
-          y="207"
-          width="188"
-          height="300"
-          rx="14"
-          fill="#FFFFFF"
-          stroke="#B9CCD9"
-          stroke-width="2"/>
-    <rect id="evaluation-stage-accent"
-          x="732"
-          y="207"
-          width="188"
-          height="7"
-          rx="3.5"
-          fill="#C18A4A"/>
-    <text id="evaluation-stage-step"
-          x="754"
-          y="244"
-          fill="#6E899D"
-          font-family="Arial, Helvetica, sans-serif"
-          font-size="12"
-          font-weight="700"
-          letter-spacing="1.2">04</text>
-    <rect id="evaluation-stage-icon-panel"
-          x="754"
-          y="263"
-          width="50"
-          height="50"
-          rx="10"
-          fill="#FBF5EC"/>
-    <path id="evaluation-stage-icon"
-          d="M765 301 V274 M765 301 H793 M770 291 L777 284 L784 288 L792 277"
-          fill="none"
-          stroke="#C18A4A"
-          stroke-width="2.8"
-          stroke-linecap="round"
-          stroke-linejoin="round"/>
-    <text id="evaluation-stage-title"
-          x="754"
-          y="345"
-          fill="#15334A"
-          font-family="Arial, Helvetica, sans-serif"
-          font-size="17"
-          font-weight="700">Evaluation</text>
-    <text id="evaluation-stage-title-secondary"
-          x="754"
-          y="367"
-          fill="#15334A"
-          font-family="Arial, Helvetica, sans-serif"
-          font-size="17"
-          font-weight="700">stage</text>
-    <text id="evaluation-stage-detail-primary"
-          x="754"
-          y="407"
-          fill="#557085"
-          font-family="Arial, Helvetica, sans-serif"
-          font-size="14">Holdout</text>
-    <text id="evaluation-stage-detail-secondary"
-          x="754"
-          y="428"
-          fill="#557085"
-          font-family="Arial, Helvetica, sans-serif"
-          font-size="14">metrics</text>
-    <path id="evaluation-stage-divider"
-          d="M754 449 H898"
-          fill="none"
-          stroke="#E2EBF0"
-          stroke-width="1.5"/>
-    <text id="evaluation-stage-output-label"
-          x="754"
-          y="474"
-          fill="#7892A4"
-          font-family="Arial, Helvetica, sans-serif"
-          font-size="10"
-          font-weight="700"
-          letter-spacing="1.2">OUTPUT</text>
-    <text id="evaluation-stage-output"
-          x="898"
-          y="474"
-          text-anchor="end"
-          fill="#C18A4A"
-          font-family="Arial, Helvetica, sans-serif"
-          font-size="11"
-          font-weight="700"
-          letter-spacing="0.8">METRICS</text>
-
-    <g id="human-review-branch"
-       data-region="human-review-branch"
-       data-element="editable-review-branch"
-       role="group"
-       aria-labelledby="human-review-title">
-      <rect id="human-review-gate"
-            x="742"
-            y="151"
-            width="178"
-            height="42"
-            rx="10"
-            fill="#FFF8EF"
-            stroke="#C18A4A"
-            stroke-width="2"/>
-      <circle id="human-review-badge"
-              cx="760"
-              cy="172"
-              r="9"
-              fill="#C18A4A"/>
-      <path id="human-review-person"
-            data-element="reviewer-icon"
-            d="M756 171 A4 4 0 1 1 764 171 M754 180 C756 176 764 176 766 180"
-            fill="none"
-            stroke="#FFFFFF"
-            stroke-width="1.5"
-            stroke-linecap="round"/>
-      <text id="human-review-title"
-            x="777"
-            y="169"
-            fill="#15334A"
-            font-family="Arial, Helvetica, sans-serif"
-            font-size="11"
-            font-weight="700"
-            letter-spacing="0.8">HUMAN REVIEW</text>
-      <text id="human-review-detail"
-            x="777"
-            y="185"
-            fill="#8B6840"
-            font-family="Arial, Helvetica, sans-serif"
-            font-size="10">Approve or return</text>
-
-      <path id="evaluation-to-human-review"
-            data-element="review-input"
-            d="M826 207 V194"
-            fill="none"
-            stroke="#C18A4A"
-            stroke-width="2.5"
-            stroke-linecap="round"/>
-      <path id="evaluation-to-human-review-arrow"
-            data-element="review-input-arrow"
-            d="M820 200 L826 191 L832 200"
-            fill="none"
-            stroke="#C18A4A"
-            stroke-width="2.5"
-            stroke-linecap="round"
-            stroke-linejoin="round"/>
-
-      <line id="human-approval-connector-line"
-            data-element="approval-connector"
-            x1="920"
-            y1="172"
-            x2="944"
-            y2="172"
-            stroke="#577E68"
-            stroke-width="2.5"
-            stroke-dasharray="5 4"
-            stroke-linecap="round"/>
-      <path id="human-approval-path"
-            data-element="approval-branch"
-            d="M944 172 V350 H952"
-            fill="none"
-            stroke="#577E68"
-            stroke-width="2.5"
-            stroke-dasharray="5 4"
-            stroke-linecap="round"
-            stroke-linejoin="round"/>
-      <path id="human-approval-arrow"
-            data-element="approval-branch-arrow"
-            d="M945 344 L954 350 L945 356"
-            fill="none"
-            stroke="#577E68"
-            stroke-width="2.5"
-            stroke-linecap="round"
-            stroke-linejoin="round"/>
-      <text id="human-approval-label"
-            x="938"
-            y="162"
-            text-anchor="end"
-            fill="#577E68"
-            font-family="Arial, Helvetica, sans-serif"
-            font-size="9"
-            font-weight="700"
-            letter-spacing="0.8">APPROVE</text>
-
-      <path id="failure-return-path"
-            data-region="failure-return-path"
-            data-element="failure-return-path"
-            d="M742 172 H704 V184 H600 V207"
-            fill="none"
-            stroke="#B75D4A"
-            stroke-width="2.5"
-            stroke-dasharray="5 4"
-            stroke-linecap="round"
-            stroke-linejoin="round"/>
-      <path id="failure-return-arrow"
-            data-element="failure-return-arrow"
-            d="M594 198 L600 207 L606 198"
-            fill="none"
-            stroke="#B75D4A"
-            stroke-width="2.5"
-            stroke-linecap="round"
-            stroke-linejoin="round"/>
-      <text id="failure-return-label"
-            x="648"
-            y="178"
-            text-anchor="middle"
-            fill="#B75D4A"
-            font-family="Arial, Helvetica, sans-serif"
-            font-size="9"
-            font-weight="700"
-            letter-spacing="0.7">FAIL / RE-RUN</text>
+    <g id="publishing" data-node-id="publishing">
+      <rect id="publishing-card" x="944" y="216" width="200" height="216" rx="8"
+            fill="#f8fafc" stroke="#e2e8f0" stroke-width="1.5"/>
+      <text id="publishing-step" data-style-role="footnote" x="968" y="248"
+            fill="#64748b"
+            font-family="Inter, 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif"
+            font-size="12" letter-spacing="1.2">05</text>
+      <text id="publishing-title" data-style-role="node.label" x="968" y="288"
+            fill="#1e3a5f"
+            font-family="Inter, 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif"
+            font-size="18" font-weight="600"><tspan x="968" dy="0">Model</tspan><tspan x="968" dy="24">publishing</tspan></text>
+      <text id="publishing-detail" data-style-role="caption" x="968" y="344"
+            fill="#374151"
+            font-family="Inter, 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif"
+            font-size="16"><tspan x="968" dy="0">Versioned</tspan><tspan x="968" dy="20">artifact</tspan></text>
+      <text id="publishing-output" data-style-role="footnote" x="968" y="408"
+            fill="#64748b"
+            font-family="Inter, 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif"
+            font-size="12">OUTPUT: ARTIFACT</text>
     </g>
   </g>
 
-  <g id="publishing" data-region="publishing" role="group" aria-labelledby="publishing-title">
-    <rect id="publishing-card"
-          x="960"
-          y="207"
-          width="192"
-          height="300"
-          rx="14"
-          fill="#FFFFFF"
-          stroke="#B9CCD9"
-          stroke-width="2"/>
-    <rect id="publishing-accent"
-          x="960"
-          y="207"
-          width="192"
-          height="7"
-          rx="3.5"
-          fill="#577E68"/>
-    <text id="publishing-step"
-          x="982"
-          y="244"
-          fill="#6E899D"
-          font-family="Arial, Helvetica, sans-serif"
-          font-size="12"
-          font-weight="700"
-          letter-spacing="1.2">05</text>
-    <rect id="publishing-icon-panel"
-          x="982"
-          y="263"
-          width="50"
-          height="50"
-          rx="10"
-          fill="#EEF6F1"/>
-    <path id="publishing-icon"
-          d="M993 296 H1019 V304 H993 Z M1006 292 V271 M999 278 L1006 271 L1013 278"
-          fill="none"
-          stroke="#577E68"
-          stroke-width="2.6"
-          stroke-linecap="round"
-          stroke-linejoin="round"/>
-    <text id="publishing-title"
-          x="982"
-          y="350"
-          fill="#15334A"
-          font-family="Arial, Helvetica, sans-serif"
-          font-size="18"
-          font-weight="700">Publishing</text>
-    <text id="publishing-detail-primary"
-          x="982"
-          y="393"
-          fill="#557085"
-          font-family="Arial, Helvetica, sans-serif"
-          font-size="14">Versioned model</text>
-    <text id="publishing-detail-secondary"
-          x="982"
-          y="414"
-          fill="#557085"
-          font-family="Arial, Helvetica, sans-serif"
-          font-size="14">artifact</text>
-    <path id="publishing-divider"
-          d="M982 449 H1130"
-          fill="none"
-          stroke="#E2EBF0"
-          stroke-width="1.5"/>
-    <text id="publishing-output-label"
-          x="982"
-          y="474"
-          fill="#7892A4"
-          font-family="Arial, Helvetica, sans-serif"
-          font-size="10"
-          font-weight="700"
-          letter-spacing="1.2">OUTPUT</text>
-    <text id="publishing-output"
-          x="1130"
-          y="474"
-          text-anchor="end"
-          fill="#577E68"
-          font-family="Arial, Helvetica, sans-serif"
-          font-size="11"
-          font-weight="700"
-          letter-spacing="0.8">ARTIFACT</text>
+  <g id="connector-layer"
+     data-region="connector-layer"
+     role="group"
+     aria-label="Forward data connectors">
+    <line id="connector-ingestion-feature-processing"
+          data-from="ingestion" data-to="feature-processing"
+          x1="248" y1="324" x2="272" y2="324"
+          stroke="#475569" stroke-width="2"
+          marker-end="url(#pipeline-arrowhead)"/>
+    <line id="connector-feature-processing-training"
+          data-from="feature-processing" data-to="training"
+          x1="472" y1="324" x2="496" y2="324"
+          stroke="#475569" stroke-width="2"
+          marker-end="url(#pipeline-arrowhead)"/>
+    <line id="connector-training-evaluation"
+          data-from="training" data-to="evaluation"
+          x1="696" y1="324" x2="720" y2="324"
+          stroke="#475569" stroke-width="2"
+          marker-end="url(#pipeline-arrowhead)"/>
+    <line id="connector-evaluation-publishing"
+          data-from="evaluation" data-to="publishing"
+          x1="920" y1="324" x2="944" y2="324"
+          stroke="#475569" stroke-width="2"
+          marker-end="url(#pipeline-arrowhead)"/>
+  </g>
+
+  <g id="human-review-branch"
+     data-region="human-review-branch"
+     role="group"
+     aria-label="The human review gate">
+    <g id="human-review" data-node-id="human-review">
+      <rect id="human-review-card" x="608" y="488" width="384" height="104" rx="8"
+            fill="#f8fafc" stroke="#e2e8f0" stroke-width="1.5"/>
+      <text id="human-review-title" data-style-role="node.label" x="632" y="528"
+            fill="#1e3a5f"
+            font-family="Inter, 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif"
+            font-size="18" font-weight="600">HUMAN REVIEW</text>
+      <text id="human-review-detail" data-style-role="caption" x="632" y="560"
+            fill="#374151"
+            font-family="Inter, 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif"
+            font-size="16">Approve the run, or return it to training.</text>
+    </g>
+
+    <line id="connector-evaluation-human-review"
+          data-from="evaluation" data-to="human-review"
+          x1="820" y1="432" x2="820" y2="488"
+          stroke="#475569" stroke-width="2"
+          marker-end="url(#pipeline-arrowhead)"/>
+    <line id="connector-human-review-publishing"
+          data-from="human-review" data-to="publishing"
+          x1="992" y1="512" x2="1044" y2="432"
+          stroke="#475569" stroke-width="2"
+          marker-end="url(#pipeline-arrowhead)"/>
+    <line id="connector-human-review-training"
+          data-from="human-review" data-to="training"
+          x1="608" y1="512" x2="596" y2="432"
+          stroke="#475569" stroke-width="2"
+          marker-end="url(#pipeline-arrowhead)"/>
+
+    <text id="human-approval-label" data-style-role="footnote" x="1056" y="472"
+          fill="#64748b"
+          font-family="Inter, 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif"
+          font-size="12" letter-spacing="1.2">APPROVE</text>
+    <text id="human-return-label" data-style-role="footnote" x="456" y="472"
+          fill="#64748b"
+          font-family="Inter, 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif"
+          font-size="12" letter-spacing="1.2" text-anchor="end">RETURN FOR RE-RUN</text>
   </g>
 
   <path id="footer-rule"
-        d="M48 552 H1152"
+        d="M48 616 H1152"
         fill="none"
-        stroke="#D9E5EC"
+        stroke="#e2e8f0"
         stroke-width="1.5"/>
-  <text id="footer-label"
-        x="48"
-        y="583"
-        fill="#7892A4"
-        font-family="Arial, Helvetica, sans-serif"
-        font-size="11"
-        font-weight="700"
-        letter-spacing="1.6">BASELINE SCOPE</text>
   <text id="footer-note"
+        data-style-role="footnote"
         x="48"
-        y="608"
-        fill="#557085"
-        font-family="Arial, Helvetica, sans-serif"
-        font-size="14">Five bounded stages with explicit forward handoffs.</text>
+        y="632"
+        fill="#64748b"
+        font-family="Inter, 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif"
+        font-size="12">Baseline scope: five bounded stages with explicit forward handoffs, and one human gate that can return a run.</text>
 </svg>

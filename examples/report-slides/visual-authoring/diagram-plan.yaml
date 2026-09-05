@@ -8,9 +8,8 @@ visuals:
       - ingestion
       - feature-processing
       - training
-      - evaluation-stage
+      - evaluation
       - human-review-branch
-      - failure-return-path
       - publishing
     route: native
     editability: native
@@ -24,30 +23,23 @@ visuals:
       reused_source: git:1634a372819632f66ddcf0aeebc3ca174e73f5b1
       based_on_revision: git:1634a372819632f66ddcf0aeebc3ca174e73f5b1
       changes:
-        - region: evaluation-stage
-          bbox: [600, 151, 954, 356]
+        - region: evaluation
+          bbox: [596, 432, 1044, 592]
           change: Added the human review gate, approval handoff, and failure return path.
           reason: Make manual approval and retraining recovery explicit.
 
   - diagram_id: research-collaboration
     slide: 2
-    purpose: Show a researcher and an AI laboratory connected by an editable collaboration loop over illustrative imagery.
+    purpose: Show a researcher and an AI laboratory connected by an editable collaboration loop.
     regions:
-      - collaboration-header
-      - researcher-zone
-      - ai-lab-zone
+      - collaboration-actors
       - collaboration-loop
-      - disclosure-footer
-    route: hybrid
-    editability: hybrid
+    route: native
+    editability: native
     source_path: assets/research-collaboration/source.svg
     preview_path: assets/research-collaboration/renders/source.png
     slide_path: slides/slide02-hybrid.svg
     slide_preview_path: assets/research-collaboration/renders/slide02-hybrid.png
-    generation:
-      prompt_path: assets/research-collaboration/prompt.md
-      output_path: assets/research-collaboration/generated.png
-      references: []
     reuse:
       action: create
 

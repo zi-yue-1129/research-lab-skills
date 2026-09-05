@@ -1,5 +1,5 @@
 {
-  "status": "passed",
+  "status": "failed",
   "diagram_id": "research-collaboration",
   "diagram_type": "conceptual",
   "slide": "slides/slide02-hybrid.svg",
@@ -14,12 +14,12 @@
   ],
   "subfigure_render": {
     "status": "passed",
-    "renderer": "CairoSVG with unsafe=True for the declared local raster layer",
+    "renderer": "CairoSVG",
     "path": "renders/source.png"
   },
   "slide_render": {
     "status": "passed",
-    "renderer": "CairoSVG with unsafe=True for the declared local raster layer",
+    "renderer": "CairoSVG",
     "path": "renders/slide02-hybrid.png"
   },
   "model_vision": {
@@ -86,24 +86,49 @@
         "width": 1200,
         "height": 675
       },
-      "mean_absolute_pixel_delta_rgb_0_255": 6.867255,
-      "p95_absolute_channel_delta_rgb_0_255": 27.0,
-      "p99_per_pixel_mean_delta_rgb_0_255": 131.0,
+      "mean_absolute_pixel_delta_rgb_0_255": 9.03853,
+      "p95_absolute_channel_delta_rgb_0_255": 64.0,
+      "p99_per_pixel_mean_delta_rgb_0_255": 192.666667,
       "pass_threshold_mean_absolute_pixel_delta_rgb_0_255": 12.0,
       "normalization": "Dropped the rightmost one-pixel PDF raster rounding column (1601x900 to 1600x900), then resized with Pillow LANCZOS to the approved 1200x675 preview size."
     },
     "known_renderer_differences": [
       "LibreOffice PDF rasterization and CairoSVG preview rendering use different anti-aliasing and font rasterization/metrics.",
       "The 1601x900 PDF PNG dimensions require the documented one-pixel width normalization before comparison.",
-      "The verdict is threshold-based and does not claim byte-identical or pixel-identical output."
+      "The verdict is threshold-based and does not claim byte-identical or pixel-identical output.",
+      "LibreOffice grows an autofit text box about its centre where PowerPoint grows it to the right, so a left-aligned heading wider than its measured box shifts horizontally in the LibreOffice column. This is the largest single contributor to the slide-1 delta."
     ]
   },
-  "remaining_raster_layers": [
-    {
-      "id": "generated-raster-background",
-      "path": "generated.png",
-      "editable": false,
-      "reason": "The bitmap is illustrative atmosphere only; all factual text, shapes, arrows, and callouts remain in the SVG overlay."
-    }
-  ]
+  "remaining_raster_layers": [],
+  "art_direction": {
+    "status": "failed",
+    "reviewer_role": "art_direction",
+    "round": 3,
+    "findings": [
+      {
+        "kind": "visual-cliche",
+        "description": "The illustration is a lab-coated figure at a laptop with a glowing neural sphere, light ribbons, and an abstract data-city skyline; every element would serve any deck about any AI system.",
+        "remedy": "Downgrade to the deterministic SVG overlay, which already carries every factual mark.",
+        "source": "svg-preview",
+        "artifact_path": "renders/source.png",
+        "disposition": "fixed"
+      },
+      {
+        "kind": "stock-ai-composition",
+        "description": "The framing is a generator default: an anonymous person at a laptop, a motif spec D6 bans by name. The lab coat was never requested; the model supplied it.",
+        "remedy": "Downgrade to the deterministic SVG overlay.",
+        "source": "svg-preview",
+        "artifact_path": "renders/source.png",
+        "disposition": "fixed"
+      },
+      {
+        "kind": "decorative-noise",
+        "description": "The bitmap carries no information; this record's own remaining_raster_layers entry described it as illustrative atmosphere only.",
+        "remedy": "Remove the raster layer from the slide.",
+        "source": "svg-preview",
+        "artifact_path": "renders/source.png",
+        "disposition": "fixed"
+      }
+    ]
+  }
 }
