@@ -304,6 +304,7 @@ def _completed_v2_project(tmp_path: Path) -> tuple[Path, str]:
     """
     from PIL import Image
 
+    from gate_fixture_support import publish_and_lint_slide
     from presentation_events import create_artifact_record
     from presentation_state import create_slide, record_review, set_slide_status
     from presentation_workflow import approve_draft, complete_deck, register_draft_preview
@@ -321,6 +322,10 @@ def _completed_v2_project(tmp_path: Path) -> tuple[Path, str]:
         set_slide_status(project, slide["id"], status)
     record_review(project, "slide", slide["id"], "scientific-reviewer", "scientific", "passed")
     record_review(project, "slide", slide["id"], "visual-reviewer", "visual_quality", "passed")
+    # Stage 10 publishes each slide's SVG and records its lint result; this deck
+    # declares no token set of its own, so the gate holds it to the one its own
+    # run recorded.
+    publish_and_lint_slide(project, deck_id, str(slide["id"]))
     set_slide_status(project, slide["id"], "passed")
     decks_path = _state(project) / "decks.yaml"
     decks = _read_yaml(decks_path)

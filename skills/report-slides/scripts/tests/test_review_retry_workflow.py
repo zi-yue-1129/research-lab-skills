@@ -35,6 +35,7 @@ from presentation_workflow import (
     request_targeted_revision,
 )
 
+from gate_fixture_support import publish_and_lint_slide
 from test_presentation_workflow import _approved_project
 
 
@@ -67,15 +68,28 @@ def _passing_review(subject_type: str, subject_id: str, role: str) -> dict:
     }
 
 
-def test_scientific_pass_does_not_satisfy_visual_quality_gate(tmp_path: Path) -> None:
-    """A scientific pass leaves a slide review-required until visual pass."""
+def test_a_slide_passes_only_after_all_three_current_reviews(tmp_path: Path) -> None:
+    """A slide stays review-required until every current gate has passed.
+
+    This replaces `test_scientific_pass_does_not_satisfy_visual_quality_gate`,
+    whose second review was a new `visual_quality` one. That role is now
+    admissible only on replay: a new deck that could still submit the legacy
+    pair would skip both `render_integrity` and `art_direction` entirely, so
+    the claim under test is now the three-role set.
+    """
     project, slide_id = _slide_at_review_required(tmp_path)
+    deck_id = load_slides(project)[slide_id]["deck_id"]
+    publish_and_lint_slide(project, deck_id, slide_id)
     scientific = _review_file(project, "scientific", _passing_review("slide", slide_id, "scientific"))
     record_production_review(project, scientific)
     assert load_slides(project)[slide_id]["status"] == "review_required"
 
-    visual = _review_file(project, "visual", _passing_review("slide", slide_id, "visual_quality"))
-    record_production_review(project, visual)
+    rendering = _review_file(project, "rendering", _passing_review("slide", slide_id, "render_integrity"))
+    record_production_review(project, rendering)
+    assert load_slides(project)[slide_id]["status"] == "review_required"
+
+    art = _review_file(project, "art", _passing_review("slide", slide_id, "art_direction"))
+    record_production_review(project, art)
     assert load_slides(project)[slide_id]["status"] == "passed"
 
 
@@ -261,7 +275,7 @@ def test_module_retry_redirects_current_dependents_and_unblocks_after_pass(tmp_p
     assert len(modules[downstream["id"]]["dependencies"]) == len(set(modules[downstream["id"]]["dependencies"]))
     for status in ("ready", "assigned", "producing", "review_required"):
         set_module_status(project, replacement_id, status)
-    for role in ("scientific", "visual_quality"):
+    for role in ("scientific", "render_integrity"):
         review = _review_file(project, f"replacement-{role}", _passing_review("module", replacement_id, role))
         record_production_review(project, review)
     set_module_status(project, downstream["id"], "assigned")

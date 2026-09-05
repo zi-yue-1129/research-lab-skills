@@ -377,6 +377,11 @@ def _review_event(
         "status": review.get("status"), "findings": review.get("findings", []),
         "round": review.get("round", 1), "ts": review.get("reviewed_at", _now()),
     }
+    # An answer this builder drops is an answer the slide gate can never read,
+    # so an art-direction review would arrive with none and no slide raising a
+    # linter warning could ever pass.
+    if "linter_warnings_answered" in review:
+        event["linter_warnings_answered"] = review["linter_warnings_answered"]
     if revision_request_id is not None:
         event["revision_request_id"] = revision_request_id
     return event

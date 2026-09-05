@@ -14,7 +14,7 @@ import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, Iterator, Optional
+from typing import Any, Dict, Iterator, Mapping, Optional
 from presentation_transactions import (
     _open_sidecar,
     incomplete_transaction_journals,
@@ -489,6 +489,7 @@ def record_review(
     status: Optional[str] = None,
     findings: Optional[list] = None,
     round_number: int = 1,
+    linter_warnings_answered: Optional[list] = None,
 ) -> Dict[str, Any]:
     """Append a Review Result event.
     Args:
@@ -507,6 +508,12 @@ def record_review(
             schema-validated here (that is validate_deck_plan.py's /
             validate_visual_module.py's job at the contract layer).
         round_number: Which review round this is for the subject (1-based).
+        linter_warnings_answered: Answers to the visual-style linter's
+            warnings, as ``{"rule": ..., "answer": ...}`` mappings. Recorded
+            verbatim when given; the slide gate reads it back and refuses an
+            ``art_direction`` pass that leaves a raised warning unanswered.
+            Omitted from the event entirely when ``None``, so events written
+            by callers that know nothing of the linter keep their exact shape.
     Returns:
         The full Review Result event, including its generated "id" and "ts".
     Raises:
@@ -550,6 +557,15 @@ def record_review(
         raise ValueError("round_number must be a positive integer")
     if findings is not None and not isinstance(findings, list):
         raise ValueError("findings must be a list")
+    if linter_warnings_answered is not None:
+        if not isinstance(linter_warnings_answered, list):
+            raise ValueError("linter_warnings_answered must be a list")
+        for answer in linter_warnings_answered:
+            if not isinstance(answer, Mapping) or "rule" not in answer:
+                raise ValueError(
+                    "each linter_warnings_answered entry must be a mapping "
+                    f"carrying a rule id, got {answer!r}"
+                )
     if subject_type in ("plan", "deck"):
         if subject_id not in load_decks(project_root):
             raise DeckNotFoundError(f"Unknown deck_id: {subject_id}")
@@ -566,6 +582,8 @@ def record_review(
         "status": status,
         "findings": findings or [], "round": round_number, "ts": _utc_now_iso(),
     }
+    if linter_warnings_answered is not None:
+        event["linter_warnings_answered"] = list(linter_warnings_answered)
     append_event(project_root, event)
     return event
 def assert_production_allowed(project_root: Path, deck_id: str) -> Dict[str, Any]:

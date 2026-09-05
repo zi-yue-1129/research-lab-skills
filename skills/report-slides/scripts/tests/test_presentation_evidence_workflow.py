@@ -14,6 +14,7 @@ from typing import Any, Mapping
 import pytest
 import yaml
 
+from gate_fixture_support import publish_and_lint_slide
 from presentation_evidence_workflow import MigrationRequiredError
 from presentation_events import (
     append_event,
@@ -288,6 +289,9 @@ def _preview_ready_project(tmp_path: Path) -> tuple[Path, str, Path]:
     record_review(project_root, "module", module["id"], "scientific", "scientific", "passed")
     record_review(project_root, "module", module["id"], "visual", "visual_quality", "passed")
     set_module_status(project_root, module["id"], "passed")
+    # Stage 10 publishes the integrated SVG and records its lint result for
+    # every slide; the slide gate reads both back.
+    publish_and_lint_slide(project_root, deck_id, str(slide["id"]))
     deck_path = project_root / ".research/presentations/state/decks.yaml"
     decks = yaml.safe_load(deck_path.read_text(encoding="utf-8"))
     decks["decks"][deck_id]["status"] = "draft_review"

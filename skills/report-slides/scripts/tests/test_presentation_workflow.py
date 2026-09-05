@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from gate_fixture_support import publish_and_lint_slide
 from presentation_contracts import contract_sha256
 from presentation_evidence_contracts import EvidenceContractError, validate_store_record
 from presentation_events import (
@@ -226,6 +227,9 @@ def test_draft_and_completion_actions_require_persisted_current_evidence(tmp_pat
     slide_state.write_text(yaml.safe_dump(slide_doc), encoding="utf-8")
     record_review(project, "slide", slide["id"], "scientific-reviewer", "scientific", "passed")
     record_review(project, "slide", slide["id"], "visual-reviewer", "visual_quality", "passed")
+    # This deck has no visual modules, so it declares no token set of its own;
+    # the slide gate still requires the published SVG and its lint result.
+    publish_and_lint_slide(project, deck_id, str(slide["id"]))
     preview = _write_draft_preview(
         project,
         deck_id,
@@ -358,6 +362,10 @@ def _complete_fixture(tmp_path: Path) -> tuple[Path, str, Path, Path, str, dict]
     record_review(project, "module", module["id"], "scientific-reviewer", "scientific", "passed")
     record_review(project, "module", module["id"], "visual-reviewer", "visual_quality", "passed")
     set_module_status(project, module["id"], "passed")
+    # Stage 10 publishes the integrated SVG and records its lint result for
+    # every slide; a fixture without them describes a deck the pipeline could
+    # not have produced, and the slide gate now says so.
+    publish_and_lint_slide(project, deck_id, str(slide["id"]))
     state_path = project / ".research/presentations/state/decks.yaml"
     state_doc = yaml.safe_load(state_path.read_text(encoding="utf-8"))
     state_doc["decks"][deck_id]["status"] = "draft_review"
@@ -808,7 +816,7 @@ def test_failed_production_review_links_revision_and_targeted_revision_supersede
     review = project / "production.yaml"
     review.write_text(yaml.safe_dump({
         "subject_type": "slide", "subject_id": slide["id"], "reviewer_id": "visual-reviewer",
-        "reviewer_role": "visual_quality", "status": "failed", "findings": [{"code": "overlap"}],
+        "reviewer_role": "render_integrity", "status": "failed", "findings": [{"code": "overlap"}],
     }), encoding="utf-8")
     failed = record_production_review(project, review)
     requests = load_revision_requests(project)

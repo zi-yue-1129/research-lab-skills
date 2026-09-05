@@ -726,21 +726,34 @@ VVS="$(find ~/.claude -path "*/report-slides/scripts/validate_visual_style.py" |
 # the `_effective.tokens.yaml` from §"Tokens and style", not the file passed to
 # `--tokens` at generation time.
 timeout 120 python3 "$VVS" \
-  --svg "$SLIDE_SVG" --tokens "$STYLE_TOKENS_REF" --json
+  --svg "$SLIDE_SVG" --tokens "$STYLE_TOKENS_REF" --json \
+  --record "$PROJECT_ROOT" --subject-type slide --subject-id "$SLIDE_ID"
 ```
 
 The validator is run out of the installed skill bundle, like every other
 validator in this file. It is not copied into the project by `setup.sh`: it
 imports `visual_style/`, `fonts.py`, and `design_tokens.py` from beside itself,
-and those resolve only in the bundle.
+and those resolve only in the bundle. Run it once per slide: `--subject-id`
+names the slide the recorded result belongs to, so a single invocation covering
+several slides would file every result under one of them.
 
-Exit code 1 blocks the slide: the module returns to `revision_required` with the
-findings attached, and Stages 11–12 are not entered. This gate is deterministic
-and measures only what a ruler can settle — safe area, overlap, spacing,
-type floors, contrast, palette conformance, connector attachment and routing,
-component consistency, and slide load. It replaces no human judgement; it
-removes from human judgement the defects that never needed it. Warnings do not
-block, and are passed to the art-direction reviewer as context.
+The exit code is not the gate; the recorded result is. `assert_slide_passable`
+refuses a slide with no lint evidence, with evidence older than the current SVG
+or token file, or with outstanding hard errors — so re-running the linter after
+every edit is not diligence, it is the only way the slide ever passes. Exit
+code 1 also blocks the slide immediately: the module returns to
+`revision_required` with the findings attached, and Stages 11–12 are not
+entered.
+
+This gate is deterministic and measures only what a ruler can settle — safe
+area, overlap, spacing, type floors, contrast, palette conformance, connector
+attachment and routing, component consistency, and slide load. It replaces no
+human judgement; it removes from human judgement the defects that never needed
+it.
+
+Warnings do not block. They are handed to the art-direction reviewer, who must
+answer each one by rule id in `linter_warnings_answered`; an `art_direction`
+review that passes with a warning unanswered is refused.
 
 ### 11. Scientific review
 

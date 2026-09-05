@@ -13,6 +13,13 @@ import re
 from pathlib import Path
 from typing import AbstractSet, Any, Mapping, NoReturn
 
+from lint_evidence import (
+    current_lint_evidence,
+    current_svg_digest,
+    latest_lint_tokens_digest,
+    lint_blockers,
+    unanswered_warnings,
+)
 from presentation_contracts import contract_sha256, load_contract
 from presentation_events import (
     effective_review_results,
@@ -46,6 +53,11 @@ _APPROVED_STATUSES = frozenset(
 # docs/superpowers/plans/2026-09-04-report-slides-visual-review.md.
 _REVIEW_ROLES = frozenset(
     {"scientific", "visual_quality", "render_integrity", "art_direction"})
+# `visual_quality` remains in `_REVIEW_ROLES` so persisted pre-split events stay
+# admissible on replay. It must not be writable: a new deck that could still
+# submit the legacy role pair would bypass both `render_integrity` and
+# `art_direction`, which is the whole of this plan.
+_RETIRED_REVIEW_ROLES = frozenset({"visual_quality"})
 _CONTENT_ROLES = frozenset({"content", "content_reviewer"})
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 class GateError(RuntimeError):
@@ -653,6 +665,34 @@ def missing_module_review_roles(roles: AbstractSet[str]) -> tuple[str, ...]:
     return _missing_roles(roles, module_reviews_complete(roles),
                           MODULE_REVIEW_ROLE_ORDER)
 
+def _subject_tokens_digest(
+    project_root: Path, deck_id: str, subject_type: str, subject_id: str
+) -> str:
+    """Return the token digest one subject's lint evidence must carry.
+
+    Nothing in the state store records which token set a deck is held to. The
+    module record's `visual_spec_path` looks like such a record and is not one:
+    the store contract notes that no writer ever assigns it. So the contract is
+    the token set the subject's own most recent run measured against, and
+    `lint_evidence` separately refuses evidence whose token file has been
+    edited since. That binds a result to its bytes, which is the property this
+    gate exists for; verifying the token choice itself needs a deck-level token
+    record the data model does not yet have.
+
+    Args:
+        project_root: Project root containing persisted state.
+        deck_id: The deck the subject belongs to, kept for the day that record
+            exists.
+        subject_type: `slide` or `module`.
+        subject_id: The subject being judged.
+
+    Returns:
+        The digest the subject's latest lint run recorded, or the empty string
+        when it has never been linted -- which matches no evidence and so
+        surfaces as `lint_evidence_missing` rather than as a token problem.
+    """
+    del deck_id
+    return latest_lint_tokens_digest(project_root, subject_type, subject_id) or ""
 _TERMINAL_DISPOSITIONS = frozenset({"fixed", "resolved", "closed", "accepted", "rechecked", "done", "dismissed"})
 
 def review_result_blockers(
@@ -676,6 +716,8 @@ def review_result_blockers(
     role = review.get("reviewer_role")
     if role not in _REVIEW_ROLES:
         blockers.append({"reason": "invalid_reviewer_role"})
+    if role in _RETIRED_REVIEW_ROLES and persisted_id is None:
+        blockers.append({"reason": "retired_reviewer_role"})
     reviewer_id = review.get("reviewer_id")
     if not _review_identity(review):
         blockers.append({"reason": "reviewer_identity_unverifiable"})
@@ -730,7 +772,50 @@ def review_result_blockers(
                 owner_ids.add(str(artifact.get("producer_id", artifact.get("produced_by"))))
         if isinstance(reviewer_id, str) and reviewer_id in owner_ids:
             blockers.append({"reason": "reviewer_self_review_prohibited"})
+        if role == "art_direction" and review.get("status") == "passed":
+            blockers.extend(_art_direction_warning_blockers(
+                project_root, subject_type, subject_id, target, review))
     return blockers
+def _art_direction_warning_blockers(
+    project_root: Path, subject_type: str, subject_id: str,
+    target: Mapping[str, Any], review: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """Check that a passing art-direction review answers the warnings raised.
+
+    The persona says an art-direction review is incomplete until every linter
+    warning is answered. Without this the field is decorative: a review passes
+    with it absent, or with answers to warnings no run ever produced.
+
+    Args:
+        project_root: Project root containing persisted state.
+        subject_type: ``slide`` or ``module``.
+        subject_id: Target production-unit ID.
+        target: The persisted slide or module record.
+        review: The candidate Review Result mapping.
+
+    Returns:
+        Machine-readable blockers; empty when every raised warning is answered.
+    """
+    state = _state()
+    if subject_type == "slide":
+        deck_id = str(target.get("deck_id"))
+    else:
+        slide = state.load_slides(project_root).get(str(target.get("slide_id")), {})
+        deck_id = str(slide.get("deck_id"))
+    tokens_digest = _subject_tokens_digest(
+        project_root, deck_id, subject_type, subject_id)
+    artifact_sha256 = current_svg_digest(project_root, subject_type, subject_id)
+    evidence = None if artifact_sha256 is None else current_lint_evidence(
+        project_root, subject_type, subject_id, artifact_sha256, tokens_digest)
+    if evidence is None:
+        return [{"reason": "art_direction:lint_evidence_missing"}]
+    unanswered = unanswered_warnings(evidence, review)
+    if unanswered:
+        return [{
+            "reason": "art_direction:linter_warnings_unanswered",
+            "rules": unanswered,
+        }]
+    return []
 def assert_slide_passable(project_root: Path, slide_id: str) -> dict[str, Any]:
     """Assert independent scientific and visual-quality slide reviews pass.
 
@@ -773,6 +858,13 @@ def assert_slide_passable(project_root: Path, slide_id: str) -> dict[str, Any]:
         else:
             passing.add(name)
     blockers.extend({"reason": role} for role in missing_slide_review_roles(passing))
+    # The linter's exit code is gone by the time anything asks this question,
+    # so the gate reads the recorded result instead: no evidence, evidence
+    # older than the current SVG or token set, and outstanding hard errors all
+    # refuse the slide however many reviewers signed it off.
+    blockers.extend(lint_blockers(
+        project_root, "slide", slide_id,
+        _subject_tokens_digest(project_root, deck_id, "slide", slide_id)))
     if slide.get("status") not in {"review_required", "passed"}:
         blockers.append({"reason": f"status:{slide.get('status')}"})
     if blockers:
