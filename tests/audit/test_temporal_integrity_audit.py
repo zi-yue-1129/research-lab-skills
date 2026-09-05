@@ -10,7 +10,7 @@ import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = REPO_ROOT / "scripts/temporal_integrity_audit.py"
+SCRIPT = REPO_ROOT / "scripts/audit/temporal_integrity_audit.py"
 
 
 def _run_audit(tmp_path: Path, draft: str, timeline: dict, citation_provenance: dict | None = None,
@@ -334,7 +334,7 @@ def test_freeze_regression_byte_identical_across_dates(tmp_path):
 import importlib.util
 
 _AUDIT_SPEC = importlib.util.spec_from_file_location(
-    "temporal_integrity_audit", REPO_ROOT / "scripts/temporal_integrity_audit.py"
+    "temporal_integrity_audit", REPO_ROOT / "scripts/audit/temporal_integrity_audit.py"
 )
 _audit_mod = importlib.util.module_from_spec(_AUDIT_SPEC)
 _AUDIT_SPEC.loader.exec_module(_audit_mod)

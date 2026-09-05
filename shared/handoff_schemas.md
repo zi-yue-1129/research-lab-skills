@@ -608,7 +608,7 @@ audit_artifact:
         p1: 0
         p2: 0
         p3: 1
-      verified_at: "2026-04-30T15:23:11.847Z"  # RFC 3339 UTC string, ms precision (quoted: schema is `string` + regex, not YAML datetime); strict-monotonic per scripts/_next_verified_at_ms.py
+      verified_at: "2026-04-30T15:23:11.847Z"  # RFC 3339 UTC string, ms precision (quoted: schema is `string` + regex, not YAML datetime); strict-monotonic per scripts/tooling/_next_verified_at_ms.py
       verified_by: pipeline_orchestrator_agent
   # append-only; never overwrite, never reorder
 ```
@@ -621,7 +621,7 @@ audit_artifact:
 - Multiple entries for the same `(stage, agent, deliverable_sha)` represent multiple audit rounds; orchestrator selects the latest by `verified_at` for verdict reads.
 - If `deliverable_sha` changes (deliverable mutated), prior entries become stale but remain as audit history; orchestrator only honors entries whose `deliverable_sha` matches the current deliverable.
 
-**This mirrors the v3.6.3 `reset_boundary[]` append-only pattern**: history preserved, freshness computed by ledger scan. Deletion or reordering is forbidden; lint at `scripts/check_audit_artifact_consistency.py` enforces the invariant family at [`docs/design/2026-04-30-ars-v3.6.7-step-6-orchestrator-hooks-spec.md`](../docs/design/2026-04-30-ars-v3.6.7-step-6-orchestrator-hooks-spec.md) §3.7.
+**This mirrors the v3.6.3 `reset_boundary[]` append-only pattern**: history preserved, freshness computed by ledger scan. Deletion or reordering is forbidden; lint at `scripts/checks/check_audit_artifact_consistency.py` enforces the invariant family at [`docs/design/2026-04-30-ars-v3.6.7-step-6-orchestrator-hooks-spec.md`](../docs/design/2026-04-30-ars-v3.6.7-step-6-orchestrator-hooks-spec.md) §3.7.
 
 For the orchestrator-side gate procedure (Path A latest-by-`verified_at` selection, Path B proposal merge after Layer 2 + Layer 3 verification), the canonical contract is [`docs/design/2026-04-30-ars-v3.6.7-step-6-orchestrator-hooks-spec.md`](../docs/design/2026-04-30-ars-v3.6.7-step-6-orchestrator-hooks-spec.md) §5.6 (Path A/B fall-through with the §5.6 A1.5 superseding-proposal preflight) plus §5.2 (eleven Layer 2 + Layer 3 gating checks). Implementation lands as a subsection of `academic-pipeline/agents/pipeline_orchestrator_agent.md` (Phase 6.6 deliverable). For the resume-time re-verification semantics, see [`academic-pipeline/references/passport_as_reset_boundary.md`](../academic-pipeline/references/passport_as_reset_boundary.md).
 
@@ -636,7 +636,7 @@ slr_lineage: true   # any pipeline stage was deep-research in systematic-review 
 **Semantics:**
 
 - `true` iff `bool(incoming_passport.slr_lineage) or any(stage.skill == "deep-research" and stage.mode in {"systematic-review", "slr"} for stage in state_tracker.stages.values())` at the time the passport is written. The OR is monotonic — a true value persists across resume / mid-entry passports whose `state_tracker.stages` was reconstructed from the ledger and may be empty. Run-level, not artifact-level — distinct from `origin_mode` which records the directly-producing skill's mode.
-- Producer: `pipeline_orchestrator_agent` writes the field at every handoff transition; in practice only the Stage 1 → Stage 2 transition can flip `false` → `true`, and the OR keeps the value monotonic thereafter. Reference helper: `scripts/slr_lineage.py` `emit(stages, incoming_slr_lineage)` (or the underlying `resolve_from_stages(stages)` when callers need the pre-OR fragment alone).
+- Producer: `pipeline_orchestrator_agent` writes the field at every handoff transition; in practice only the Stage 1 → Stage 2 transition can flip `false` → `true`, and the OR keeps the value monotonic thereafter. Reference helper: `scripts/audit/slr_lineage.py` `emit(stages, incoming_slr_lineage)` (or the underlying `resolve_from_stages(stages)` when callers need the pre-OR fragment alone).
 - Consumer: `disclosure` mode renderer reads it as `RendererInput.slr_lineage` to dispatch `--policy-anchor=prisma-trAIce` per the §4.3 G2 invariant track gate documented in [`academic-paper/references/policy_anchor_disclosure_protocol.md`](../academic-paper/references/policy_anchor_disclosure_protocol.md) §3.1.
 - Backward compat: passports written before v3.7.4 lack the field; renderer treats absence as `false` (cold-start path requiring explicit `mode_param='systematic-review'`). Identical to pre-v3.7.4 behavior.
 - G1 boundary: this is a passport-level (run-level provenance) field, distinct from corpus-entry-level fields. The §4.4 #11 G1 invariant scope is `literature_corpus_entry.schema.json` (corpus entry data schema, frozen by Decision Doc §2.1); passport-schema extensions follow the v3.6.3 / v3.6.4 / v3.6.7 precedent and are permitted per Decision Doc §4.4 #11.
@@ -660,9 +660,9 @@ v3.8 introduces six passport aggregates around the L3 (claim-faithfulness) audit
 
 **Sampling transparency (when audited_count < total_citation_count):**
 
-- `audit_sampling_summaries[]` — one entry per audit pass when `len(citations) > max_claims_per_paper` triggers stratified sampling. S-INV-1..S-INV-4 invariants (audited_count == |audited_indices|, count ≤ cap, count ≤ total, indices strictly ascending without duplicates). Schema is inline in `scripts/check_claim_audit_consistency.py` (no separate shipped schema file at v3.8.0); drives the paper-level `[CLAIM-AUDIT-SAMPLED — k/N audited]` formatter annotation. Adapters preserving audit runs MUST keep these entries for the transparency record.
+- `audit_sampling_summaries[]` — one entry per audit pass when `len(citations) > max_claims_per_paper` triggers stratified sampling. S-INV-1..S-INV-4 invariants (audited_count == |audited_indices|, count ≤ cap, count ≤ total, indices strictly ascending without duplicates). Schema is inline in `scripts/checks/check_claim_audit_consistency.py` (no separate shipped schema file at v3.8.0); drives the paper-level `[CLAIM-AUDIT-SAMPLED — k/N audited]` formatter annotation. Adapters preserving audit runs MUST keep these entries for the transparency record.
 
-Cross-field invariants (INV-1..INV-18 / M-INV-1..M-INV-4 / U-INV-1..U-INV-4 / D-INV-1..D-INV-4 / CV-INV-1..CV-INV-4 / S-INV-1..S-INV-4) are lint-enforced by `scripts/check_claim_audit_consistency.py` because the conditional matrix relating judgment / audit_status / defect_stage / ref_retrieval_method exceeds what JSON Schema can express. Audit-side producer: `claim_ref_alignment_audit_agent` (`academic-pipeline/agents/`). Consumer: `formatter_agent` REFUSE rules 6-10 (see v3.8 spec §5 mode flag rationale). Default OFF for v3.8.0 — ramp-on plan deferred to post-calibration evidence.
+Cross-field invariants (INV-1..INV-18 / M-INV-1..M-INV-4 / U-INV-1..U-INV-4 / D-INV-1..D-INV-4 / CV-INV-1..CV-INV-4 / S-INV-1..S-INV-4) are lint-enforced by `scripts/checks/check_claim_audit_consistency.py` because the conditional matrix relating judgment / audit_status / defect_stage / ref_retrieval_method exceeds what JSON Schema can express. Audit-side producer: `claim_ref_alignment_audit_agent` (`academic-pipeline/agents/`). Consumer: `formatter_agent` REFUSE rules 6-10 (see v3.8 spec §5 mode flag rationale). Default OFF for v3.8.0 — ramp-on plan deferred to post-calibration evidence.
 
 Spec: [`docs/design/2026-05-15-issue-103-claim-alignment-audit-spec.md`](../docs/design/2026-05-15-issue-103-claim-alignment-audit-spec.md) + decision doc [`2026-05-15-issue-103-claim-alignment-audit-decision.md`](../docs/design/2026-05-15-issue-103-claim-alignment-audit-decision.md) (D1-D6 settled).
 
@@ -831,7 +831,7 @@ Every top-level `SKILL.md` declares `metadata.data_access_level` with one of thr
 - `redacted` — operates on sanitized material; no new raw ingestion
 - `verified_only` — runs only after upstream integrity gates
 
-This is a declarative signal (not a runtime permission system). Enforced by `scripts/check_data_access_level.py` in CI. When adding a new skill, pick the value matching the *dirtiest* input the skill may legitimately consume.
+This is a declarative signal (not a runtime permission system). Enforced by `scripts/checks/check_data_access_level.py` in CI. When adding a new skill, pick the value matching the *dirtiest* input the skill may legitimately consume.
 
 ## `task_type` (v3.3.2+)
 
@@ -842,7 +842,7 @@ Every top-level `SKILL.md` declares `metadata.task_type` with one of two values:
 
 This is a declarative truth-in-advertising signal. All current ARS skills are `open-ended` because ARS targets humanities/QA/policy work, not benchmark tasks. When adding a new skill, do not invent a third value; if the skill genuinely spans both, split it into two skills.
 
-Enforced by `scripts/check_task_type.py` in CI.
+Enforced by `scripts/checks/check_task_type.py` in CI.
 
 See [`ground_truth_isolation_pattern.md`](patterns/ground_truth_isolation_pattern.md) for the rationale and rules behind this annotation.
 

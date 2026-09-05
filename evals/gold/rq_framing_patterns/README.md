@@ -22,5 +22,5 @@ The detector and gold set evaluate wording only. They do not judge idea quality,
 Run:
 
 ```bash
-python -m scripts.check_rq_framing_patterns
+python -m scripts.checks.check_rq_framing_patterns
 ```

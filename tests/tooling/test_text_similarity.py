@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for `scripts/_text_similarity.py` — shared title-similarity helpers
+"""Tests for `scripts/tooling/_text_similarity.py` — shared title-similarity helpers
 extracted from `semantic_scholar_client.py` / `openalex_client.py` /
 `crossref_client.py` to prevent sibling drift (#128 v3.9.1 housekeeping).
 
@@ -15,9 +15,9 @@ import sys
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import _text_similarity as ts  # noqa: E402
+from scripts.tooling import _text_similarity as ts
 
 
 class NormalizeTitleTest(unittest.TestCase):

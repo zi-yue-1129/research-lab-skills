@@ -17,8 +17,8 @@ from unittest.mock import MagicMock
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT / "scripts") not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT / "scripts"))
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 
 _DEFAULT_REF_SLUG = "vaswani-2017-attention"
@@ -69,7 +69,7 @@ def _clients(*, crossref=None, openalex=None, semantic_scholar=None, arxiv=None)
 
 
 def test_matched_yields_true_and_id_queried():
-    from verification_gate import verify_citation
+    from scripts.verification_gate import verify_citation
 
     cr = MagicMock()
     cr.doi_lookup_with_title_check.return_value = {"title": ["X"]}  # match
@@ -81,7 +81,7 @@ def test_matched_yields_true_and_id_queried():
 
 
 def test_id_keyed_unmatched_yields_false():
-    from verification_gate import verify_citation
+    from scripts.verification_gate import verify_citation
     # All resolvers miss; entry has a DOI → ID-keyed unmatched → false.
     outcome = verify_citation(_entry(), _clients(), ref_slug=_DEFAULT_REF_SLUG)
     assert outcome["lookup_verified"] == "false"
@@ -89,7 +89,7 @@ def test_id_keyed_unmatched_yields_false():
 
 
 def test_title_only_unmatched_yields_unresolvable():
-    from verification_gate import verify_citation
+    from scripts.verification_gate import verify_citation
     # No DOI → title-only unmatched everywhere → unresolvable (C-V6(a)).
     outcome = verify_citation(_entry(doi=None), _clients(), ref_slug=_DEFAULT_REF_SLUG)
     assert outcome["lookup_verified"] == "unresolvable"
@@ -97,8 +97,8 @@ def test_title_only_unmatched_yields_unresolvable():
 
 
 def test_resolver_outage_is_unreachable():
-    from verification_gate import verify_citation
-    from crossref_client import CrossrefUnavailable
+    from scripts.verification_gate import verify_citation
+    from scripts.clients.crossref_client import CrossrefUnavailable
 
     cr = MagicMock()
     cr.doi_lookup_with_title_check.side_effect = CrossrefUnavailable("down")
@@ -110,11 +110,11 @@ def test_resolver_outage_is_unreachable():
 
 
 def test_all_unreachable_is_unresolvable():
-    from verification_gate import verify_citation
-    from crossref_client import CrossrefUnavailable
-    from openalex_client import OpenAlexUnavailable
-    from arxiv_client import ArxivUnavailable
-    from contamination_signals import SemanticScholarUnavailable
+    from scripts.verification_gate import verify_citation
+    from scripts.clients.crossref_client import CrossrefUnavailable
+    from scripts.clients.openalex_client import OpenAlexUnavailable
+    from scripts.clients.arxiv_client import ArxivUnavailable
+    from scripts.audit.contamination_signals import SemanticScholarUnavailable
 
     cr = MagicMock(); cr.doi_lookup_with_title_check.side_effect = CrossrefUnavailable("x")
     oa = MagicMock(); oa.doi_lookup_with_title_check.side_effect = OpenAlexUnavailable("x")
@@ -131,7 +131,7 @@ def test_all_unreachable_is_unresolvable():
 
 
 def test_manual_entry_all_skipped_unresolvable():
-    from verification_gate import verify_citation
+    from scripts.verification_gate import verify_citation
     outcome = verify_citation(_entry(obtained_via="manual"), _clients(), ref_slug=_DEFAULT_REF_SLUG)
     assert outcome["lookup_verified"] == "unresolvable"
     for r in ("crossref", "openalex", "semantic_scholar", "arxiv"):
@@ -139,21 +139,21 @@ def test_manual_entry_all_skipped_unresolvable():
 
 
 def test_arxiv_skipped_on_non_arxiv_citation():
-    from verification_gate import verify_citation
+    from scripts.verification_gate import verify_citation
     cr = MagicMock(); cr.doi_lookup_with_title_check.return_value = {"title": ["X"]}
     outcome = verify_citation(_entry(), _clients(crossref=cr), ref_slug=_DEFAULT_REF_SLUG)  # no arxiv_id
     assert outcome["resolver_outcomes"]["arxiv"]["status"] == "skipped"
 
 
 def test_anchor_present_true_for_page_kind():
-    from verification_gate import verify_citation
+    from scripts.verification_gate import verify_citation
     # anchor is an EXPLICIT param (prose-sourced, joined by ref_slug upstream).
     outcome = verify_citation(_entry(), _clients(), ref_slug=_DEFAULT_REF_SLUG, anchor=_PAGE_ANCHOR)
     assert outcome["anchor_present"] is True
 
 
 def test_anchor_present_false_for_none_kind():
-    from verification_gate import verify_citation
+    from scripts.verification_gate import verify_citation
     outcome = verify_citation(
         _entry(), _clients(), ref_slug=_DEFAULT_REF_SLUG,
         anchor={"kind": "none", "value": None})
@@ -161,7 +161,7 @@ def test_anchor_present_false_for_none_kind():
 
 
 def test_anchor_present_false_when_anchor_omitted():
-    from verification_gate import verify_citation
+    from scripts.verification_gate import verify_citation
     # No anchor param (the prose join found no anchor for this ref_slug) → False.
     outcome = verify_citation(_entry(), _clients(), ref_slug=_DEFAULT_REF_SLUG)
     assert outcome["anchor_present"] is False
@@ -173,14 +173,14 @@ def test_anchor_is_not_read_off_the_corpus_entry():
     derives ONLY from the explicit param. This pins that we don't silently
     resurrect the entry.get('anchor') path (the anchor lives in writer prose,
     not in literature_corpus)."""
-    from verification_gate import verify_citation
+    from scripts.verification_gate import verify_citation
     e = _entry(anchor={"kind": "page", "value": "99"})  # decoy on the entry
     outcome = verify_citation(e, _clients(), ref_slug=_DEFAULT_REF_SLUG)  # no anchor param
     assert outcome["anchor_present"] is False
 
 
 def test_outcome_carries_keys_and_timestamp():
-    from verification_gate import verify_citation
+    from scripts.verification_gate import verify_citation
     outcome = verify_citation(_entry(), _clients(), ref_slug=_DEFAULT_REF_SLUG)
     assert outcome["citation_key"] == "vaswani2017"
     assert outcome["ref_slug"] == "vaswani-2017-attention"
@@ -197,7 +197,7 @@ def test_outcome_validates_against_summary_schema():
     actually exercises the contract (ref_slug must be a non-null string)."""
     import json
     from jsonschema import Draft202012Validator
-    from verification_gate import verify_citation
+    from scripts.verification_gate import verify_citation
 
     schema = json.loads((
         REPO_ROOT / "shared" / "contracts" / "passport"
@@ -215,7 +215,7 @@ def test_ref_slug_is_not_read_off_the_corpus_entry():
     literature_corpus, whose schema forbids the field). Pins that we don't
     resurrect the entry.get('ref_slug') path that emitted ref_slug: None on every
     schema-valid passport."""
-    from verification_gate import verify_citation
+    from scripts.verification_gate import verify_citation
     e = _entry(ref_slug="decoy-off-the-entry")  # illegal decoy on the entry
     outcome = verify_citation(e, _clients(), ref_slug="from-prose")
     assert outcome["ref_slug"] == "from-prose"
@@ -240,7 +240,7 @@ def test_corpus_fixture_is_schema_valid():
 
 
 def test_verify_passport_runs_each_entry():
-    from verification_gate import verify_passport
+    from scripts.verification_gate import verify_passport
 
     cr = MagicMock(); cr.doi_lookup_with_title_check.return_value = {"title": ["X"]}
     passport = {
@@ -261,7 +261,7 @@ def test_verify_passport_joins_anchors_by_ref_slug():
     """verify_passport performs the prose-marker join: a {ref_slug: anchor} map
     is threaded so each entry's anchor_present reflects ITS ref_slug's anchor.
     Entry 'a' has a page anchor; entry 'b' has none → False."""
-    from verification_gate import verify_passport
+    from scripts.verification_gate import verify_passport
     passport = {
         "literature_corpus": [
             _entry(citation_key="a"),
@@ -279,7 +279,7 @@ def test_verify_passport_joins_anchors_by_ref_slug():
 
 
 def test_verify_passport_empty_corpus():
-    from verification_gate import verify_passport
+    from scripts.verification_gate import verify_passport
     assert verify_passport(
         {"literature_corpus": []}, clients=_clients(), ref_slug_by_key={}) == []
     assert verify_passport({}, clients=_clients(), ref_slug_by_key={}) == []
@@ -290,7 +290,7 @@ def test_verify_passport_raises_on_missing_join():
     summary contract requires a non-null string ref_slug, so verify_passport
     raises rather than emitting a contract-invalid summary (#332). No silent
     default to citation_key or empty string."""
-    from verification_gate import verify_passport
+    from scripts.verification_gate import verify_passport
     passport = {"literature_corpus": [_entry(citation_key="orphan")]}
     with pytest.raises(ValueError, match="orphan"):
         verify_passport(passport, clients=_clients(), ref_slug_by_key={})
@@ -302,7 +302,7 @@ def test_verify_passport_outputs_are_schema_valid():
     was that the normal passport path produced schema-invalid ref_slug: None)."""
     import json
     from jsonschema import Draft202012Validator
-    from verification_gate import verify_passport
+    from scripts.verification_gate import verify_passport
     schema = json.loads((
         REPO_ROOT / "shared" / "contracts" / "passport"
         / "citation_verification_summary.schema.json"
@@ -322,7 +322,7 @@ def test_cache_argument_is_honest_not_silent_noop():
     """cache wiring at this layer is a forward-decl; passing a non-None cache
     must raise (not silently drop it), so a caller is never misled into
     thinking caching took effect."""
-    from verification_gate import verify_citation
+    from scripts.verification_gate import verify_citation
     with pytest.raises(NotImplementedError):
         verify_citation(_entry(), _clients(), ref_slug=_DEFAULT_REF_SLUG, cache=object())
 
@@ -337,6 +337,6 @@ def test_verify_citation_rejects_non_string_or_empty_ref_slug(bad):
     type:string (non-string). Both are caller errors — raise rather than emit a
     join-broken / contract-invalid summary. Guarding at the entry also closes the
     verify_passport `is None`-only gap (it now rejects "" and non-str too)."""
-    from verification_gate import verify_citation
+    from scripts.verification_gate import verify_citation
     with pytest.raises((ValueError, TypeError)):
         verify_citation(_entry(), _clients(), ref_slug=bad)

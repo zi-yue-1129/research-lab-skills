@@ -28,7 +28,7 @@ gold-set metric:
 
    - the acknowledgement token (on its own line):
      - `[eval-regression-acknowledged]` — for the CI deterministic gate, and/or
-     - `[ranking-regression-acknowledged]` — for `scripts/check_ranking_lift.py`
+     - `[ranking-regression-acknowledged]` — for `scripts/checks/check_ranking_lift.py`
    - a link to an **OPEN** follow-up GitHub issue, e.g.
      `https://github.com/zi-yue-1129/research-lab-skills/issues/NNN`
 

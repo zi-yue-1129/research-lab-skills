@@ -7,7 +7,7 @@ from tempfile import TemporaryDirectory
 
 from tests.test_helpers import run_script
 
-SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "check_pipeline_integrity.py"
+SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "checks" / "check_pipeline_integrity.py"
 
 
 def _run(workdir: Path, *extra_args: str) -> subprocess.CompletedProcess:

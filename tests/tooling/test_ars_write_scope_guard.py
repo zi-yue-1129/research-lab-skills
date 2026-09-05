@@ -30,9 +30,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import ars_write_scope_guard as guard  # noqa: E402
+from scripts.tooling import ars_write_scope_guard as guard
 
 
 # A minimal in-test manifest mirroring the real shape (keys = frontmatter name).
@@ -195,7 +195,7 @@ class WriteScopeGuardTest(unittest.TestCase):
     def test_infra_hook_script_denied(self):
         # The hook script itself (lives in scripts/) is part of the enforcement surface.
         p = payload("Write",
-                    {"file_path": os.path.join(self.ws, "scripts/ars_write_scope_guard.py"), "content": "x"},
+                    {"file_path": os.path.join(self.ws, "scripts/tooling/ars_write_scope_guard.py"), "content": "x"},
                     cwd=self.ws, agent_type="broad_test_agent")
         self.assertEqual(self.decide(p)["decision"], "deny")
 
@@ -305,7 +305,7 @@ class GlobMatchBoundaryTest(unittest.TestCase):
         ("phase2_investigation/notes.txt", ["phase2_*/**"]),
         ("phase2_investigation/sub/deep.txt", ["phase2_*/**"]),   # deep descendant
         ("phase7_format/paper.md", ["phase7_*/**"]),
-        ("scripts/ars_write_scope_guard.py", ["**/ars_write_scope_guard.py"]),  # subdir
+        ("scripts/tooling/ars_write_scope_guard.py", ["**/ars_write_scope_guard.py"]),  # subdir
         ("a/b/c/ars_write_scope_guard.py", ["**/ars_write_scope_guard.py"]),    # deep subdir
         ("ars_write_scope_guard.py", ["ars_write_scope_guard.py"]),             # root via bare
         ("skills/deep-research/agents/bibliography_agent.md", ["skills/deep-research/agents/*.md"]),

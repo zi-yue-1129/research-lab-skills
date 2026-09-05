@@ -7,7 +7,7 @@ import textwrap
 
 from tests.test_helpers import run_script
 
-SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "check_repro_lock.py"
+SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "checks" / "check_repro_lock.py"
 
 
 def _run(path: Path) -> subprocess.CompletedProcess:

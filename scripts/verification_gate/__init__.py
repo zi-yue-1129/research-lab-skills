@@ -44,17 +44,17 @@ try:
         queried_by_for,
     )
 except ImportError:  # pragma: no cover - dual-path import
-    from scripts.citation_verification_summary import (
+    from scripts.audit.citation_verification_summary import (
         STATUS_MATCHED,
         STATUS_SKIPPED,
         STATUS_UNMATCHED,
         STATUS_UNREACHABLE,
         reduce_lookup_verified,
     )
-    from scripts.crossref_client import CrossrefUnavailable
-    from scripts.openalex_client import OpenAlexUnavailable
-    from scripts.arxiv_client import ArxivUnavailable
-    from scripts.contamination_signals import (
+    from scripts.clients.crossref_client import CrossrefUnavailable
+    from scripts.clients.openalex_client import OpenAlexUnavailable
+    from scripts.clients.arxiv_client import ArxivUnavailable
+    from scripts.audit.contamination_signals import (
         SemanticScholarUnavailable,
         _resolve_arxiv_id_then_title,
         _resolve_doi_then_title,

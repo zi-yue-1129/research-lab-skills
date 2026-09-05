@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts import run_evals
+from scripts.evals import run_evals
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CITATION_DIR = REPO_ROOT / "evals" / "gold" / "citation_extraction"

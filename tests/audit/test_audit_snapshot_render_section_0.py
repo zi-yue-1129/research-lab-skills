@@ -2,7 +2,7 @@
 
 Codex round-1 review of PR #78 surfaced a P1 architectural finding: the static
 Section 0 block was prepended to `shared/templates/codex_audit_multifile_template.md`
-and lint-enforced, but `scripts/audit_snapshot.py::render_prompt` extracted only
+and lint-enforced, but `scripts/audit/audit_snapshot.py::render_prompt` extracted only
 sections [3, 6, 7] from the template. Section 0 was therefore absent from every
 wrapper-dispatched audit prompt, defeating the spec §3.2 contract that the
 Scope Report rides verbatim every round.
@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.audit_snapshot import render_prompt
+from scripts.audit.audit_snapshot import render_prompt
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TEMPLATE_PATH = (

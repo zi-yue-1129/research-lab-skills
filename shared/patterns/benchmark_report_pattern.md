@@ -2,7 +2,7 @@
 
 **Status**: v3.3.5 — hub doc for benchmark disclosure schema  
 **Schema**: `shared/schemas/benchmark_report.schema.json`  
-**Validator**: `scripts/check_benchmark_report.py`  
+**Validator**: `scripts/checks/check_benchmark_report.py`  
 **Template**: `examples/benchmark_report_template.json`
 
 ---
@@ -113,7 +113,7 @@ honest disclosure box.
 1. Copy `examples/benchmark_report_template.json` to your benchmark directory.
 2. Fill every `FILL IN:` field with real values.
 3. Set `human_baseline.sample_size` to the actual number (schema rejects 0).
-4. Run: `python scripts/check_benchmark_report.py your-report.json`
+4. Run: `python scripts/checks/check_benchmark_report.py your-report.json`
 5. Fix all `ERROR:` lines (schema violations, exit 1).
 6. Read the `WARNING:` lines (stderr, exit 0). Either address them in your methodology or
    document them explicitly in the `caveats` array.

@@ -8,7 +8,7 @@ full` runs, per the documented handoff path in
 
 Two layers under test:
 
-1. Resolution helper (`scripts/slr_lineage.py`) — pure function over a
+1. Resolution helper (`scripts/audit/slr_lineage.py`) — pure function over a
    `state_tracker.stages` snapshot. Returns `True` iff any stage was
    produced by deep-research in systematic-review mode.
 
@@ -25,11 +25,11 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT / "scripts") not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT / "scripts"))
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-import policy_anchor_disclosure_referee as referee  # noqa: E402
-import slr_lineage  # noqa: E402
+from scripts.audit import policy_anchor_disclosure_referee as referee
+from scripts.audit import slr_lineage
 
 
 # ============================================================================

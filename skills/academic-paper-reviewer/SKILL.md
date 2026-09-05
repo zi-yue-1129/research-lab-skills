@@ -21,7 +21,7 @@ Simulates a complete international journal peer review process: automatically id
 2. Added `re-review` mode — verification review, focused on checking whether revisions address the review comments
 3. Expanded review team from 4 to 5 members
 
-> **Routing discipline (v3.9.2):** see `.claude/CLAUDE.md` "Routing Discipline (v3.9.2)" + `shared/protocols/intent_clarification_protocol.md` for cross-skill routing rules. This skill assumes routing has already settled — ambiguous cross-phase materials should have been clarified upstream.
+> **Routing discipline (v3.9.2):** see `.claude/CLAUDE.md` "Routing Discipline (v3.9.2)" + `shared/references/intent_clarification_protocol.md` for cross-skill routing rules. This skill assumes routing has already settled — ambiguous cross-phase materials should have been clarified upstream.
 
 ---
 
@@ -65,7 +65,7 @@ Review this paper: [paste paper or provide file]
 | Want to learn by doing (guided review) | guided | originality |
 | Want to know this reviewer's own error profile before trusting its scores | calibration | fidelity |
 
-**Spectrum** (v3.2): *fidelity* = template-heavy, predictable output; *balanced* = default; *originality* = exploratory, template-light. See `shared/references/mode_spectrum.md` for the full cross-skill spectrum table.
+**Spectrum** (v3.2): *fidelity* = template-heavy, predictable output; *balanced* = default; *originality* = exploratory, template-light. See `shared/mode_spectrum.md` for the full cross-skill spectrum table.
 
 Not sure? Use `full` for pre-submission review, `re-review` for post-revision verification. `calibration` is opt-in — run it once per domain when you want to know the reviewer's FNR/FPR before relying on its rubric scores.
 
@@ -192,9 +192,9 @@ The 1 Bucket D agent (`field_analyst` at Phase 0) is meta — it configures the 
 
 The v3.6.2 Sprint Contract Protocol (paper-blind Phase 1 + paper-visible Phase 2 + data delimiter) additionally constrains all reviewer agents' within-phase discipline. Phase Boundary (phase scope) and Sprint Contract (within-phase paper-blind/paper-visible discipline) both apply — neither overrides the other.
 
-Routing into Mode B requires explicit user signal — `/ars-<mode>` slash command or `[direct-mode]` prefix. Ambiguous cross-phase input defaults to clarification per `.claude/CLAUDE.md` Routing Discipline + `shared/protocols/intent_clarification_protocol.md`.
+Routing into Mode B requires explicit user signal — `/ars-<mode>` slash command or `[direct-mode]` prefix. Ambiguous cross-phase input defaults to clarification per `.claude/CLAUDE.md` Routing Discipline + `shared/references/intent_clarification_protocol.md`.
 
-**Enforcement (v3.9.2):** prompt-level via Phase Boundary blocks on Bucket A agents + advisory verifier (`scripts/check_pipeline_integrity.py`). Deterministic PreToolUse hook + multi-phase envelope deferred to v3.10 active conductor (#134).
+**Enforcement (v3.9.2):** prompt-level via Phase Boundary blocks on Bucket A agents + advisory verifier (`scripts/checks/check_pipeline_integrity.py`). Deterministic PreToolUse hook + multi-phase envelope deferred to v3.10 active conductor (#134).
 
 ---
 
@@ -400,7 +400,7 @@ Follows the paper's language. Academic terms remain in English. User can overrid
 ## v3.6.2 Sprint Contract Hard Gate
 
 - **Reviewer hard gate.** All reviewer modes that ship with contracts (`reviewer_full`, `reviewer_methodology_focus`) now run two-call Phase 1 (paper-content-blind) + Phase 2 (paper-visible) orchestration. See `references/sprint_contract_protocol.md`.
-- **Schema 13 sprint contract.** Template-driven acceptance criteria with `panel_size`, `acceptance_dimensions`, `failure_conditions` (with `severity` precedence + `cross_reviewer_quantifier` panel-relative thresholds), `measurement_procedure`, optional `override_ladder`, bounded `agent_amendments`. Validator: `scripts/check_sprint_contract.py`. Schema: `shared/schemas/sprint_contract.schema.json`.
+- **Schema 13 sprint contract.** Template-driven acceptance criteria with `panel_size`, `acceptance_dimensions`, `failure_conditions` (with `severity` precedence + `cross_reviewer_quantifier` panel-relative thresholds), `measurement_procedure`, optional `override_ladder`, bounded `agent_amendments`. Validator: `scripts/checks/check_sprint_contract.py`. Schema: `shared/schemas/sprint_contract.schema.json`.
 - **Synthesizer three-step mechanical protocol.** Build cross-reviewer matrix → evaluate each failure_condition with panel-relative quantifier + expression vocabulary → resolve precedence by severity. Forbidden operations explicit in `agents/editorial_synthesizer_agent.md`.
 - **methodology_focus reduced panel.** `reviewer_methodology_focus` mode runs a 2-reviewer panel (EIC + methodology only) instead of the default 5.
 - **Templates:** `shared/contracts/reviewer/full.json` (panel 5) and `shared/contracts/reviewer/methodology_focus.json` (panel 2). Reserved modes (`reviewer_re_review`, `reviewer_calibration`, `reviewer_guided`) keep pre-v3.6.2 behaviour until follow-up patch templates land.

@@ -10,7 +10,7 @@ from pathlib import Path
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = REPO_ROOT / "scripts/bootstrap_timeline_yaml.py"
+SCRIPT = REPO_ROOT / "scripts/tooling/bootstrap_timeline_yaml.py"
 
 
 def _load_script_module():

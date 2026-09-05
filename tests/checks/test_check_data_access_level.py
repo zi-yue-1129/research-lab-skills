@@ -7,7 +7,7 @@ from tempfile import TemporaryDirectory
 
 from tests.test_helpers import run_skill_linter
 
-SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "check_data_access_level.py"
+SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "checks" / "check_data_access_level.py"
 
 
 def _run(root: Path) -> subprocess.CompletedProcess:

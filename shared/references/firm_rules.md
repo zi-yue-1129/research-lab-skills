@@ -1,6 +1,6 @@
 # Firm Rules — Canonical Source
 
-This file is the **single source of truth** for firm-rule wording that is otherwise duplicated verbatim across agent prompts. Each block below is the canonical text; the agent prompts listed under "Mirrored in" carry a byte-identical copy (modulo the agent's self-reference noun, where noted). `scripts/check_firm_rules_sync.py` fails CI if any mirror drifts from the canonical block here.
+This file is the **single source of truth** for firm-rule wording that is otherwise duplicated verbatim across agent prompts. Each block below is the canonical text; the agent prompts listed under "Mirrored in" carry a byte-identical copy (modulo the agent's self-reference noun, where noted). `scripts/checks/check_firm_rules_sync.py` fails CI if any mirror drifts from the canonical block here.
 
 **Why this file exists:** the contamination `R-L3-2-*` wording provably drifted between v3.9.0 (contamination-only) and v3.9.4 (contamination-AND-temporal) drafts before being single-sourced here. Manual 5×-duplication is not enough; the sync lint pins it.
 
@@ -75,7 +75,7 @@ This file is the **single source of truth** for firm-rule wording that is otherw
 
 ## Collision guard
 
-`scripts/check_firm_rules_sync.py` additionally asserts:
+`scripts/checks/check_firm_rules_sync.py` additionally asserts:
 
 1. No `R-L3-2-A/B/C` token appears inside any `## Claim Intent Manifest Emission` prompt section or inside `claim_intent_manifest.schema.json`.
 2. No `R-CIM-A/B/C` token appears inside any contamination context (formatter pass-through paragraph, crossref/openalex protocol, finalizer logic, contamination specs).

@@ -5,7 +5,7 @@ from tempfile import TemporaryDirectory
 
 from tests.test_helpers import run_script
 
-SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "validate_compliance_fixtures.py"
+SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "tooling" / "validate_compliance_fixtures.py"
 REAL_FIXTURES = Path(__file__).resolve().parents[2] / "examples" / "compliance"
 
 

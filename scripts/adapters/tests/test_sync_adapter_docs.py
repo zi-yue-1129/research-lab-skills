@@ -3,7 +3,7 @@ from pathlib import Path
 import subprocess
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SCRIPT = REPO_ROOT / "scripts/sync_adapter_docs.py"
+SCRIPT = REPO_ROOT / "scripts/tooling/sync_adapter_docs.py"
 OVERVIEW = REPO_ROOT / "skills/academic-pipeline/references/adapters/overview.md"
 
 

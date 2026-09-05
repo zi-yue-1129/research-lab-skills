@@ -15,12 +15,12 @@ import pytest
 # directory on sys.path for free; from tests/<group>/ it has to be explicit.
 # Do not delete this as redundant: a whole-suite run passes on some other test's
 # insert, but the per-file run in scripts/_ci_pytest_manifest.toml does not.
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 
 def test_title_search_match_at_threshold(monkeypatch):
     """0.70 similarity threshold matches like S2 (PaperOrchestra precedent)."""
-    from openalex_client import OpenAlexClient
+    from scripts.clients.openalex_client import OpenAlexClient
 
     mock_response = MagicMock()
     mock_response.read.return_value = json.dumps({
@@ -43,7 +43,7 @@ def test_title_search_match_at_threshold(monkeypatch):
 
 def test_title_search_no_match_below_threshold(monkeypatch):
     """No match returned if best candidate similarity < 0.70."""
-    from openalex_client import OpenAlexClient
+    from scripts.clients.openalex_client import OpenAlexClient
 
     mock_response = MagicMock()
     mock_response.read.return_value = json.dumps({
@@ -64,7 +64,7 @@ def test_title_search_no_match_below_threshold(monkeypatch):
 
 def test_doi_lookup_with_title_cross_check(monkeypatch):
     """DOI hit MUST pass Levenshtein 0.70 title cross-check (DOI_MISMATCH pattern)."""
-    from openalex_client import OpenAlexClient
+    from scripts.clients.openalex_client import OpenAlexClient
 
     mock_response = MagicMock()
     mock_response.read.return_value = json.dumps({
@@ -87,7 +87,7 @@ def test_doi_lookup_with_title_cross_check(monkeypatch):
 
 def test_doi_lookup_with_matching_title(monkeypatch):
     """DOI hit + matching title → success."""
-    from openalex_client import OpenAlexClient
+    from scripts.clients.openalex_client import OpenAlexClient
 
     mock_response = MagicMock()
     mock_response.read.return_value = json.dumps({
@@ -111,7 +111,7 @@ def test_doi_lookup_with_matching_title(monkeypatch):
 
 def test_429_triggers_2s_backoff_3_retries(monkeypatch):
     """Per protocol: 429 → 2s backoff × 3 retries → raise OpenAlexUnavailable."""
-    from openalex_client import OpenAlexClient, OpenAlexUnavailable
+    from scripts.clients.openalex_client import OpenAlexClient, OpenAlexUnavailable
 
     call_count = [0]
 
@@ -126,7 +126,7 @@ def test_429_triggers_2s_backoff_3_retries(monkeypatch):
         )
 
     sleeps = []
-    monkeypatch.setattr("openalex_client.time.sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr("scripts.clients.openalex_client.time.sleep", lambda s: sleeps.append(s))
 
     with patch("urllib.request.urlopen", side_effect=mock_urlopen):
         client = OpenAlexClient()
@@ -139,7 +139,7 @@ def test_429_triggers_2s_backoff_3_retries(monkeypatch):
 
 def test_5xx_skips_immediately(monkeypatch):
     """Per protocol: 5xx → no retry (call count == 1), raise OpenAlexUnavailable."""
-    from openalex_client import OpenAlexClient, OpenAlexUnavailable
+    from scripts.clients.openalex_client import OpenAlexClient, OpenAlexUnavailable
 
     call_count = [0]
 
@@ -163,7 +163,7 @@ def test_5xx_skips_immediately(monkeypatch):
 
 def test_polite_pool_email_param(monkeypatch):
     """OPENALEX_POLITE_EMAIL env var adds mailto= query param."""
-    from openalex_client import OpenAlexClient
+    from scripts.clients.openalex_client import OpenAlexClient
 
     captured_url = []
 
@@ -186,7 +186,7 @@ def test_polite_pool_email_param(monkeypatch):
 
 def test_doi_404_treated_as_miss_not_unavailable(monkeypatch):
     """DOI not indexed in OpenAlex (404) → return None (miss), not raise OpenAlexUnavailable."""
-    from openalex_client import OpenAlexClient, OpenAlexUnavailable
+    from scripts.clients.openalex_client import OpenAlexClient, OpenAlexUnavailable
 
     def mock_urlopen(*args, **kwargs):
         raise urllib.error.HTTPError(
@@ -209,7 +209,7 @@ def test_doi_404_treated_as_miss_not_unavailable(monkeypatch):
 
 def test_title_search_prefers_matching_year(monkeypatch):
     """When two candidates have similar titles, prefer the one with matching year."""
-    from openalex_client import OpenAlexClient
+    from scripts.clients.openalex_client import OpenAlexClient
 
     mock_response = MagicMock()
     mock_response.read.return_value = json.dumps({
@@ -237,7 +237,7 @@ def test_oserror_during_read_raises_unavailable(monkeypatch):
     mid-stream). Per v3.9.0 spec §3.7 degradation contract, this MUST be
     translated to OpenAlexUnavailable so migrate_literature_corpus_to_v3_9_0
     omits openalex_unmatched instead of aborting the whole backfill."""
-    from openalex_client import OpenAlexClient, OpenAlexUnavailable
+    from scripts.clients.openalex_client import OpenAlexClient, OpenAlexUnavailable
 
     mock_response = MagicMock()
     mock_response.read.side_effect = OSError("socket dropped mid-read")
@@ -254,7 +254,7 @@ def test_invalid_utf8_body_raises_unavailable(monkeypatch):
     """resp.read() returns bytes that aren't valid UTF-8 (garbled CDN response).
     Per v3.9.0 spec §3.7, translate to OpenAlexUnavailable not bubble out as
     UnicodeDecodeError."""
-    from openalex_client import OpenAlexClient, OpenAlexUnavailable
+    from scripts.clients.openalex_client import OpenAlexClient, OpenAlexUnavailable
 
     mock_response = MagicMock()
     mock_response.read.return_value = b"\xff\xfe\xff garbage"
@@ -271,7 +271,7 @@ def test_invalid_json_body_raises_unavailable(monkeypatch):
     """resp.read() returns valid utf-8 but not valid JSON (e.g. truncated body,
     HTML error page slipped through). Per v3.9.0 spec §3.7, translate to
     OpenAlexUnavailable not bubble JSONDecodeError."""
-    from openalex_client import OpenAlexClient, OpenAlexUnavailable
+    from scripts.clients.openalex_client import OpenAlexClient, OpenAlexUnavailable
 
     mock_response = MagicMock()
     mock_response.read.return_value = b"<html>503 backend unavailable</html>"
@@ -292,7 +292,7 @@ def test_truncated_read_raises_unavailable(monkeypatch):
     degradation contract."""
     import http.client
 
-    from openalex_client import OpenAlexClient, OpenAlexUnavailable
+    from scripts.clients.openalex_client import OpenAlexClient, OpenAlexUnavailable
 
     mock_response = MagicMock()
     mock_response.read.side_effect = http.client.IncompleteRead(
@@ -311,7 +311,7 @@ def test_throttle_uses_monotonic_clock(monkeypatch):
     """time.monotonic for elapsed measurement (NTP-safe). time.time can
     go backward on NTP adjustments, breaking elapsed calculation.
     Aligns OA/CR with semantic_scholar_client.py (#128 §6)."""
-    from openalex_client import OpenAlexClient
+    from scripts.clients.openalex_client import OpenAlexClient
 
     monotonic_calls = []
     time_calls = []
@@ -324,8 +324,8 @@ def test_throttle_uses_monotonic_clock(monkeypatch):
         time_calls.append(1)
         return 100.0
 
-    monkeypatch.setattr("openalex_client.time.monotonic", fake_monotonic)
-    monkeypatch.setattr("openalex_client.time.time", fake_time)
+    monkeypatch.setattr("scripts.clients.openalex_client.time.monotonic", fake_monotonic)
+    monkeypatch.setattr("scripts.clients.openalex_client.time.time", fake_time)
 
     client = OpenAlexClient()
     # Initial state: no prior request — _throttle short-circuits.
@@ -340,7 +340,7 @@ def test_throttle_uses_monotonic_clock(monkeypatch):
 
 def test_doi_lookup_quotes_doi_path_segment(monkeypatch):
     """DOI lookup must encode path separators/query markers before urlopen."""
-    from openalex_client import OpenAlexClient
+    from scripts.clients.openalex_client import OpenAlexClient
 
     captured_urls = []
 
@@ -369,8 +369,8 @@ def test_doi_lookup_quotes_doi_path_segment(monkeypatch):
 
 
 def test_rejects_non_openalex_api_url_before_urlopen(monkeypatch):
-    import openalex_client
-    from openalex_client import OpenAlexClient, OpenAlexUnavailable
+    from scripts.clients import openalex_client
+    from scripts.clients.openalex_client import OpenAlexClient, OpenAlexUnavailable
 
     monkeypatch.setattr(openalex_client, "_API_BASE", "http://evil.example")
     urlopen = MagicMock()

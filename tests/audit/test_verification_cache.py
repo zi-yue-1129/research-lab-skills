@@ -22,12 +22,12 @@ import pytest
 # directory on sys.path for free; from tests/<group>/ it has to be explicit.
 # Do not delete this as redundant: a whole-suite run passes on some other test's
 # insert, but the per-file run in scripts/_ci_pytest_manifest.toml does not.
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 
 @pytest.fixture()
 def cache(tmp_path, monkeypatch):
-    from verification_cache import VerificationCache
+    from scripts.audit.verification_cache import VerificationCache
 
     db = tmp_path / "verification.db"
     monkeypatch.setenv("ARS_VERIFICATION_CACHE_PATH", str(db))
@@ -69,7 +69,7 @@ def test_put_overwrites_same_key(cache):
 
 def test_expired_entry_returns_none(tmp_path, monkeypatch):
     """An entry older than the TTL (90 days) is a miss."""
-    from verification_cache import VerificationCache, _TTL_DAYS
+    from scripts.audit.verification_cache import VerificationCache, _TTL_DAYS
 
     db = tmp_path / "verification.db"
     monkeypatch.setenv("ARS_VERIFICATION_CACHE_PATH", str(db))
@@ -94,7 +94,7 @@ def test_expired_entry_returns_none(tmp_path, monkeypatch):
 
 
 def test_fresh_entry_within_ttl_returns_value(tmp_path, monkeypatch):
-    from verification_cache import VerificationCache, _TTL_DAYS
+    from scripts.audit.verification_cache import VerificationCache, _TTL_DAYS
 
     db = tmp_path / "verification.db"
     monkeypatch.setenv("ARS_VERIFICATION_CACHE_PATH", str(db))
@@ -136,7 +136,7 @@ def test_invalidate_unknown_citation_is_noop(cache):
 
 
 def test_env_path_override_is_honored(tmp_path, monkeypatch):
-    from verification_cache import VerificationCache
+    from scripts.audit.verification_cache import VerificationCache
 
     db = tmp_path / "custom" / "mycache.db"
     monkeypatch.setenv("ARS_VERIFICATION_CACHE_PATH", str(db))
@@ -146,7 +146,7 @@ def test_env_path_override_is_honored(tmp_path, monkeypatch):
 
 
 def test_explicit_path_arg_overrides_env(tmp_path, monkeypatch):
-    from verification_cache import VerificationCache
+    from scripts.audit.verification_cache import VerificationCache
 
     env_db = tmp_path / "env.db"
     arg_db = tmp_path / "arg.db"
@@ -181,7 +181,7 @@ def test_corrupted_json_payload_is_miss(tmp_path, monkeypatch):
     """#331 P3: a row whose response_json is not decodable JSON is a miss
     (return None → live recompute), not a JSONDecodeError that aborts
     verification. Contract: 'malformed cache payload = miss'."""
-    from verification_cache import VerificationCache
+    from scripts.audit.verification_cache import VerificationCache
 
     db = tmp_path / "verification.db"
     monkeypatch.setenv("ARS_VERIFICATION_CACHE_PATH", str(db))
@@ -204,7 +204,7 @@ def test_non_dict_payload_is_miss(tmp_path, monkeypatch):
     an older or manual writer) is a miss — the caller's `"matched" in cached`
     join logic expects a dict. Return None rather than hand back a shape the
     caller cannot read."""
-    from verification_cache import VerificationCache
+    from scripts.audit.verification_cache import VerificationCache
 
     db = tmp_path / "verification.db"
     monkeypatch.setenv("ARS_VERIFICATION_CACHE_PATH", str(db))

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Imbad0202/academic-research-skills/shared/contracts/passport/claim_intent_manifest.schema.json",
   "title": "Material Passport Claim Intent Manifest Entry",
-  "description": "One entry in Material Passport Schema 9 claim_intent_manifests[] aggregate. Emitted by synthesis_agent / draft_writer_agent / report_compiler_agent after paper-visible context loads but before prose generation, per the 'Claim Intent Manifest Emission (v3.8)' sibling section added to each writing-stage agent. Acts as the pre-commitment baseline for the manifest set-diff in claim_ref_alignment_audit_agent §4 step 5 (intended vs emitted vs supported claims). Cross-field invariants M-INV-1..M-INV-4 are lint-enforced in scripts/check_claim_audit_consistency.py. See docs/design/2026-05-15-issue-103-claim-alignment-audit-spec.md §3.2.",
+  "description": "One entry in Material Passport Schema 9 claim_intent_manifests[] aggregate. Emitted by synthesis_agent / draft_writer_agent / report_compiler_agent after paper-visible context loads but before prose generation, per the 'Claim Intent Manifest Emission (v3.8)' sibling section added to each writing-stage agent. Acts as the pre-commitment baseline for the manifest set-diff in claim_ref_alignment_audit_agent §4 step 5 (intended vs emitted vs supported claims). Cross-field invariants M-INV-1..M-INV-4 are lint-enforced in scripts/checks/check_claim_audit_consistency.py. See docs/design/2026-05-15-issue-103-claim-alignment-audit-spec.md §3.2.",
 
   "type": "object",
   "additionalProperties": false,

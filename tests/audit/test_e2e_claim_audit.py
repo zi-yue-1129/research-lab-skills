@@ -53,15 +53,15 @@ from typing import Any, Callable
 # files keep their RED-phase skip because some of them shipped before the
 # pipeline module existed; this e2e file landed in the same commit that
 # completed the chain, so the skip wrapper was always transitional.
-from scripts.claim_audit_pipeline import run_audit_pipeline
-from scripts.claim_audit_finalizer import (
+from scripts.audit.claim_audit_pipeline import run_audit_pipeline
+from scripts.audit.claim_audit_finalizer import (
     ANNOTATION_CLAIM_AUDIT_AMBIGUOUS,
     ANNOTATION_HIGH_WARN_CLAIM_NOT_SUPPORTED,
     ANNOTATION_LOW_WARN_UNVERIFIED,
     ANNOTATION_UNCITED_ASSERTION,
     apply_finalizer,
 )
-from scripts.uncited_assertion_detector import detect_uncited_assertions
+from scripts.audit.uncited_assertion_detector import detect_uncited_assertions
 
 
 MANIFEST_ID = "M-2026-05-16T09:00:00Z-e2e1"

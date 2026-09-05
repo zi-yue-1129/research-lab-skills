@@ -40,8 +40,8 @@ import unittest
 from typing import Any, Callable
 
 try:
-    from scripts.claim_audit_pipeline import run_audit_pipeline
-    from scripts._claim_audit_constants import SENTINEL_MANIFEST_ID
+    from scripts.audit.claim_audit_pipeline import run_audit_pipeline
+    from scripts.audit._claim_audit_constants import SENTINEL_MANIFEST_ID
 
     _MODULE_IMPORT_ERR: Exception | None = None
 except Exception as exc:  # pragma: no cover — RED-phase import pathway
@@ -175,7 +175,7 @@ def _judge_dispatch(
 
 
 class _ManifestTestBase(unittest.TestCase):
-    """Skip cleanly when scripts.claim_audit_pipeline is not yet importable.
+    """Skip cleanly when scripts.audit.claim_audit_pipeline is not yet importable.
 
     During the RED phase (Step 4 of the TDD plan in spec §13), the test
     suite imports cleanly even when the module is missing — the contract
@@ -186,7 +186,7 @@ class _ManifestTestBase(unittest.TestCase):
     def setUpClass(cls) -> None:
         if _MODULE_IMPORT_ERR is not None:
             raise unittest.SkipTest(
-                f"scripts.claim_audit_pipeline not importable yet: {_MODULE_IMPORT_ERR!r} "
+                f"scripts.audit.claim_audit_pipeline not importable yet: {_MODULE_IMPORT_ERR!r} "
                 "(expected during RED phase — implementation lands in spec §13 step 5)"
             )
 

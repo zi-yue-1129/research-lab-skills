@@ -6,7 +6,7 @@ from tempfile import TemporaryDirectory
 
 from tests.test_helpers import run_script
 
-SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "check_v3_9_2_phase_boundary.py"
+SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "checks" / "check_v3_9_2_phase_boundary.py"
 
 
 def _run() -> subprocess.CompletedProcess:

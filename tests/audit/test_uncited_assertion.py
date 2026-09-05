@@ -9,7 +9,7 @@ convention puts pytest-discovered tests under `tests/<group>/test_*.py`
 under the repo root. The three-condition rule + pseudocode lives in
 academic-pipeline/agents/claim_ref_alignment_audit_agent.md
 §"Uncited-assertion detector (D4-c)" and constants ride in
-scripts/_claim_audit_constants.py so lint + runtime cannot drift.
+scripts/audit/_claim_audit_constants.py so lint + runtime cannot drift.
 
 Run:
     python -m unittest tests.audit.test_uncited_assertion -v
@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import unittest
 
-from scripts.uncited_assertion_detector import (
+from scripts.audit.uncited_assertion_detector import (
     detect_uncited,
     detect_uncited_assertions,
 )
@@ -186,7 +186,7 @@ class TestDetectUncited(unittest.TestCase):
         (digit-leading, plus-sign, or 3+ status tokens) silently flagged
         the malformed-but-intentioned citations as uncited. The true
         presence probe accepts every `<!--ref:...-->` shape; the strict
-        validator at scripts/check_v3_7_3_three_layer_citation.py handles
+        validator at scripts/checks/check_v3_7_3_three_layer_citation.py handles
         the malformed-shape audit independently.
         """
         malformed_but_intentioned = [
@@ -527,7 +527,7 @@ class TestDetectUncited(unittest.TestCase):
         raise path with a grep-able diagnostic so the contract survives
         future refactors and CI log review.
         """
-        from scripts.claim_audit_pipeline import _uncited_assertion_entry
+        from scripts.audit.claim_audit_pipeline import _uncited_assertion_entry
 
         sentence = {"sentence_text": "Pilot data showed positive gains."}
         with self.assertRaisesRegex(

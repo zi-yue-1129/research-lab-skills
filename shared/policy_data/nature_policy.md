@@ -9,7 +9,7 @@
 
 **G4 invariant** (Decision Doc §4.3): edits to Nature substantive policy content must go through **this file** first; both downstream consumers (policy_anchor_table.md Nature section and venue_disclosure_policies.md Nature entry) re-cite from here. Direct edits to either consumer that change Nature substantive content are non-conformant.
 
-**Dedup lint**: `verify_nature_dedup_with_venue()` in `scripts/check_policy_anchor_table.py` confirms (a) this file exists, (b) both consumers reference the path `shared/policy_data/nature_policy.md` as their canonical pointer.
+**Dedup lint**: `verify_nature_dedup_with_venue()` in `scripts/checks/check_policy_anchor_table.py` confirms (a) this file exists, (b) both consumers reference the path `shared/policy_data/nature_policy.md` as their canonical pointer.
 
 ---
 

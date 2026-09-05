@@ -1,4 +1,4 @@
-"""Integration test for scripts/ars_mark_read.py CLI dispatch (#197).
+"""Integration test for scripts/tooling/ars_mark_read.py CLI dispatch (#197).
 
 Verifies that citation keys reach the script through the canonical
 bash dispatch pattern. Uses a real fixture passport + read-log to
@@ -39,11 +39,11 @@ def passport_with_corpus(tmp_path: Path) -> Path:
 def test_ars_mark_read_writes_read_log(passport_with_corpus: Path) -> None:
     """Mark two citation keys; assert the read-log records both entries.
 
-    Mirrors the bash block ``python3 scripts/ars_mark_read.py
+    Mirrors the bash block ``python3 scripts/tooling/ars_mark_read.py
     $ARGUMENTS --passport-path "<path>"`` with multiple positional
     citation keys, including one with a hyphen.
     """
-    script_path = Path("scripts/ars_mark_read.py")
+    script_path = Path("scripts/tooling/ars_mark_read.py")
     test_keys = ["smith2024-data", "wang2023"]
 
     result = subprocess.run(
@@ -69,7 +69,7 @@ def test_ars_mark_read_writes_read_log(passport_with_corpus: Path) -> None:
 
 def test_ars_mark_read_rejects_zero_keys(passport_with_corpus: Path) -> None:
     """Calling with no citation keys should fail-fast via argparse nargs=+."""
-    script_path = Path("scripts/ars_mark_read.py")
+    script_path = Path("scripts/tooling/ars_mark_read.py")
 
     result = subprocess.run(
         ["python3", str(script_path), "--passport-path", str(passport_with_corpus)],
@@ -84,7 +84,7 @@ def test_ars_mark_read_rejects_zero_keys(passport_with_corpus: Path) -> None:
 
 def test_ars_mark_read_rejects_unknown_key(passport_with_corpus: Path) -> None:
     """A key absent from literature_corpus[] hard-fails per §3.6 firm rule 2."""
-    script_path = Path("scripts/ars_mark_read.py")
+    script_path = Path("scripts/tooling/ars_mark_read.py")
 
     result = subprocess.run(
         ["python3", str(script_path), "not-in-corpus", "--passport-path", str(passport_with_corpus)],
@@ -100,7 +100,7 @@ def test_ars_mark_read_rejects_unknown_key(passport_with_corpus: Path) -> None:
 
 def test_ars_mark_read_argument_parsing(passport_with_corpus: Path) -> None:
     """Verify citation keys with schema-valid punctuation are parsed correctly."""
-    script_path = Path("scripts/ars_mark_read.py")
+    script_path = Path("scripts/tooling/ars_mark_read.py")
     test_keys = ["smith2024-data", "wang:2023"]
 
     result = subprocess.run(

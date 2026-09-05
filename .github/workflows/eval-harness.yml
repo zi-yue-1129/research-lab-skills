@@ -9,11 +9,11 @@ on:
     paths:
       # Delta 3 path filter — resolver clients + verification surfaces -> citation_extraction
       - "scripts/verification_gate/**"
-      - "scripts/arxiv_client.py"
-      - "scripts/verification_cache.py"
-      - "scripts/crossref_client.py"
-      - "scripts/openalex_client.py"
-      - "scripts/citation_verification_summary.py"
+      - "scripts/clients/arxiv_client.py"
+      - "scripts/audit/verification_cache.py"
+      - "scripts/clients/crossref_client.py"
+      - "scripts/clients/openalex_client.py"
+      - "scripts/audit/citation_verification_summary.py"
       - "scripts/claim_audit_*.py"
       # epistemic-status surfaces -> status_classification + summarization_adequacy (Phase 2)
       - "scripts/epistemic_status_extractor.py"
@@ -26,22 +26,22 @@ on:
       # rq_framing_patterns scoring runner -> the harness dispatches to it, so
       # changes there must re-run the eval harness (else RQ scoring can drift
       # without the gate noticing).
-      - "scripts/check_rq_framing_patterns.py"
+      - "scripts/checks/check_rq_framing_patterns.py"
       # the harness itself + gold sets
       - "evals/gold/**"
-      - "scripts/run_evals.py"
-      - "scripts/check_ranking_lift.py"
+      - "scripts/evals/run_evals.py"
+      - "scripts/checks/check_ranking_lift.py"
       - "shared/schemas/evals_lift_report.schema.json"
       - ".github/workflows/eval-harness.yml"
   push:
     branches: [main]
     paths:
       - "scripts/verification_gate/**"
-      - "scripts/arxiv_client.py"
-      - "scripts/verification_cache.py"
-      - "scripts/crossref_client.py"
-      - "scripts/openalex_client.py"
-      - "scripts/citation_verification_summary.py"
+      - "scripts/clients/arxiv_client.py"
+      - "scripts/audit/verification_cache.py"
+      - "scripts/clients/crossref_client.py"
+      - "scripts/clients/openalex_client.py"
+      - "scripts/audit/citation_verification_summary.py"
       - "scripts/claim_audit_*.py"
       - "scripts/epistemic_status_extractor.py"
       - "scripts/check_silent_upgrade.py"
@@ -49,10 +49,10 @@ on:
       - "deep-research/agents/synthesis_agent.md"
       - "academic-paper/agents/draft_writer_agent.md"
       - "deep-research/agents/report_compiler_agent.md"
-      - "scripts/check_rq_framing_patterns.py"
+      - "scripts/checks/check_rq_framing_patterns.py"
       - "evals/gold/**"
-      - "scripts/run_evals.py"
-      - "scripts/check_ranking_lift.py"
+      - "scripts/evals/run_evals.py"
+      - "scripts/checks/check_ranking_lift.py"
       - "shared/schemas/evals_lift_report.schema.json"
       - ".github/workflows/eval-harness.yml"
 
@@ -95,12 +95,12 @@ jobs:
           # have not landed (status_classification / summarization_adequacy) are
           # simply absent from the run — no separate skip-guard needed.
           report="eval_report.json"
-          python -m scripts.run_evals --output "$report"
+          python -m scripts.evals.run_evals --output "$report"
           # Absolute-threshold verdict (no exit here): which measured tasks failed
           # their aggregate threshold. Phase 1b has no main baseline, so this is an
           # ABSOLUTE gate, not a lift comparison. Logic lives in a unit-tested
-          # module (scripts/_eval_threshold_gate.py), not an inline heredoc.
-          failed=$(python -m scripts._eval_threshold_gate "$report")
+          # module (scripts/evals/_eval_threshold_gate.py), not an inline heredoc.
+          failed=$(python -m scripts.evals._eval_threshold_gate "$report")
           echo "failed_tasks=${failed}" >> "$GITHUB_OUTPUT"
           if [ -n "$failed" ]; then
             echo "::notice title=Eval below threshold::${failed}"
@@ -137,7 +137,7 @@ jobs:
           set -euo pipefail
           # Single integrated gate. Phase 1b has no main baseline, so this gate is
           # honestly ABSOLUTE-threshold only (the lift gate proper,
-          # scripts/check_ranking_lift.py, activates once a baseline exists).
+          # scripts/checks/check_ranking_lift.py, activates once a baseline exists).
           #   - no failed task                                    -> pass
           #   - failed + [eval-regression-acknowledged] + >=1
           #     OPEN issue URL in THIS repo                       -> pass (noted)

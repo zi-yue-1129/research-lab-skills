@@ -9,7 +9,7 @@ accepts weakened obligations would be caught only by ad-hoc mutation runs.
 
 The test suite operates on a sandboxed copy of the repo: each test
 constructs the copy via `git archive HEAD | tar -x`, applies a single
-mutation, and runs `scripts/check_v3_6_7_pattern_protection.py` against
+mutation, and runs `scripts/checks/check_v3_6_7_pattern_protection.py` against
 that copy. The repo's actual files are never modified.
 """
 from __future__ import annotations
@@ -20,7 +20,7 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-LINT_SCRIPT_REL = "scripts/check_v3_6_7_pattern_protection.py"
+LINT_SCRIPT_REL = "scripts/checks/check_v3_6_7_pattern_protection.py"
 
 
 def _archive_repo(dest: Path) -> None:

@@ -29,7 +29,7 @@ You MAY READ the paper draft and all provided artifacts for legitimate perspecti
 
 If synthesis-side work is needed, return control to `editorial_synthesizer_agent`.
 
-**Enforcement (v3.9.2):** prompt-level only. Advisory verifier (`scripts/check_pipeline_integrity.py`) can detect violations post-hoc. Deterministic PreToolUse hook deferred to v3.10 active conductor (#134). The v3.6.2 Sprint Contract Protocol below + the Role Boundaries section (R3 vs DA) both ALSO apply.
+**Enforcement (v3.9.2):** prompt-level only. Advisory verifier (`scripts/checks/check_pipeline_integrity.py`) can detect violations post-hoc. Deterministic PreToolUse hook deferred to v3.10 active conductor (#134). The v3.6.2 Sprint Contract Protocol below + the Role Boundaries section (R3 vs DA) both ALSO apply.
 
 ---
 

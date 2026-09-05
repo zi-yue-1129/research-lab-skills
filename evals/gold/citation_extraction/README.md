@@ -1,11 +1,11 @@
 # Citation-Extraction Gold Subset (Phase 1a)
 
-51-tuple gold subset measuring the per-citation `lookup_verified` 3-class enum classification accuracy (50 original + one v3.11 by-design false-negative fixture, spec OQ-5 / C-V6(a)). Phase 1a shipped the data; **Phase 1b (#263) shipped the harness** (`scripts/run_evals.py`) — it now measures this gold set directly.
+51-tuple gold subset measuring the per-citation `lookup_verified` 3-class enum classification accuracy (50 original + one v3.11 by-design false-negative fixture, spec OQ-5 / C-V6(a)). Phase 1a shipped the data; **Phase 1b (#263) shipped the harness** (`scripts/evals/run_evals.py`) — it now measures this gold set directly.
 
 Run it with:
 
 ```
-PYTHONPATH=. python -m scripts.run_evals --task citation_extraction
+PYTHONPATH=. python -m scripts.evals.run_evals --task citation_extraction
 ```
 
 The harness computes the predicted `lookup_verified` from each tuple's `resolver_outcomes` via the #182 Delta 4 reducer `citation_verification_summary.reduce_lookup_verified` (the single source of truth). `verification_gate.verify_citation` (#182 Delta 5) runs the resolvers live and feeds the SAME reducer, so the harness and the shipped API agree by construction. The reducer uses the v3.11 narrowed-false definition (C-V6(a)): `false` requires an ID-keyed `unmatched` (`queried_by: id`); a title-only `unmatched` is a coverage gap and reduces to `unresolvable`, never `false`. The metric is symmetric 3-class accuracy — `unresolvable` is never collapsed into `false`. Because `expected_outcomes.json` was authored by the same rule, a fresh run scores ~1.0.
@@ -56,16 +56,16 @@ fuzzy-match false-positive path) is tracked in issue #250.
 
 Run this command from the repo root to validate the corpus against its manifest:
 
-`python -m scripts.check_evals_gold_set evals/gold/citation_extraction`
+`python -m scripts.checks.check_evals_gold_set evals/gold/citation_extraction`
 
 ## Lift gate
 
 When a PR changes ranking / scoring logic, run the harness on the base and the change, then compare:
 
 ```
-PYTHONPATH=. python -m scripts.run_evals --output before.json   # on base
-PYTHONPATH=. python -m scripts.run_evals --output after.json    # on change
-python -m scripts.check_ranking_lift --baseline before.json --compare after.json --pr-body @pr.txt
+PYTHONPATH=. python -m scripts.evals.run_evals --output before.json   # on base
+PYTHONPATH=. python -m scripts.evals.run_evals --output after.json    # on change
+python -m scripts.checks.check_ranking_lift --baseline before.json --compare after.json --pr-body @pr.txt
 ```
 
 The gate blocks on any polarity-corrected `signed_lift < -0.05` (or a zero-baseline metric change) unless the PR body carries `[ranking-regression-acknowledged]` + an OPEN follow-up issue and declares the `Affected metric: <task>.<class>.<metric>`. CI wires this via `.github/workflows/eval-harness.yml`.

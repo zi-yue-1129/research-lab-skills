@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 
-SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "check_v3_9_0_triangulation.py"
+SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "checks" / "check_v3_9_0_triangulation.py"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 

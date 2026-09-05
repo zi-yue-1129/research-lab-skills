@@ -138,6 +138,7 @@ def _stage_repo_clone(work_dir: Path) -> Path:
     clone.mkdir()
     for sub in (
         "scripts",
+        "scripts/audit",
         "shared/contracts/passport",
         "shared/contracts/audit",
         "shared/templates",
@@ -146,8 +147,8 @@ def _stage_repo_clone(work_dir: Path) -> Path:
     # Real wrapper + parser + helpers, copied so chmod is preserved.
     for src_rel in (
         "scripts/run_codex_audit.sh",
-        "scripts/parse_audit_verdict.py",
-        "scripts/audit_snapshot.py",
+        "scripts/audit/parse_audit_verdict.py",
+        "scripts/audit/audit_snapshot.py",
     ):
         src = REPO_ROOT / src_rel
         dst = clone / src_rel

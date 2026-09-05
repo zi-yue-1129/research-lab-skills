@@ -1,4 +1,4 @@
-"""Unit tests for scripts/check_ci_pytest_manifest.py (issue #156).
+"""Unit tests for scripts/checks/check_ci_pytest_manifest.py (issue #156).
 
 Lint guards 6 failure modes on the unified pytest manifest:
 1. manifest entry path does not exist on disk
@@ -25,7 +25,7 @@ from pathlib import Path
 import pytest
 
 
-SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "check_ci_pytest_manifest.py"
+SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "checks" / "check_ci_pytest_manifest.py"
 
 
 def _run(
@@ -84,7 +84,7 @@ def test_clean_manifest_passes(workdir: Path) -> None:
       spec:
         runs-on: ubuntu-latest
         steps:
-          - run: python scripts/run_ci_pytest_manifest.py
+          - run: python scripts/tooling/run_ci_pytest_manifest.py
     """)
 
     result = _run(manifest, workflow, root=workdir)
@@ -106,7 +106,7 @@ def test_missing_path_fails(workdir: Path) -> None:
       spec:
         runs-on: ubuntu-latest
         steps:
-          - run: python scripts/run_ci_pytest_manifest.py
+          - run: python scripts/tooling/run_ci_pytest_manifest.py
     """)
 
     result = _run(manifest, workflow, root=workdir)
@@ -181,7 +181,7 @@ def test_duplicate_invocation_with_distinct_args_passes(workdir: Path) -> None:
       spec:
         runs-on: ubuntu-latest
         steps:
-          - run: python scripts/run_ci_pytest_manifest.py
+          - run: python scripts/tooling/run_ci_pytest_manifest.py
     """)
 
     result = _run(manifest, workflow, root=workdir)
@@ -222,7 +222,7 @@ def test_direct_pytest_invocation_in_workflow_fails(workdir: Path) -> None:
       spec:
         runs-on: ubuntu-latest
         steps:
-          - run: python scripts/run_ci_pytest_manifest.py
+          - run: python scripts/tooling/run_ci_pytest_manifest.py
           - run: pytest scripts/test_real_a.py -v
     """)
 
@@ -248,7 +248,7 @@ def test_unittest_invocations_in_workflow_pass(workdir: Path) -> None:
       spec:
         runs-on: ubuntu-latest
         steps:
-          - run: python scripts/run_ci_pytest_manifest.py
+          - run: python scripts/tooling/run_ci_pytest_manifest.py
           - run: python3 -m unittest scripts.test_real_b -v
     """)
 
@@ -292,7 +292,7 @@ def test_unknown_entry_key_fails(workdir: Path) -> None:
       spec:
         runs-on: ubuntu-latest
         steps:
-          - run: python scripts/run_ci_pytest_manifest.py
+          - run: python scripts/tooling/run_ci_pytest_manifest.py
     """)
 
     result = _run(manifest, workflow, root=workdir)
@@ -363,7 +363,7 @@ def test_direct_pytest_bypass_variants_fail(workdir: Path, bypass_invocation: st
         "  spec:\n"
         "    runs-on: ubuntu-latest\n"
         "    steps:\n"
-        "      - run: python scripts/run_ci_pytest_manifest.py\n"
+        "      - run: python scripts/tooling/run_ci_pytest_manifest.py\n"
         f"{bypass_invocation}\n"
     )
     workflow.write_text(workflow_body, encoding="utf-8")
@@ -393,7 +393,7 @@ def test_line_continuation_bypass_fails(workdir: Path) -> None:
         "  spec:\n"
         "    runs-on: ubuntu-latest\n"
         "    steps:\n"
-        "      - run: python scripts/run_ci_pytest_manifest.py\n"
+        "      - run: python scripts/tooling/run_ci_pytest_manifest.py\n"
         "      - run: |\n"
         "          pytest \\\n"
         "            scripts/test_real_a.py\n",
@@ -425,7 +425,7 @@ def test_pytest_path_substring_in_comment_does_not_match(workdir: Path) -> None:
       spec:
         runs-on: ubuntu-latest
         steps:
-          - run: python scripts/run_ci_pytest_manifest.py
+          - run: python scripts/tooling/run_ci_pytest_manifest.py
     """)
 
     result = _run(manifest, workflow, root=workdir)

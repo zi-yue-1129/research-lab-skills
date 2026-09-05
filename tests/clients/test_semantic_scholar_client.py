@@ -17,11 +17,11 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT / "scripts") not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT / "scripts"))
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-import semantic_scholar_client as ssc  # noqa: E402
-from contamination_signals import SemanticScholarUnavailable  # noqa: E402
+from scripts.clients import semantic_scholar_client as ssc
+from scripts.audit.contamination_signals import SemanticScholarUnavailable  # noqa: E402
 
 
 def _mock_response(payload: dict) -> MagicMock:
@@ -545,7 +545,7 @@ class CLIWiringTest(unittest.TestCase):
     now actually constructs a SemanticScholarClient instance."""
 
     def test_build_default_ss_client_returns_real_client(self) -> None:
-        import migrate_literature_corpus_to_v3_7_3 as mig
+        from scripts.migrations import migrate_literature_corpus_to_v3_7_3 as mig
         client = mig._build_default_ss_client()
         self.assertIsInstance(client, ssc.SemanticScholarClient)
 
