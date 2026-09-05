@@ -86,7 +86,7 @@ When `N ≤ max_claims_per_paper`, omitting the summary entry is permitted; emit
 
 ## Audit pipeline (6 steps)
 
-Each step routes its result into one of the four aggregates: `claim_audit_results[]`, `uncited_assertions[]`, `claim_drifts[]`, `constraint_violations[]`. The dispatch is deterministic; tests in `scripts/test_claim_audit_pipeline.py` pin every path.
+Each step routes its result into one of the four aggregates: `claim_audit_results[]`, `uncited_assertions[]`, `claim_drifts[]`, `constraint_violations[]`. The dispatch is deterministic; tests in `tests/audit/test_claim_audit_pipeline.py` pin every path.
 
 ### Step 1 — Anchor presence check
 
@@ -261,7 +261,7 @@ These coercions keep the §3.1 allowed-matrix invariant intact when the judge re
 After Steps 1-6 for every audited citation, run a three-set diff:
 
 - **Intended** = `claims[].claim_text` across all `claim_intent_manifests[]`
-- **Emitted** = `claim_text` from **every emitted citation in the draft**, not just the audited subset. When `len(citations) > max_claims_per_paper` triggers sampling, the unsampled citations still count toward `Emitted` because they were emitted in the draft (sampling only caps judge invocations, not the membership query for set-diff). Building `Emitted` from the audited subset alone would mis-classify every unsampled-but-present manifest claim as `INTENDED_NOT_EMITTED`. **`Emitted` is a SET of `claim_text` values** (D6): a drifted claim carrying multiple citation markers produces ONE membership in `Emitted`, not one per ref slug — and therefore ONE `EMITTED_NOT_INTENDED` row, not duplicates. The Python pipeline enforces this in `_emit_drift` per `scripts/test_claim_audit_pipeline.py::TP13EmittedNotIntendedDedupe` + `::TCO4SamplingPreservesEmittedSet`.
+- **Emitted** = `claim_text` from **every emitted citation in the draft**, not just the audited subset. When `len(citations) > max_claims_per_paper` triggers sampling, the unsampled citations still count toward `Emitted` because they were emitted in the draft (sampling only caps judge invocations, not the membership query for set-diff). Building `Emitted` from the audited subset alone would mis-classify every unsampled-but-present manifest claim as `INTENDED_NOT_EMITTED`. **`Emitted` is a SET of `claim_text` values** (D6): a drifted claim carrying multiple citation markers produces ONE membership in `Emitted`, not one per ref slug — and therefore ONE `EMITTED_NOT_INTENDED` row, not duplicates. The Python pipeline enforces this in `_emit_drift` per `tests/audit/test_claim_audit_pipeline.py::TP13EmittedNotIntendedDedupe` + `::TCO4SamplingPreservesEmittedSet`.
 - **Supported** = subset of **audited** emitted that produced `judgment=SUPPORTED` (sampling does scope `Supported` because un-judged citations have no verdict).
 
 Diff streams:
@@ -286,7 +286,7 @@ Diff streams:
 Three-condition token rule. A sentence in the emitted draft becomes an `uncited_assertion` candidate when ALL THREE of the following hold:
 
 1. **Quantifier or empirical-claim verb present**: numbers / percentages / explicit quantifiers (`50%`, `two-thirds`, `most`, `several`), OR verbs like `showed`, `demonstrated`, `observed`, `proved`, `confirmed`.
-2. **No `<!--ref:slug-->` marker on this sentence AND no marker on its adjacent clause**. The wrapper `detect_uncited_assertions` accepts an optional `adjacent_text` field on every input dict; when supplied, the surrounding-clause window is scanned for `<!--ref:slug-->` markers with the same condition-2 regex. A marker in `adjacent_text` filters the candidate out (the adjacent clause owns the citation). Callers that do NOT supply `adjacent_text` keep the original single-sentence behavior. The Step 9 e2e wiring in `scripts/test_e2e_claim_audit.py` exercises both paths.
+2. **No `<!--ref:slug-->` marker on this sentence AND no marker on its adjacent clause**. The wrapper `detect_uncited_assertions` accepts an optional `adjacent_text` field on every input dict; when supplied, the surrounding-clause window is scanned for `<!--ref:slug-->` markers with the same condition-2 regex. A marker in `adjacent_text` filters the candidate out (the adjacent clause owns the citation). Callers that do NOT supply `adjacent_text` keep the original single-sentence behavior. The Step 9 e2e wiring in `tests/audit/test_e2e_claim_audit.py` exercises both paths.
 3. **Not a definitional sentence** (sentences containing `refers to` / `is defined as` / `we define` / `for the purposes of` are excluded — definitions don't need refs).
 
 Pseudocode (matches the production implementation at `scripts/uncited_assertion_detector.py`):
@@ -308,7 +308,7 @@ def detect_uncited(sentence):
   return (bool(trigger_tokens), trigger_tokens)
 ```
 
-The implementation diverges from the original 4-line pseudocode in four places: (a) bare-number matches go through a year/version/section guard before counting as quantifiers (the unguarded `\b\d+(?:\.\d+)?%?` shape produced false positives on `2026` / `v3.7.3` / `section 3.1.2`); (b) `RE_REF_MARKER` is a broad presence probe `<!--\s*ref:[^\s>][^>]*?-->` — it accepts any `<!--ref:...-->` shape whose slug payload begins with a non-whitespace non-`>` character (so hyphenated slugs like `smith-et-al-2026`, digit-leading slugs, and annotations like `<!--ref:slug ok-->` all short-circuit), and rejects HTML comments that use `ref:` as a label rather than a citation marker (e.g. `<!-- ref: $analysis -->`). The v3.7.3 strict validator in `scripts/check_v3_7_3_three_layer_citation.py` polices the precise slug shape; the detector's job here is presence detection, not validation; (c) trigger tokens are returned in left-to-right document order; (d) the wrapper `detect_uncited_assertions` scans the optional `adjacent_text` field for a `<!--ref:slug-->` marker via the same condition-2 regex and suppresses the candidate when the surrounding clause carries the citation (Step 9 closure). All four divergences are pinned by `scripts/test_uncited_assertion.py`.
+The implementation diverges from the original 4-line pseudocode in four places: (a) bare-number matches go through a year/version/section guard before counting as quantifiers (the unguarded `\b\d+(?:\.\d+)?%?` shape produced false positives on `2026` / `v3.7.3` / `section 3.1.2`); (b) `RE_REF_MARKER` is a broad presence probe `<!--\s*ref:[^\s>][^>]*?-->` — it accepts any `<!--ref:...-->` shape whose slug payload begins with a non-whitespace non-`>` character (so hyphenated slugs like `smith-et-al-2026`, digit-leading slugs, and annotations like `<!--ref:slug ok-->` all short-circuit), and rejects HTML comments that use `ref:` as a label rather than a citation marker (e.g. `<!-- ref: $analysis -->`). The v3.7.3 strict validator in `scripts/check_v3_7_3_three_layer_citation.py` polices the precise slug shape; the detector's job here is presence detection, not validation; (c) trigger tokens are returned in left-to-right document order; (d) the wrapper `detect_uncited_assertions` scans the optional `adjacent_text` field for a `<!--ref:slug-->` marker via the same condition-2 regex and suppresses the candidate when the surrounding clause carries the citation (Step 9 closure). All four divergences are pinned by `tests/audit/test_uncited_assertion.py`.
 
 Per D4-c last paragraph: **manifest membership does NOT exempt a sentence from being flagged**. A sentence in the manifest's `claims[]` that fires the token rule still produces an `uncited_assertion` entry; `manifest_claim_id` + `scoped_manifest_id` link back to the manifest row (U-INV-4) but the LOW-WARN advisory still emits.
 
@@ -371,5 +371,5 @@ The cited / uncited split for `audit_tool_failure` (rows 2 vs 3) is a schema-int
 - **v3.6.7 PATTERN PROTECTION convention**: `docs/design/2026-04-29-ars-v3.6.7-downstream-agent-pattern-protection-spec.md` §3.1
 - **Zhao et al. arXiv:2605.07723** — external motivation for L3 audit channel
 - **Li et al. RubricEM arXiv:2605.10899** — Borrows 1+2 (claim_intent_manifest + stage-attribution)
-- **Pipeline implementation**: `scripts/claim_audit_pipeline.py` (Python module pinned by `scripts/test_claim_audit_pipeline.py` T-P1..T-P11)
+- **Pipeline implementation**: `scripts/claim_audit_pipeline.py` (Python module pinned by `tests/audit/test_claim_audit_pipeline.py` T-P1..T-P11)
 - **Schema + invariant lint**: `scripts/check_claim_audit_consistency.py` (38 cross-field invariants)

@@ -3,7 +3,7 @@
 Implements the three-condition rule pinned in
 `academic-pipeline/agents/claim_ref_alignment_audit_agent.md`
 §"Uncited-assertion detector (D4-c)" and exercised by
-`scripts/test_uncited_assertion.py` (T-U1..T-U5).
+`tests/audit/test_uncited_assertion.py` (T-U1..T-U5).
 
 A sentence becomes an `uncited_assertion` candidate iff ALL THREE hold:
 
@@ -27,7 +27,7 @@ on each sentence dict. When supplied, that surrounding-clause window
 is scanned for a `<!--ref:slug-->` marker via the same condition-2
 regex; if found, the candidate is filtered out. Callers supply the
 window during the Step 9 e2e wiring (see
-`scripts/test_e2e_claim_audit.py`). Without `adjacent_text` the
+`tests/audit/test_e2e_claim_audit.py`). Without `adjacent_text` the
 wrapper preserves the v3.8 Step 6 single-sentence behavior.
 
 Detector outputs feed into the existing pipeline routing in

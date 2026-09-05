@@ -91,7 +91,7 @@ Plus three negative cases:
 |---|---|
 | `shared/handoff_schemas.md` | additive — optional field row + subsection |
 | `academic-pipeline/agents/pipeline_orchestrator_agent.md` | additive — emission step in §4 Transition Management |
-| `scripts/test_slr_lineage_emission.py` (new) | e2e conformance fixture |
+| `tests/tooling/test_slr_lineage_emission.py` (new) | e2e conformance fixture |
 | `CHANGELOG.md` | append release note under v3.7.x |
 
 ### Files explicitly NOT touched (matches #111 §Scope out-of-scope)

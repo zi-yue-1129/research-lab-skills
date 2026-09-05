@@ -116,7 +116,7 @@ Both surface as the same CI failure; the report block makes the diagnosis explic
 }
 ```
 
-The shape is the canonical contract `scripts/test_claim_audit_calibration.py` (T-C1 / T-C2) pins against. Adding fields is non-breaking; removing or renaming is a spec bump.
+The shape is the canonical contract `tests/audit/test_claim_audit_calibration.py` (T-C1 / T-C2) pins against. Adding fields is non-breaking; removing or renaming is a spec bump.
 
 **Partial-support subset (`partial_support`, #213).** Gold tuples tagged `expected_prompt_verdict=PARTIAL` carry `expected_judgment=UNSUPPORTED` (the B1 normalization), so a judge that **stops decomposing and emits a bare `UNSUPPORTED`** matches the aggregate gate and hides the exact regression #213 closes. The subset metric counts a partial fixture as passed ONLY when the judge emits `UNSUPPORTED` AND a well-formed true-partial `sub_claim_breakdown` (≥2 items, ≥1 SUPPORTED AND ≥1 non-SUPPORTED — the INV-19 definition). `miss_rate = misses / n_partial`; a bare-`UNSUPPORTED` judge registers `miss_rate=1.0` here while the aggregate FNR stays green. The block is additive — a gold set with no partial fixtures yields `{"miss_rate": 0.0, "n_partial": 0}`.
 
@@ -159,7 +159,7 @@ If a deploying operator brings a gold set that is itself biased (all tuples from
 ## Running locally
 
 ```bash
-PYTHONPATH=. python3 -m unittest scripts.test_claim_audit_calibration -v
+PYTHONPATH=. python3 -m unittest tests.audit.test_claim_audit_calibration -v
 ```
 
 The CI-equivalent invocation lives in `.github/workflows/spec-consistency.yml` (the v3.8 `#103` unittest step). Both paths exercise T-C1 (threshold gates), T-C2 (per-class FNR/FPR reporting), and T-C3 (gold-set shape integrity).

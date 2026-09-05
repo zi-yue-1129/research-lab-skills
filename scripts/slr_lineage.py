@@ -18,7 +18,7 @@ from typing import Mapping
 # import emit` from the repo root (the namespace-package style used by
 # test_check_sprint_contract.py, tests/test_helpers.py, etc.), the sibling import
 # needs the `scripts.` prefix. When loaded via `import slr_lineage` after a
-# sys.path.insert (the style used by scripts/test_slr_lineage_emission.py),
+# sys.path.insert (the style used by tests/tooling/test_slr_lineage_emission.py),
 # the bare name works. Try the package form first; fall back to the sibling
 # form. Either path resolves to the same module — single source of truth for
 # SLR_MODES preserved.

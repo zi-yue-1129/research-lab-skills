@@ -5,7 +5,7 @@
 **Consumer**: `policy_anchor_disclosure_protocol.md` (the LLM-prose renderer reads this table at runtime when in `disclosure` mode with `--policy-anchor=<a>` selector).
 **Provenance**: cells below carry verbatim policy quotes lifted from the discovery doc §4.3-4.6 source-of-truth (`docs/design/2026-05-13-ai-disclosure-schema-discovery.md`). Each anchor section records its snapshot id + truncated sha256 so the lint validator can confirm provenance integrity. Live URLs may drift after capture; the wayback snapshot is canonical.
 
-**Lint contract**: `scripts/check_policy_anchor_table.py` enforces 4-anchor coverage, 16-field-per-anchor canonical order, source_strength enum membership, and verbatim-quote presence for mandate/recommend/conditional cells. Mutation tests live at `scripts/test_check_policy_anchor_table.py`.
+**Lint contract**: `scripts/check_policy_anchor_table.py` enforces 4-anchor coverage, 16-field-per-anchor canonical order, source_strength enum membership, and verbatim-quote presence for mandate/recommend/conditional cells. Mutation tests live at `tests/checks/test_check_policy_anchor_table.py`.
 
 **Nature ↔ v3.2 venue de-dup**: the Nature anchor below shares its substantive policy content with the v3.2 Nature venue renderer in `venue_disclosure_policies.md`. Both files cross-reference the canonical source pointer `shared/policy_data/nature_policy.md` so a future single-source-of-truth refactor can byte-compare imported substrings without breaking either consumer. The dedup pointer presence is lint-enforced via `verify_nature_dedup_with_venue` in `check_policy_anchor_table.py`.
 
