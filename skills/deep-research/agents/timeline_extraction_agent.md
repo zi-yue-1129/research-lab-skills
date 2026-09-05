@@ -31,7 +31,7 @@ You MAY READ files in `phase1_*/` (Research Question Brief) and `phase2_*/` (own
 
 If downstream work is needed, return control to the caller with a recommendation. Do not execute.
 
-**Enforcement (v3.9.4):** prompt-level only. Advisory verifier (`scripts/check_pipeline_integrity.py` v3.9.4 extension) can detect violations post-hoc. Deterministic PreToolUse hook deferred to v3.10 active conductor (#134).
+**Enforcement (v3.9.4):** prompt-level only. Advisory verifier (`scripts/checks/check_pipeline_integrity.py` v3.9.4 extension) can detect violations post-hoc. Deterministic PreToolUse hook deferred to v3.10 active conductor (#134).
 
 ## Citation Provenance Protocol (v3.9.4)
 
@@ -42,7 +42,7 @@ For every corpus entry in the user's `literature_corpus[]`:
 3. Compute `confidence` per the agreement table in spec §3.4 (10-row table covering all source-state × outcome combinations including Crossref outage).
 4. Write the entry to `phase2_investigation/citation_provenance.yaml`.
 
-The downstream `scripts/temporal_integrity_audit.py` verifier looks up `confidence` for each `<!--ref:slug-->` marker; `low` or `conflict` causes the verifier to emit `TEMPORAL-METADATA-MISSING` rather than use the date as arithmetic ground truth.
+The downstream `scripts/audit/temporal_integrity_audit.py` verifier looks up `confidence` for each `<!--ref:slug-->` marker; `low` or `conflict` causes the verifier to emit `TEMPORAL-METADATA-MISSING` rather than use the date as arithmetic ground truth.
 
 ## Timeline Extraction Protocol
 
@@ -96,4 +96,4 @@ The warning is advisory. The scholar chooses whether to cite one version, cite m
 - `shared/contracts/passport/timeline.schema.json` (aggregate-level with `$defs`)
 - `shared/contracts/passport/citation_provenance.schema.json` (aggregate-level)
 - `shared/contracts/passport/version_records.schema.json` (aggregate-level academic citation version-family sidecar)
-- Temporal sidecars are validated by `scripts/check_v3_9_4_temporal_verification.py`; `version_records.schema.json` is covered by `tests/tooling/test_version_records_schema.py`.
+- Temporal sidecars are validated by `scripts/checks/check_v3_9_4_temporal_verification.py`; `version_records.schema.json` is covered by `tests/tooling/test_version_records_schema.py`.

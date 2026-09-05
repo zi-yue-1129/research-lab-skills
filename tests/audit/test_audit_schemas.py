@@ -8,7 +8,7 @@ Per spec §10 verification gate:
 
 This is the schema-shape acceptance test. Cross-artifact invariants
 (§3.7 family A-F rows, --mode {proposal,persisted} arms, mirror rules,
-ordering rules) ship in scripts/check_audit_artifact_consistency.py +
+ordering rules) ship in scripts/checks/check_audit_artifact_consistency.py +
 tests/checks/test_check_audit_artifact_consistency.py at Phase 6.3.
 
 Run:

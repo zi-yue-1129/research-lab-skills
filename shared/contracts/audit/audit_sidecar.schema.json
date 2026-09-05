@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Imbad0202/academic-research-skills/shared/contracts/audit/audit_sidecar.schema.json",
   "title": "Codex Audit Sidecar Metadata",
-  "description": "Schema for <run_id>.meta.json — the Layer 3 anti-fake-audit evidence file produced by scripts/run_codex_audit.sh. Captures runner / timing / process / stream / prompt context for one audit run. Cross-file rules linking sidecar fields to JSONL events / on-disk files / passport entries (B1-B7 in §3.7 family B) are lint-enforced by scripts/check_audit_artifact_consistency.py (Phase 6.3); this schema only enforces the per-file shape. AUDIT_FAILED conditional: when the companion verdict's status == 'AUDIT_FAILED', the JSON Schema 'if/then' below relaxes stream.jsonl_thread_id to allow empty string (no usable JSONL thread exists when codex aborted).",
+  "description": "Schema for <run_id>.meta.json — the Layer 3 anti-fake-audit evidence file produced by scripts/run_codex_audit.sh. Captures runner / timing / process / stream / prompt context for one audit run. Cross-file rules linking sidecar fields to JSONL events / on-disk files / passport entries (B1-B7 in §3.7 family B) are lint-enforced by scripts/checks/check_audit_artifact_consistency.py (Phase 6.3); this schema only enforces the per-file shape. AUDIT_FAILED conditional: when the companion verdict's status == 'AUDIT_FAILED', the JSON Schema 'if/then' below relaxes stream.jsonl_thread_id to allow empty string (no usable JSONL thread exists when codex aborted).",
 
   "type": "object",
   "additionalProperties": false,

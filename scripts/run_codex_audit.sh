@@ -614,7 +614,7 @@ declare -a PRIMARY=("${DELIVERABLE}")
 # ---------------------------------------------------------------------------
 # F-018 (§3.6): Reject binary/NUL inputs before snapshot.
 # ---------------------------------------------------------------------------
-# Step 0b — snapshot bundle (DELEGATED TO scripts/audit_snapshot.py).
+# Step 0b — snapshot bundle (DELEGATED TO scripts/audit/audit_snapshot.py).
 #
 # Round 5 architectural redesign: the Bash-side snapshot helper had three
 # structural failures across rounds 1-5 of codex review:
@@ -631,14 +631,14 @@ declare -a PRIMARY=("${DELIVERABLE}")
 #   - Binary-safe NUL detection (b"\0" in content)
 #   - hashlib.sha256(file_bytes) matches sha256sum(file) exactly
 #
-# scripts/audit_snapshot.py snapshot mode:
+# scripts/audit/audit_snapshot.py snapshot mode:
 #   - Reads all bundle files as bytes (binary-safe)
 #   - Rejects NUL-containing files (exit 64)
 #   - Computes per-file SHA-256 + bundle manifest SHA from same bytes
 #   - Writes <run_id>.manifest.txt and <run_id>.prompt.txt
 #   - Emits JSON summary to stdout for the wrapper to consume
 #
-# Step 3a uses scripts/audit_snapshot.py verify mode against the same manifest;
+# Step 3a uses scripts/audit/audit_snapshot.py verify mode against the same manifest;
 # their SHAs match exactly (no trailing-newline drift).
 # ---------------------------------------------------------------------------
 
@@ -677,7 +677,7 @@ if [[ -n "${PREV_FINDINGS}" ]]; then
   _prev_findings_arg=(--previous-findings "${PREV_FINDINGS}")
 fi
 
-python3 scripts/audit_snapshot.py snapshot \
+python3 scripts/audit/audit_snapshot.py snapshot \
   "${_snap_args[@]}" \
   "${_prev_findings_arg[@]+"${_prev_findings_arg[@]}"}" \
   --audit-template "${AUDIT_TEMPLATE_PATH}" \
@@ -839,7 +839,7 @@ fi
 # ---------------------------------------------------------------------------
 VERIFY_OUT_FILE="${OUT_DIR}/${run_id}.verify_stdout.tmp"
 set +e
-python3 scripts/audit_snapshot.py verify \
+python3 scripts/audit/audit_snapshot.py verify \
   --manifest "${SNAPSHOT_MANIFEST_PATH}" \
   > "${VERIFY_OUT_FILE}" \
   2>/dev/null
@@ -1059,7 +1059,7 @@ AUDIT_FAILED_REASON=""
 # preserved in AUDIT_FAILED_REASON rather than a hardcoded fallback string.
 _probe_stderr=""
 _probe_exit=0
-_probe_stderr=$(python3 scripts/parse_audit_verdict.py \
+_probe_stderr=$(python3 scripts/audit/parse_audit_verdict.py \
   --probe "${OUT_DIR}/${run_id}.jsonl" 2>&1 >/dev/null) \
   || _probe_exit=$?
 
@@ -1079,7 +1079,7 @@ if [[ "${CODEX_EXIT}" -eq 0 ]] \
   # with EX_CANTCREAT 73 when /tmp is full or permission-denied, aborting the wrapper
   # before AUDIT_FAILED artifacts are written — violating §4.6 invariant E8.
   _full_parse_stderr_file="${OUT_DIR}/${run_id}.parse_stderr.tmp"
-  if _verdict_yaml_content=$(python3 scripts/parse_audit_verdict.py \
+  if _verdict_yaml_content=$(python3 scripts/audit/parse_audit_verdict.py \
         --jsonl "${OUT_DIR}/${run_id}.jsonl" \
         --round "${ROUND}" \
         --target-rounds "${TARGET_ROUNDS}" \

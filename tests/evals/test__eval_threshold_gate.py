@@ -1,4 +1,4 @@
-"""Tests for scripts/_eval_threshold_gate.py (#184 Delta 3 / Fix 1; #328 per-class gate).
+"""Tests for scripts/evals/_eval_threshold_gate.py (#184 Delta 3 / Fix 1; #328 per-class gate).
 
 The absolute-threshold gate must fail a PR when ANY declared binding threshold
 regresses — aggregate OR per-class. Manifests declare both (e.g.
@@ -9,7 +9,7 @@ per-class-fail-but-aggregate-pass report passed the gate when it should block.
 """
 from __future__ import annotations
 
-from scripts import _eval_threshold_gate as gate
+from scripts.evals import _eval_threshold_gate as gate
 
 
 def _task(task_name="citation_extraction", agg_metric="accuracy",

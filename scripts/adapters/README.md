@@ -56,7 +56,7 @@ Files under `_templates/` and `.obsidian/` are skipped. Wikilinks (`[[other note
 Before using the passport in any ARS workflow:
 
 ```bash
-python scripts/check_literature_corpus_schema.py \
+python scripts/checks/check_literature_corpus_schema.py \
     --passport /tmp/passport.yaml \
     --rejection-log /tmp/rejection_log.yaml
 ```
@@ -72,7 +72,7 @@ python scripts/check_literature_corpus_schema.py \
 5. Keep the output shape exactly (sorted `literature_corpus[]` by `citation_key`, always emit `rejection_log.yaml`, schema-clean entries only).
 6. Set `obtained_via: "other"` and `adapter_name: "<your-adapter-name>"` on every entry you produce.
 7. Reuse helpers in [`_common.py`](_common.py) where possible — `make_citation_key`, `ensure_unique_citekey`, `parse_csl_name`, `parse_semicolon_names`, `path_to_file_uri`, `write_passport`, `write_rejection_log`, `now_iso`. They encode the contract details so you do not have to re-derive them.
-8. Validate: `python scripts/check_literature_corpus_schema.py --passport <your passport>`.
+8. Validate: `python scripts/checks/check_literature_corpus_schema.py --passport <your passport>`.
 9. Write tests modeled on `scripts/adapters/tests/`. The conftest fixtures `clean_timestamps` and `load_yaml` make golden-output testing easy.
 
 ## Privacy reminder

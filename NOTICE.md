@@ -16,7 +16,7 @@ directories that are split between upstream and local content), see
   (built 2026-08-04 through 2026-08-06, after both toolsets below were
   already merged — original bridging infrastructure, not part of either
   source project)
-- `scripts/generate_slides.py` (predates the ARS import; do not confuse with
+- `scripts/tooling/generate_slides.py` (predates the ARS import; do not confuse with
   the rest of `scripts/`, which is upstream — see §2)
 - `examples/research-log/`, `examples/report-slides/`
 - `evals/report-slides-pptx-visual-review/`, `evals/report-slides-visual-authoring/`

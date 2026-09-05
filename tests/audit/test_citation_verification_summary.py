@@ -18,8 +18,8 @@ import pytest
 from jsonschema import Draft202012Validator
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT / "scripts") not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT / "scripts"))
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 SCHEMA_PATH = (
     REPO_ROOT / "shared" / "contracts" / "passport"
@@ -218,7 +218,7 @@ def _ro(**resolvers):
 
 
 def test_reduce_matched_wins_true():
-    from citation_verification_summary import reduce_lookup_verified
+    from scripts.audit.citation_verification_summary import reduce_lookup_verified
     # matched WINS even when another applicable resolver is unmatched.
     assert reduce_lookup_verified(_ro(
         crossref=("matched", "id"),
@@ -227,7 +227,7 @@ def test_reduce_matched_wins_true():
 
 
 def test_reduce_id_keyed_unmatched_is_false():
-    from citation_verification_summary import reduce_lookup_verified
+    from scripts.audit.citation_verification_summary import reduce_lookup_verified
     # ID-keyed unmatched, no matched → false (fabrication evidence, C-V6(a)).
     assert reduce_lookup_verified(_ro(
         crossref=("unmatched", "id"),
@@ -238,7 +238,7 @@ def test_reduce_id_keyed_unmatched_is_false():
 def test_reduce_title_only_unmatched_is_unresolvable_NOT_false():
     """THE narrowed-false case (C-V6(a)): only title-only unmatched (no
     resolvable ID) → unresolvable, never false. The real-but-unindexed paper."""
-    from citation_verification_summary import reduce_lookup_verified
+    from scripts.audit.citation_verification_summary import reduce_lookup_verified
     assert reduce_lookup_verified(_ro(
         crossref=("unmatched", "title"),
         openalex=("unmatched", "title"),
@@ -247,7 +247,7 @@ def test_reduce_title_only_unmatched_is_unresolvable_NOT_false():
 
 def test_reduce_mixed_id_and_title_unmatched_is_false():
     """At least one ID-keyed unmatched → false, even if others are title-only."""
-    from citation_verification_summary import reduce_lookup_verified
+    from scripts.audit.citation_verification_summary import reduce_lookup_verified
     assert reduce_lookup_verified(_ro(
         crossref=("unmatched", "id"),
         openalex=("unmatched", "title"),
@@ -257,7 +257,7 @@ def test_reduce_mixed_id_and_title_unmatched_is_false():
 def test_reduce_anti_fabrication_bias_id_unmatched_plus_unreachable():
     """3 ID-keyed unmatched + 1 unreachable → false (one outage doesn't cancel
     positive non-existence evidence). Spec Delta 4 anti-fabrication bias."""
-    from citation_verification_summary import reduce_lookup_verified
+    from scripts.audit.citation_verification_summary import reduce_lookup_verified
     assert reduce_lookup_verified(_ro(
         crossref=("unmatched", "id"),
         openalex=("unmatched", "id"),
@@ -269,7 +269,7 @@ def test_reduce_anti_fabrication_bias_id_unmatched_plus_unreachable():
 def test_reduce_title_unmatched_plus_unreachable_is_unresolvable():
     """Partial outage whose only unmatched are title-only → unresolvable, not
     false (C-V6(a) / OQ-4 amendment)."""
-    from citation_verification_summary import reduce_lookup_verified
+    from scripts.audit.citation_verification_summary import reduce_lookup_verified
     assert reduce_lookup_verified(_ro(
         crossref=("unmatched", "title"),
         openalex="unreachable",
@@ -277,7 +277,7 @@ def test_reduce_title_unmatched_plus_unreachable_is_unresolvable():
 
 
 def test_reduce_all_unreachable_is_unresolvable():
-    from citation_verification_summary import reduce_lookup_verified
+    from scripts.audit.citation_verification_summary import reduce_lookup_verified
     assert reduce_lookup_verified(_ro(
         crossref="unreachable",
         openalex="unreachable",
@@ -287,7 +287,7 @@ def test_reduce_all_unreachable_is_unresolvable():
 def test_reduce_all_skipped_is_unresolvable():
     """Manual entry: all resolvers skipped → empty adjudicating set →
     unresolvable."""
-    from citation_verification_summary import reduce_lookup_verified
+    from scripts.audit.citation_verification_summary import reduce_lookup_verified
     assert reduce_lookup_verified(_ro(
         crossref="skipped",
         openalex="skipped",
@@ -298,7 +298,7 @@ def test_reduce_all_skipped_is_unresolvable():
 
 def test_reduce_skipped_excluded_matched_still_true():
     """skipped is excluded from classification; a matched among skips → true."""
-    from citation_verification_summary import reduce_lookup_verified
+    from scripts.audit.citation_verification_summary import reduce_lookup_verified
     assert reduce_lookup_verified(_ro(
         crossref=("matched", "id"),
         arxiv="skipped",  # arXiv skipped on a non-arXiv citation
@@ -310,7 +310,7 @@ def test_reduce_by_design_false_negative_no_id_bogus_title():
     bogus title resolves to unresolvable, NOT false — the acknowledged recall
     limit (a no-identifier fabrication is caught by the v3.8 audit + human
     review, not the existence gate). MUST stay unresolvable."""
-    from citation_verification_summary import reduce_lookup_verified
+    from scripts.audit.citation_verification_summary import reduce_lookup_verified
     assert reduce_lookup_verified(_ro(
         crossref=("unmatched", "title"),
         openalex=("unmatched", "title"),
@@ -319,7 +319,7 @@ def test_reduce_by_design_false_negative_no_id_bogus_title():
 
 
 def test_reduce_empty_outcomes_is_unresolvable():
-    from citation_verification_summary import reduce_lookup_verified
+    from scripts.audit.citation_verification_summary import reduce_lookup_verified
     assert reduce_lookup_verified({}) == "unresolvable"
 
 
@@ -329,7 +329,7 @@ def test_reduce_legacy_unmatched_missing_queried_by_is_unresolvable():
     unresolvable (the reducer keys on queried_by=='id', so a missing key is
     fail-safe-toward-not-false, never false). The schema now forbids this shape,
     but the reducer stays robust to upstream data drift."""
-    from citation_verification_summary import reduce_lookup_verified
+    from scripts.audit.citation_verification_summary import reduce_lookup_verified
     assert reduce_lookup_verified(
         {"crossref": {"status": "unmatched"}}) == "unresolvable"
 
@@ -337,5 +337,5 @@ def test_reduce_legacy_unmatched_missing_queried_by_is_unresolvable():
 def test_reduce_none_valued_outcome_is_ignored():
     """A None resolver value (v or {} guard) must not crash and must not be
     treated as evidence; with only a None outcome → unresolvable."""
-    from citation_verification_summary import reduce_lookup_verified
+    from scripts.audit.citation_verification_summary import reduce_lookup_verified
     assert reduce_lookup_verified({"crossref": None}) == "unresolvable"

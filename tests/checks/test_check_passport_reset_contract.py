@@ -17,9 +17,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from tests.test_helpers import run_script
-from scripts.check_passport_reset_contract import scan_duplicate_option_values
+from scripts.checks.check_passport_reset_contract import scan_duplicate_option_values
 
-SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "check_passport_reset_contract.py"
+SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "checks" / "check_passport_reset_contract.py"
 
 
 def _write(root: Path, rel_path: str, content: str) -> Path:

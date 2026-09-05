@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """#108 policy-anchor disclosure renderer conformance tests.
 
-Reference impl: scripts/policy_anchor_disclosure_referee.py
+Reference impl: scripts/audit/policy_anchor_disclosure_referee.py
 
 The referee is an executable specification of the disclosure decision
 logic encoded in policy_anchor_disclosure_protocol.md §2 (G10 7-row
@@ -25,10 +25,10 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT / "scripts") not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT / "scripts"))
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-import policy_anchor_disclosure_referee as referee  # noqa: E402
+from scripts.audit import policy_anchor_disclosure_referee as referee
 
 
 # Convenience constructors mirroring referee.RendererInput shape.

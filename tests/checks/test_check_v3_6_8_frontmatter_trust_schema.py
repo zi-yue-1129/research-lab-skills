@@ -19,7 +19,7 @@ from typing import Any
 import pytest
 from jsonschema import Draft202012Validator
 
-from scripts.check_v3_6_8_frontmatter_trust_schema import (
+from scripts.checks.check_v3_6_8_frontmatter_trust_schema import (
     check_entry,
     check_payload,
 )

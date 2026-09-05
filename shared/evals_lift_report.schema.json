@@ -15,7 +15,7 @@
     "harness_version": {
       "type": "string",
       "minLength": 1,
-      "description": "Version of scripts/run_evals.py that produced this report."
+      "description": "Version of scripts/evals/run_evals.py that produced this report."
     },
     "run_id": {
       "type": "string",

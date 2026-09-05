@@ -1,7 +1,7 @@
 # arXiv API Verification Protocol
 
 **Status**: v3.11 (#182 Delta 1)
-**Used by**: `bibliography_agent`, `scripts/contamination_signals.py` (`resolve_arxiv_unmatched`)
+**Used by**: `bibliography_agent`, `scripts/audit/contamination_signals.py` (`resolve_arxiv_unmatched`)
 **API base**: `http://export.arxiv.org/api/query`
 **Rate limit**: arXiv asks callers to pace requests ~3s apart (https://info.arxiv.org/help/api/tou.html). No polite-pool / higher-tier mechanism.
 **Polite email env var**: none (arXiv has no such convention)
@@ -66,7 +66,7 @@ Note: the unified `lookup_verified` summary (#182 Delta 4, a later batch) narrow
 
 ## Client implementation
 
-See `scripts/arxiv_client.py`. Class `ArxivClient` exposes `arxiv_id_lookup(arxiv_id, expected_title)` and `title_search(title, year=None)`. Both return `dict | None` (the dict being a projected `{title, year}` view of one Atom `<entry>`). Both raise `ArxivUnavailable` on degradation per the table above.
+See `scripts/clients/arxiv_client.py`. Class `ArxivClient` exposes `arxiv_id_lookup(arxiv_id, expected_title)` and `title_search(title, year=None)`. Both return `dict | None` (the dict being a projected `{title, year}` view of one Atom `<entry>`). Both raise `ArxivUnavailable` on degradation per the table above.
 
 ## Cross-references
 

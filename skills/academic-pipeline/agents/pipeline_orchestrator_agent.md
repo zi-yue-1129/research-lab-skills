@@ -451,9 +451,9 @@ The cost is multiplicative: a 10-stage pipeline with cross-model enabled produce
 
 **Outputs feeding Stage 6 self-reflection.**
 
-- Per-stage `defect_stage` histogram appendix (renders when ≥5 completed entries via `scripts/claim_audit_finalizer.py:render_stage6_histogram`) — added to the existing Stage 6 AI Self-Reflection Report after gate pass.
+- Per-stage `defect_stage` histogram appendix (renders when ≥5 completed entries via `scripts/audit/claim_audit_finalizer.py:render_stage6_histogram`) — added to the existing Stage 6 AI Self-Reflection Report after gate pass.
 
-**Finalizer matrix (8-row).** The matrix discriminates the previously-conflated paywall vs anchorless cases by reading `ref_retrieval_method` alongside `(judgment, defect_stage)`. Rows are evaluated top-to-bottom, first match wins. Spec source-of-truth: §5. Implementation: `scripts/claim_audit_finalizer.py:classify_claim_audit_result`.
+**Finalizer matrix (8-row).** The matrix discriminates the previously-conflated paywall vs anchorless cases by reading `ref_retrieval_method` alongside `(judgment, defect_stage)`. Rows are evaluated top-to-bottom, first match wins. Spec source-of-truth: §5. Implementation: `scripts/audit/claim_audit_finalizer.py:classify_claim_audit_result`.
 
 | `judgment` | `defect_stage` | `ref_retrieval_method` | Annotation | Severity Tier | Gate behavior |
 |---|---|---|---|---|---|
@@ -475,9 +475,9 @@ The cost is multiplicative: a 10-stage pipeline with cross-model enabled produce
 - Spec: `docs/design/2026-05-15-issue-103-claim-alignment-audit-spec.md` §5 (matrix), §3 (schemas), §4 (agent prompt structure), §6 (lint)
 - Agent prompt: `academic-pipeline/agents/claim_ref_alignment_audit_agent.md`
 - Schemas: `shared/contracts/passport/claim_audit_result.schema.json`, `claim_intent_manifest.schema.json`, `uncited_assertion.schema.json`, `claim_drift.schema.json`, `constraint_violation.schema.json`
-- Finalizer module: `scripts/claim_audit_finalizer.py` (8-row matrix + Stage 6 histogram)
-- Pipeline module: `scripts/claim_audit_pipeline.py` (§4 step 1-6)
-- Lint: `scripts/check_claim_audit_consistency.py`
+- Finalizer module: `scripts/audit/claim_audit_finalizer.py` (8-row matrix + Stage 6 histogram)
+- Pipeline module: `scripts/audit/claim_audit_pipeline.py` (§4 step 1-6)
+- Lint: `scripts/checks/check_claim_audit_consistency.py`
 
 ### 4. Transition Management
 
@@ -505,7 +505,7 @@ The OR preserves any lineage signal already persisted on a resumed or mid-entry 
 
 **Reset-boundary interaction (v3.6.3+):** the §"Passport Reset Boundary" emission sequence above invokes this same OR before writing the passport that the boundary entry references. Otherwise `ARS_PASSPORT_RESET=1` on a `systematic-review` run would freeze the passport without `slr_lineage`, and the consuming `resume_from_passport=<hash>` session would see an empty `state_tracker.stages` + a flag-less incoming passport → OR resolves `false` → PRISMA-trAIce dispatch blocks. Note: `slr_lineage` lives at passport top-level and is **not** part of the `reset_boundary[]` ledger entry schema (the ledger schema is closed; the boundary hash covers only ledger entries per `passport_as_reset_boundary.md` §"The reset boundary protocol" step 2). The field is therefore persisted but **not hash-integrity-checked** by the boundary hash — same trust model as `origin_skill` / `version_label` / `verification_status` / other Schema 9 top-level passport fields. The protection v3.7.4 needs is correctness-at-write (the OR), not integrity-after-write.
 
-Reference helper: `scripts/slr_lineage.py` `emit(stages, incoming_slr_lineage)`. Pre-v3.7.4 passports lack the field and the renderer treats absence as `false` (cold-start fallback identical to pre-v3.7.4 behavior). See `shared/handoff_schemas.md` §"Run-level lineage signal (v3.7.4)" for the field contract, and `docs/design/2026-05-15-issue-111-slr-lineage-emission-design.md` for the design.
+Reference helper: `scripts/audit/slr_lineage.py` `emit(stages, incoming_slr_lineage)`. Pre-v3.7.4 passports lack the field and the renderer treats absence as `false` (cold-start fallback identical to pre-v3.7.4 behavior). See `shared/handoff_schemas.md` §"Run-level lineage signal (v3.7.4)" for the field contract, and `docs/design/2026-05-15-issue-111-slr-lineage-emission-design.md` for the design.
 
 **Handoff material transfer rules:**
 

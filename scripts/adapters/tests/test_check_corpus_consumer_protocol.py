@@ -1,4 +1,4 @@
-"""Tests for scripts/check_corpus_consumer_protocol.py.
+"""Tests for scripts/checks/check_corpus_consumer_protocol.py.
 
 Each L1-L9 invariant has at least one positive test (passing case) and
 one negative test (failing case). The lint is manifest-driven for L3-L6
@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-LINT_SCRIPT = REPO_ROOT / "scripts" / "check_corpus_consumer_protocol.py"
+LINT_SCRIPT = REPO_ROOT / "scripts" / "checks" / "check_corpus_consumer_protocol.py"
 
 
 def run_lint(cwd: Path) -> subprocess.CompletedProcess:

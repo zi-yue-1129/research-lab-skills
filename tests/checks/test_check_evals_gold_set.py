@@ -1,4 +1,4 @@
-"""Mutation tests for scripts/check_evals_gold_set.py.
+"""Mutation tests for scripts/checks/check_evals_gold_set.py.
 
 Each test mutates the clean fixture to violate one invariant and asserts
 the validator catches it. Plus one positive test on the clean fixture.
@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from scripts import check_evals_gold_set
+from scripts.checks import check_evals_gold_set
 
 FIXTURE_ROOT = Path(__file__).resolve().parents[2] / "scripts" / "fixtures" / "check_evals_gold_set"
 CLEAN_FIXTURE = FIXTURE_ROOT / "clean"

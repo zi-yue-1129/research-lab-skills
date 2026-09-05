@@ -23,7 +23,7 @@ import pytest
 # directory on sys.path for free; from tests/<group>/ it has to be explicit.
 # Do not delete this as redundant: a whole-suite run passes on some other test's
 # insert, but the per-file run in scripts/_ci_pytest_manifest.toml does not.
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 
 def _atom(entries: list[str]) -> bytes:
@@ -58,7 +58,7 @@ def _mock_resp(body: bytes) -> MagicMock:
 
 def test_title_search_match_at_threshold():
     """0.70 similarity threshold matches like the other clients."""
-    from arxiv_client import ArxivClient
+    from scripts.clients.arxiv_client import ArxivClient
 
     body = _atom([_entry("Attention Is All You Need")])
     with patch("urllib.request.urlopen", return_value=_mock_resp(body)):
@@ -71,7 +71,7 @@ def test_title_search_match_at_threshold():
 
 def test_title_search_no_match_below_threshold():
     """No match if best candidate similarity < 0.70."""
-    from arxiv_client import ArxivClient
+    from scripts.clients.arxiv_client import ArxivClient
 
     body = _atom([_entry("Completely Unrelated Paper Title")])
     with patch("urllib.request.urlopen", return_value=_mock_resp(body)):
@@ -83,7 +83,7 @@ def test_title_search_no_match_below_threshold():
 
 def test_title_search_empty_feed_returns_none():
     """Zero <entry> elements (arXiv's empty-result shape) -> None."""
-    from arxiv_client import ArxivClient
+    from scripts.clients.arxiv_client import ArxivClient
 
     body = _atom([])
     with patch("urllib.request.urlopen", return_value=_mock_resp(body)):
@@ -95,7 +95,7 @@ def test_title_search_empty_feed_returns_none():
 
 def test_arxiv_id_lookup_with_title_cross_check():
     """ID hit MUST pass 0.70 title cross-check (ID_MISMATCH -> None)."""
-    from arxiv_client import ArxivClient
+    from scripts.clients.arxiv_client import ArxivClient
 
     body = _atom([_entry("Some Other Paper")])
     with patch("urllib.request.urlopen", return_value=_mock_resp(body)):
@@ -110,7 +110,7 @@ def test_arxiv_id_lookup_with_title_cross_check():
 
 def test_arxiv_id_lookup_with_matching_title():
     """ID hit + matching title -> success (returns the entry dict)."""
-    from arxiv_client import ArxivClient
+    from scripts.clients.arxiv_client import ArxivClient
 
     body = _atom([_entry("Attention Is All You Need")])
     with patch("urllib.request.urlopen", return_value=_mock_resp(body)):
@@ -126,7 +126,7 @@ def test_arxiv_id_lookup_with_matching_title():
 
 def test_arxiv_id_lookup_empty_feed_is_miss():
     """A non-existent arXiv ID returns an empty feed (no <entry>) -> None (miss)."""
-    from arxiv_client import ArxivClient
+    from scripts.clients.arxiv_client import ArxivClient
 
     body = _atom([])
     with patch("urllib.request.urlopen", return_value=_mock_resp(body)):
@@ -142,7 +142,7 @@ def test_arxiv_id_lookup_empty_feed_is_miss():
 def test_arxiv_id_with_version_suffix_resolves():
     """arXiv natively supports versioned IDs (1706.03762v5) in id_list — the
     client passes the id through verbatim and a matching feed resolves."""
-    from arxiv_client import ArxivClient
+    from scripts.clients.arxiv_client import ArxivClient
 
     body = _atom([_entry("Attention Is All You Need")])
     captured = {}
@@ -167,7 +167,7 @@ def test_arxiv_id_as_full_url_falls_through_to_title():
     and the client falls through to title search. Documents current behavior:
     the client does NOT strip URLs — adapters are expected to emit bare IDs.
     The fall-through still finds the paper via title, so it is not a hard miss."""
-    from arxiv_client import ArxivClient
+    from scripts.clients.arxiv_client import ArxivClient
 
     # id_list lookup of a URL -> arXiv returns empty feed; title search hits.
     id_feed = _atom([])
@@ -192,7 +192,7 @@ def test_arxiv_id_as_full_url_falls_through_to_title():
 def test_title_search_empty_title_is_miss_not_crash():
     """An empty title produces a ti:"" query; the client must not crash and
     returns None (no candidate meets the 0.70 threshold against "")."""
-    from arxiv_client import ArxivClient
+    from scripts.clients.arxiv_client import ArxivClient
 
     body = _atom([])  # arXiv returns no entries for an empty title query
     with patch("urllib.request.urlopen", return_value=_mock_resp(body)):
@@ -204,7 +204,7 @@ def test_title_search_empty_title_is_miss_not_crash():
 
 def test_title_search_prefers_matching_year():
     """Two same-title candidates - matching publication year wins via 0.05 bonus."""
-    from arxiv_client import ArxivClient
+    from scripts.clients.arxiv_client import ArxivClient
 
     body = _atom([
         _entry("Attention Is All You Need", published="1999-01-01T00:00:00Z"),
@@ -220,7 +220,7 @@ def test_title_search_prefers_matching_year():
 
 def test_429_triggers_2s_backoff_3_retries(monkeypatch):
     """Per protocol: 429 -> 2s backoff x 3 retries -> raise ArxivUnavailable."""
-    from arxiv_client import ArxivClient, ArxivUnavailable
+    from scripts.clients.arxiv_client import ArxivClient, ArxivUnavailable
 
     call_count = [0]
 
@@ -245,7 +245,7 @@ def test_429_triggers_2s_backoff_3_retries(monkeypatch):
 
 def test_5xx_skips_immediately():
     """Per protocol: 5xx -> no retry, raise ArxivUnavailable. call_count == 1."""
-    from arxiv_client import ArxivClient, ArxivUnavailable
+    from scripts.clients.arxiv_client import ArxivClient, ArxivUnavailable
 
     call_count = [0]
 
@@ -266,7 +266,7 @@ def test_5xx_skips_immediately():
 
 def test_network_error_raises_unavailable():
     """URLError / TimeoutError -> ArxivUnavailable (degradation contract)."""
-    from arxiv_client import ArxivClient, ArxivUnavailable
+    from scripts.clients.arxiv_client import ArxivClient, ArxivUnavailable
 
     def mock_urlopen(*args, **kwargs):
         raise urllib.error.URLError("connection refused")
@@ -288,7 +288,7 @@ def test_malformed_xml_body_raises_unavailable():
     the explicit root-tag check (test_non_atom_200_body_raises_unavailable), not
     here. This test covers genuinely malformed bytes (truncated/unclosed),
     which is what an interrupted transfer actually produces."""
-    from arxiv_client import ArxivClient, ArxivUnavailable
+    from scripts.clients.arxiv_client import ArxivClient, ArxivUnavailable
 
     with patch("urllib.request.urlopen", return_value=_mock_resp(
             b'<feed xmlns="http://www.w3.org/2005/Atom"><entry><title>trunc')):
@@ -304,7 +304,7 @@ def test_non_atom_200_body_raises_unavailable():
     an HTML error page has a non-feed root tag. The non-feed root must raise
     ArxivUnavailable (omit-on-degradation) so it is never cached as a false
     arxiv_unmatched=true for the 90-day TTL."""
-    from arxiv_client import ArxivClient, ArxivUnavailable
+    from scripts.clients.arxiv_client import ArxivClient, ArxivUnavailable
 
     html_error_page = b"<html><body><h1>503 Service Unavailable</h1></body></html>"
     with patch("urllib.request.urlopen", return_value=_mock_resp(html_error_page)):
@@ -317,7 +317,7 @@ def test_genuine_empty_atom_feed_is_miss_not_unavailable():
     """#331 guard against over-correction: a genuine empty Atom <feed> (zero
     <entry>, the real arXiv miss shape) must still resolve to a miss (None), NOT
     raise. The root-tag check accepts the feed root and findall returns []."""
-    from arxiv_client import ArxivClient
+    from scripts.clients.arxiv_client import ArxivClient
 
     empty_feed = b'<feed xmlns="http://www.w3.org/2005/Atom"><title>arXiv Query</title></feed>'
     with patch("urllib.request.urlopen", return_value=_mock_resp(empty_feed)):
@@ -328,7 +328,7 @@ def test_genuine_empty_atom_feed_is_miss_not_unavailable():
 def test_oserror_during_read_raises_unavailable():
     """urlopen succeeds, resp.read() raises OSError (socket drop mid-stream).
     Translate to ArxivUnavailable. Mirrors crossref."""
-    from arxiv_client import ArxivClient, ArxivUnavailable
+    from scripts.clients.arxiv_client import ArxivClient, ArxivUnavailable
 
     mock_response = MagicMock()
     mock_response.read.side_effect = OSError("socket dropped mid-read")
@@ -344,7 +344,7 @@ def test_oserror_during_read_raises_unavailable():
 def test_truncated_read_raises_unavailable():
     """http.client.IncompleteRead = mid-stream socket drop (200 + truncated
     body). Inherits HTTPException not OSError. Mirrors the crossref client."""
-    from arxiv_client import ArxivClient, ArxivUnavailable
+    from scripts.clients.arxiv_client import ArxivClient, ArxivUnavailable
 
     mock_response = MagicMock()
     mock_response.read.side_effect = http.client.IncompleteRead(
@@ -362,7 +362,7 @@ def test_truncated_read_raises_unavailable():
 def test_throttle_uses_monotonic_clock(monkeypatch):
     """time.monotonic for elapsed measurement (NTP-safe), not time.time.
     Aligns with crossref/openalex/S2 (#128 §6)."""
-    from arxiv_client import ArxivClient
+    from scripts.clients.arxiv_client import ArxivClient
 
     monotonic_calls = []
     time_calls = []

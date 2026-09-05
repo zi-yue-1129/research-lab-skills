@@ -1,4 +1,4 @@
-"""Unit tests for scripts/run_ci_pytest_manifest.py (issue #156).
+"""Unit tests for scripts/tooling/run_ci_pytest_manifest.py (issue #156).
 
 The runner reads scripts/_ci_pytest_manifest.toml and invokes pytest for each
 entry. Behavior contract:
@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 
-SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "run_ci_pytest_manifest.py"
+SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "tooling" / "run_ci_pytest_manifest.py"
 
 
 def _run(

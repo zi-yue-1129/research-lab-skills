@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """#105 v3.7.3 contamination_signals backfill migration tool tests.
 
-Tests scripts/migrate_literature_corpus_to_v3_7_3.py — the CLI that
+Tests scripts/migrations/migrate_literature_corpus_to_v3_7_3.py — the CLI that
 backfills `contamination_signals` on pre-v3.7.3 literature_corpus[]
 entries per v3.7.3 spec §3.2 R-L3-2-B.
 
@@ -16,10 +16,10 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT / "scripts") not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT / "scripts"))
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-import migrate_literature_corpus_to_v3_7_3 as mig  # noqa: E402
+from scripts.migrations import migrate_literature_corpus_to_v3_7_3 as mig
 
 
 SAMPLE_PASSPORT_YAML = """\
@@ -340,7 +340,7 @@ literature_corpus:
             p.write_text(partial_yaml)
             before = p.read_text()
             # Simulate API still degraded — SS lookup raises
-            from contamination_signals import SemanticScholarUnavailable
+            from scripts.audit.contamination_signals import SemanticScholarUnavailable
             bad_client = MagicMock()
             bad_client.lookup.side_effect = SemanticScholarUnavailable("still down")
             report = mig.migrate_passport(p, ss_client=bad_client, dry_run=False)

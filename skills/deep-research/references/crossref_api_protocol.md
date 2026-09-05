@@ -63,7 +63,7 @@ Crossref returns `type` (e.g., `journal-article`, `book-chapter`). **v3.9.0 igno
 
 ## Client implementation
 
-See `scripts/crossref_client.py`. Class `CrossrefClient` exposes `doi_lookup_with_title_check(doi, expected_title)` and `title_search(title, year=None)`. Both return `dict | None` (the dict being either the `message` for DOI, or one item from `message.items` for title search). Both raise `CrossrefUnavailable` on degradation per the table above.
+See `scripts/clients/crossref_client.py`. Class `CrossrefClient` exposes `doi_lookup_with_title_check(doi, expected_title)` and `title_search(title, year=None)`. Both return `dict | None` (the dict being either the `message` for DOI, or one item from `message.items` for title search). Both raise `CrossrefUnavailable` on degradation per the table above.
 
 ## Cross-references
 

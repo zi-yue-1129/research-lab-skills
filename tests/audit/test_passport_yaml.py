@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for `scripts/_passport_yaml.py` — shared ruamel.yaml round-trip
+"""Tests for `scripts/audit/_passport_yaml.py` — shared ruamel.yaml round-trip
 configuration extracted from `migrate_literature_corpus_to_v3_7_3.py` and
 `migrate_literature_corpus_to_v3_9_0.py` (#128 v3.9.1 housekeeping §5).
 
@@ -22,9 +22,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import _passport_yaml as py  # noqa: E402
+from scripts.audit import _passport_yaml as py
 
 
 class ConfigurationTest(unittest.TestCase):

@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[2]
-LINT = REPO / "scripts" / "check_cross_model_verification_sync.py"
+LINT = REPO / "scripts" / "checks" / "check_cross_model_verification_sync.py"
 DOC = REPO / "shared" / "cross_model_verification.md"
 
 # A re-inline of the (pre-#349 naive) Gemini sources jq, used by the re-inline mutation test.

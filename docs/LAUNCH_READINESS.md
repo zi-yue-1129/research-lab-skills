@@ -63,7 +63,7 @@ None currently open.
   tables of all four README locales now that it's plugin-installable
   (currently plugin-discoverable but not listed as a row in any README
   skill table).
-- `scripts/check_version_consistency.py` — still not confirmed whether it
+- `scripts/checks/check_version_consistency.py` — still not confirmed whether it
   would catch a future README-badge-vs-`package.json` drift; not
   investigated this pass either.
 - Showcase/demo discoverability remains reasonable; no action needed.

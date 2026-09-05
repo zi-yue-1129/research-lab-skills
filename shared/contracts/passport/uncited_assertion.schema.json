@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Imbad0202/academic-research-skills/shared/contracts/passport/uncited_assertion.schema.json",
   "title": "Material Passport Uncited Assertion Entry",
-  "description": "One entry in Material Passport Schema 9 uncited_assertions[] aggregate. Per uncited-assertion finding emitted by claim_ref_alignment_audit_agent §4 step 6 (D4-c three-condition token rule). Rides in its own aggregate because the finding has no ref_slug to evaluate — embedding it in claim_audit_result would either force a sentinel ref_slug value or relax claim_audit_result.required, both fighting that schema's grain. Always LOW-WARN advisory at the finalizer; gate-refuse is reserved for citation-level defects and constraint_violation. Cross-field invariants U-INV-1..U-INV-4 are lint-enforced in scripts/check_claim_audit_consistency.py. See docs/design/2026-05-15-issue-103-claim-alignment-audit-spec.md §3.3.",
+  "description": "One entry in Material Passport Schema 9 uncited_assertions[] aggregate. Per uncited-assertion finding emitted by claim_ref_alignment_audit_agent §4 step 6 (D4-c three-condition token rule). Rides in its own aggregate because the finding has no ref_slug to evaluate — embedding it in claim_audit_result would either force a sentinel ref_slug value or relax claim_audit_result.required, both fighting that schema's grain. Always LOW-WARN advisory at the finalizer; gate-refuse is reserved for citation-level defects and constraint_violation. Cross-field invariants U-INV-1..U-INV-4 are lint-enforced in scripts/checks/check_claim_audit_consistency.py. See docs/design/2026-05-15-issue-103-claim-alignment-audit-spec.md §3.3.",
 
   "type": "object",
   "additionalProperties": false,

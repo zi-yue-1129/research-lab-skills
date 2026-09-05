@@ -39,27 +39,35 @@ CI runs `pytest scripts/ tests/ skills/`, which picks up both.
    `.github/workflows/spec-consistency.yml`.
 
 The second matters when editing a test: **`conftest.py` is not loaded under
-`unittest`**. A test that needs `scripts/` on `sys.path` must arrange that
-itself, in the module, rather than relying on a fixture or a conftest hook.
-The established form is:
+`unittest`**. A test that imports from `scripts/` must arrange its own path
+setup in the module, rather than relying on a fixture or a conftest hook. The
+established form is:
 
 ```python
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from scripts.checks import check_pipeline_integrity
 ```
 
 `parents[2]` is the repo root from `tests/<group>/test_x.py`. Anything computing
 a path from `__file__` must count from that depth.
 
+The import names the group, because `scripts/` holds only group directories —
+`scripts/<group>/x.py` is tested by `tests/<group>/test_x.py`, so the group in
+the import is the directory this test is already in. A bare `import x` is a bug
+even when a whole-suite run passes on some earlier test's `sys.path` insert; the
+per-file runs in `scripts/_ci_pytest_manifest.toml` do not get that.
+
 A subset of these files is additionally pinned by
 `scripts/_ci_pytest_manifest.toml`, the single source of truth for the
 file-by-file pytest invocations in `spec-consistency.yml`. Adding a direct
 `pytest tests/<group>/test_x.py` step to that workflow instead of a manifest
-entry is rejected by `scripts/check_ci_pytest_manifest.py`.
+entry is rejected by `scripts/checks/check_ci_pytest_manifest.py`.
 
 ## `fixtures/` is not test-only
 
 Despite living here, several fixture corpora are read by **production** linters,
-not just by tests — `scripts/check_pattern_eval_manifest.py` and
-`scripts/check_v3_6_6_ab_manifest.py` both validate trees under
+not just by tests — `scripts/checks/check_pattern_eval_manifest.py` and
+`scripts/checks/check_v3_6_6_ab_manifest.py` both validate trees under
 `fixtures/`. Treat these as spec corpora with a test-adjacent home, and check
 for non-test consumers before moving or pruning one.

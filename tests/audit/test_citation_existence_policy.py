@@ -38,7 +38,7 @@ from pathlib import Path
 import pytest
 from jsonschema import Draft202012Validator
 
-from scripts.check_v3_10_policy import (
+from scripts.checks.check_v3_10_policy import (
     parse_ref_marker,
     any_marker_triggers_refusal,
     check_terminal_policies_schema,
@@ -49,7 +49,7 @@ from scripts.check_v3_10_policy import (
     DEFAULT_ORCHESTRATOR,
     DEFAULT_FORMATTER,
 )
-from scripts.citation_verification_summary import reduce_lookup_verified
+from scripts.audit.citation_verification_summary import reduce_lookup_verified
 
 
 # ===========================================================================

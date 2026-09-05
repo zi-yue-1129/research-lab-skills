@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Imbad0202/academic-research-skills/shared/contracts/audit/audit_verdict.schema.json",
   "title": "Codex Audit Verdict File",
-  "description": "Schema for <run_id>.verdict.yaml — the human-readable verdict file produced by the wrapper after parsing the JSONL stream's single item.completed.agent_message event (per §3.3 / §3.5). This is the policy surface the orchestrator reads for ship/block decisions; JSONL is raw evidence (Layer 2) and sidecar is environmental evidence (Layer 3). Cross-field invariants (PASS/MINOR/MATERIAL/AUDIT_FAILED count consistency; finding_counts agrees with findings[]) are lint-enforced in scripts/check_audit_artifact_consistency.py (Phase 6.3 §3.7 family A rows A1/A2/A5/A6) — this schema enforces the per-file shape so wrapper-side lint can reject malformed verdicts before they reach the orchestrator.",
+  "description": "Schema for <run_id>.verdict.yaml — the human-readable verdict file produced by the wrapper after parsing the JSONL stream's single item.completed.agent_message event (per §3.3 / §3.5). This is the policy surface the orchestrator reads for ship/block decisions; JSONL is raw evidence (Layer 2) and sidecar is environmental evidence (Layer 3). Cross-field invariants (PASS/MINOR/MATERIAL/AUDIT_FAILED count consistency; finding_counts agrees with findings[]) are lint-enforced in scripts/checks/check_audit_artifact_consistency.py (Phase 6.3 §3.7 family A rows A1/A2/A5/A6) — this schema enforces the per-file shape so wrapper-side lint can reject malformed verdicts before they reach the orchestrator.",
 
   "type": "object",
   "additionalProperties": false,
@@ -69,7 +69,7 @@
   "allOf": [
     {
       "title": "[doc-only] round vs target_rounds — enforced by lint, not schema",
-      "description": "JSON Schema 2020-12 has no native cross-field comparison; round <= target_rounds (§3.7 A3) is enforced by scripts/check_audit_artifact_consistency.py (Phase 6.3) and by the wrapper's --round/--target-rounds preflight (§4.2). This clause carries the comment so future readers don't try to add a non-existent schema-level constraint here."
+      "description": "JSON Schema 2020-12 has no native cross-field comparison; round <= target_rounds (§3.7 A3) is enforced by scripts/checks/check_audit_artifact_consistency.py (Phase 6.3) and by the wrapper's --round/--target-rounds preflight (§4.2). This clause carries the comment so future readers don't try to add a non-existent schema-level constraint here."
     },
     {
       "description": "AUDIT_FAILED requires failure_reason. Lint additionally enforces findings == [] and finding_counts all zero per §3.7 A2/A6.",

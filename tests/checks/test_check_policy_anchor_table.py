@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Mutation tests for scripts/check_policy_anchor_table.py.
+"""Mutation tests for scripts/checks/check_policy_anchor_table.py.
 
 Each test mutates a known-good anchor-table snippet in a known-bad way and
 asserts the validator reports the expected violation. The goal is to prove
@@ -15,10 +15,10 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT / "scripts") not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT / "scripts"))
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-import check_policy_anchor_table as cpat  # noqa: E402
+from scripts.checks import check_policy_anchor_table as cpat
 
 
 _GOOD_TABLE = textwrap.dedent(

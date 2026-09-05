@@ -9,7 +9,7 @@ from tempfile import TemporaryDirectory
 
 from tests.test_helpers import run_script
 
-SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "check_version_consistency.py"
+SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "checks" / "check_version_consistency.py"
 
 
 def _run(root: Path) -> subprocess.CompletedProcess:

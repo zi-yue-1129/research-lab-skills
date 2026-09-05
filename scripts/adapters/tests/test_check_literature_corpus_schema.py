@@ -7,7 +7,7 @@ import yaml
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SCRIPT = REPO_ROOT / "scripts/check_literature_corpus_schema.py"
+SCRIPT = REPO_ROOT / "scripts/checks/check_literature_corpus_schema.py"
 
 
 def _write_yaml(tmp_path, name, data):

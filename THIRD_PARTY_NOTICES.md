@@ -42,7 +42,7 @@ gitignored nested clone, not a git subtree/merge, so this repository's own
 | `docs/ARCHITECTURE.md`, `docs/SETUP.md`, `docs/SETUP.zh-TW.md`, `docs/PERFORMANCE.md`, `docs/PERFORMANCE.zh-TW.md` | No "Added"/rewrite commits found since import — content is the upstream version. (Note: `docs/SETUP.md`/`docs/SETUP.zh-TW.md` currently contain one stale post-import edit, a dead link to a nonexistent `research-lab-skills-codex` sibling repo — see [Known Issues](#known-issues) below.) |
 | `examples/showcase/`, `examples/compliance/`, `examples/benchmark_report_template.json`, `examples/contradiction_pairs_example.md`, `examples/figure_table_trace_example.md`, `examples/passport_with_repro_lock.yaml` | Upstream ARS example/showcase artifacts. |
 | `evals/calibration/`, `evals/gold/`, `evals/README.md` | Upstream ARS evaluation fixtures. |
-| `scripts/` — all files **except** `scripts/generate_slides.py` (see §2) | Upstream ARS scripts (citation clients, `check_*.py`/`test_*.py` policy gates, claim-audit pipeline, etc.). 10 post-import commits touch this set, all narrow CI/lint/path fixes — not content rewrites. |
+| `scripts/` — all files **except** `scripts/tooling/generate_slides.py` (see §2) | Upstream ARS scripts (citation clients, `check_*.py`/`test_*.py` policy gates, claim-audit pipeline, etc.). 10 post-import commits touch this set, all narrow CI/lint/path fixes — not content rewrites. |
 
 **Personal Project Statement (Cheng-I Wu, as published in the upstream repo):**
 developed in personal time, on personal equipment, using self-paid AI
@@ -65,7 +65,7 @@ and report-slides skills"), before any ARS content existed in the repo.
 | Path | Basis |
 |---|---|
 | `skills/research-log/`, `skills/report-slides/`, `skills/research-mode/` | Original Lab Skills, present since the repository's first commits, predating the ARS import by roughly two months. |
-| `scripts/generate_slides.py` | Added in the very first commit (`f7bd69c`) — predates the ARS import entirely. Currently misfiled under a `scripts/` scope that older attribution text assigned wholesale to ARS/Imbad0202; corrected here. |
+| `scripts/tooling/generate_slides.py` | Added in the very first commit (`f7bd69c`) — predates the ARS import entirely. Currently misfiled under a `scripts/` scope that older attribution text assigned wholesale to ARS/Imbad0202; corrected here. |
 | `examples/research-log/`, `examples/report-slides/` | New subtrees created after the ARS import (first added 2026-06-12, commit `94372fb`, and expanded through 2026-08-04) — not present in, and not derived from, the ARS import. |
 | `evals/report-slides-pptx-visual-review/`, `evals/report-slides-visual-authoring/` | Added 2026-08-03/2026-08-04, entirely local — report-slides visual-QA fixtures. |
 | `docs/superpowers/` | 38 commits since the import (2026-06-13 through 2026-08-13) — the single most actively modified documentation path in this repository post-merge. |

@@ -1,7 +1,7 @@
 """Unit tests for v3.8 annotation-literal sync lint.
 
 The lint enforces that every `ANNOTATION_HIGH_WARN_*` constant in
-`scripts/claim_audit_finalizer.py` has a matching bracket-prefix in
+`scripts/audit/claim_audit_finalizer.py` has a matching bracket-prefix in
 `academic-paper/agents/formatter_agent.md` REFUSE list. The tests cover:
 
 1. The prefix-extraction helper handles the three annotation literal
@@ -22,14 +22,14 @@ import textwrap
 import unittest
 from pathlib import Path
 
-from scripts.check_v3_8_annotation_literal_sync import (
+from scripts.checks.check_v3_8_annotation_literal_sync import (
     _annotation_prefix,
     _extract_refuse_block,
 )
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-LINT_SCRIPT = REPO_ROOT / "scripts" / "check_v3_8_annotation_literal_sync.py"
+LINT_SCRIPT = REPO_ROOT / "scripts" / "checks" / "check_v3_8_annotation_literal_sync.py"
 
 
 class AnnotationPrefixHelperTest(unittest.TestCase):
@@ -158,7 +158,7 @@ class LintScriptTest(unittest.TestCase):
             tmp_formatter.write_text(mutated)
 
             result = subprocess.run(
-                [sys.executable, str(tmp_root / "scripts" / "check_v3_8_annotation_literal_sync.py")],
+                [sys.executable, str(tmp_root / "scripts" / "checks" / "check_v3_8_annotation_literal_sync.py")],
                 capture_output=True,
                 text=True,
                 cwd=str(tmp_root),
@@ -203,7 +203,7 @@ class LintScriptTest(unittest.TestCase):
             tmp_formatter.write_text(mutated)
 
             result = subprocess.run(
-                [sys.executable, str(tmp_root / "scripts" / "check_v3_8_annotation_literal_sync.py")],
+                [sys.executable, str(tmp_root / "scripts" / "checks" / "check_v3_8_annotation_literal_sync.py")],
                 capture_output=True,
                 text=True,
                 cwd=str(tmp_root),
@@ -232,7 +232,7 @@ class LintScriptTest(unittest.TestCase):
             shutil.copytree(REPO_ROOT, tmp_root, ignore=shutil.ignore_patterns(
                 ".git", "node_modules", "__pycache__", "*.pyc", "venv*", ".venv"
             ))
-            tmp_finalizer = tmp_root / "scripts" / "claim_audit_finalizer.py"
+            tmp_finalizer = tmp_root / "scripts" / "audit" / "claim_audit_finalizer.py"
             text = tmp_finalizer.read_text()
             # Rename the CLAIM-NOT-SUPPORTED literal in place — the formatter
             # prose still says NOT-SUPPORTED, so the lint must surface the
@@ -245,7 +245,7 @@ class LintScriptTest(unittest.TestCase):
             tmp_finalizer.write_text(mutated)
 
             result = subprocess.run(
-                [sys.executable, str(tmp_root / "scripts" / "check_v3_8_annotation_literal_sync.py")],
+                [sys.executable, str(tmp_root / "scripts" / "checks" / "check_v3_8_annotation_literal_sync.py")],
                 capture_output=True,
                 text=True,
                 cwd=str(tmp_root),

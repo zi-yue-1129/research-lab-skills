@@ -9,7 +9,7 @@ The dispatching agent substitutes `<path>` below with the active Material Passpo
 
 Implementation:
 ```bash
-python3 scripts/ars_mark_read.py $ARGUMENTS --passport-path "<path>" --unmark
+python3 scripts/tooling/ars_mark_read.py $ARGUMENTS --passport-path "<path>" --unmark
 ```
 
 Mode reference: `docs/design/2026-04-30-ars-v3.6.8-trust-provenance-and-drift-transparency-spec.md` §3.6 + Step 7.

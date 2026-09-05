@@ -19,7 +19,7 @@ from typing import Any
 
 import pytest
 
-from scripts.check_audit_artifact_consistency import (
+from scripts.checks.check_audit_artifact_consistency import (
     LintContext,
     LintError,
     check_a1,
@@ -1446,7 +1446,7 @@ class TestCLI:
     def test_argparse_invalid_mode_returns_64(self):
         # Codex round 4 P3: argparse-level failures must exit 64, not 2.
         result = subprocess.run(
-            [sys.executable, str(REPO / "scripts/check_audit_artifact_consistency.py"),
+            [sys.executable, str(REPO / "scripts/checks/check_audit_artifact_consistency.py"),
              "--mode", "definitely_not_a_mode"],
             capture_output=True, text=True,
         )
@@ -1457,7 +1457,7 @@ class TestCLI:
 
     def test_argparse_unknown_flag_returns_64(self):
         result = subprocess.run(
-            [sys.executable, str(REPO / "scripts/check_audit_artifact_consistency.py"),
+            [sys.executable, str(REPO / "scripts/checks/check_audit_artifact_consistency.py"),
              "--bogus-flag"],
             capture_output=True, text=True,
         )
@@ -1552,7 +1552,7 @@ class TestCLI:
         # Run via subprocess so we exercise the actual import path the gate
         # uses (importlib loads parse_audit_verdict by file path).
         result = subprocess.run(
-            [sys.executable, str(REPO / "scripts/check_audit_artifact_consistency.py"),
+            [sys.executable, str(REPO / "scripts/checks/check_audit_artifact_consistency.py"),
              "--mode", "persisted",
              "--output-dir", str(tmp_path),
              "--run-id", run_id,
@@ -1924,13 +1924,13 @@ class TestCLI:
 
     def test_script_is_executable(self):
         # Codex round 14 P1: spec §5.2 L2-5 invokes the lint as
-        # `scripts/check_audit_artifact_consistency.py --mode jsonl-stream …`
+        # `scripts/checks/check_audit_artifact_consistency.py --mode jsonl-stream …`
         # without a `python` prefix. The file must carry the executable
         # bit (100755) like Phase 6.1's audit_snapshot.py / parse_audit_
         # verdict.py / run_codex_audit.sh — direct exec failing with
         # permission denied (exit 126) would block the orchestrator gate.
         import os
-        script_path = REPO / "scripts/check_audit_artifact_consistency.py"
+        script_path = REPO / "scripts/checks/check_audit_artifact_consistency.py"
         assert os.access(script_path, os.X_OK), (
             f"{script_path} must be executable for orchestrator §5.2 L2-5 "
             f"direct invocation. Run `chmod +x` and `git update-index --chmod=+x`."
@@ -1940,7 +1940,7 @@ class TestCLI:
         # End-to-end smoke: invoke the script directly (no `python` prefix)
         # and confirm it produces the documented harness exit code. Belt
         # and braces against future `chmod 644` regressions.
-        script_path = REPO / "scripts/check_audit_artifact_consistency.py"
+        script_path = REPO / "scripts/checks/check_audit_artifact_consistency.py"
         result = subprocess.run(
             [str(script_path), "--example-validation-harness"],
             capture_output=True, text=True,
@@ -2081,7 +2081,7 @@ class TestFixtureSmoke:
     def test_positive_persisted_minor(self):
         bundle = FIXTURE_ROOT / "positive/persisted_minor"
         result = subprocess.run(
-            [sys.executable, str(REPO / "scripts/check_audit_artifact_consistency.py"),
+            [sys.executable, str(REPO / "scripts/checks/check_audit_artifact_consistency.py"),
              "--mode", "persisted",
              "--output-dir", str(bundle),
              "--run-id", "2026-04-30T15-22-04Z-d8f3",
@@ -2096,7 +2096,7 @@ class TestFixtureSmoke:
     def test_positive_proposal_pass(self):
         bundle = FIXTURE_ROOT / "positive/proposal_pass"
         result = subprocess.run(
-            [sys.executable, str(REPO / "scripts/check_audit_artifact_consistency.py"),
+            [sys.executable, str(REPO / "scripts/checks/check_audit_artifact_consistency.py"),
              "--mode", "proposal",
              "--output-dir", str(bundle),
              "--run-id", "2026-04-30T15-22-04Z-d8f3",
@@ -2111,7 +2111,7 @@ class TestFixtureSmoke:
     def test_negative_a1_pass_with_p1(self):
         bundle = FIXTURE_ROOT / "negative/a1_pass_with_p1"
         result = subprocess.run(
-            [sys.executable, str(REPO / "scripts/check_audit_artifact_consistency.py"),
+            [sys.executable, str(REPO / "scripts/checks/check_audit_artifact_consistency.py"),
              "--mode", "proposal",
              "--output-dir", str(bundle),
              "--run-id", "2026-04-30T15-22-04Z-d8f3",
@@ -2124,7 +2124,7 @@ class TestFixtureSmoke:
     def test_negative_a7_orphan_completion(self):
         jsonl = FIXTURE_ROOT / "negative/a7_orphan_completion/2026-04-30T15-22-04Z-d8f3.jsonl"
         result = subprocess.run(
-            [sys.executable, str(REPO / "scripts/check_audit_artifact_consistency.py"),
+            [sys.executable, str(REPO / "scripts/checks/check_audit_artifact_consistency.py"),
              "--mode", "jsonl-stream",
              "--jsonl", str(jsonl)],
             capture_output=True, text=True,

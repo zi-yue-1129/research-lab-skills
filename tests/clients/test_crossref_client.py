@@ -15,12 +15,12 @@ import pytest
 # directory on sys.path for free; from tests/<group>/ it has to be explicit.
 # Do not delete this as redundant: a whole-suite run passes on some other test's
 # insert, but the per-file run in scripts/_ci_pytest_manifest.toml does not.
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 
 def test_title_search_match_at_threshold(monkeypatch):
     """0.70 similarity threshold matches like S2/OpenAlex."""
-    from crossref_client import CrossrefClient
+    from scripts.clients.crossref_client import CrossrefClient
 
     mock_response = MagicMock()
     mock_response.read.return_value = json.dumps({
@@ -45,7 +45,7 @@ def test_title_search_match_at_threshold(monkeypatch):
 
 def test_title_search_no_match_below_threshold(monkeypatch):
     """No match if best candidate similarity < 0.70."""
-    from crossref_client import CrossrefClient
+    from scripts.clients.crossref_client import CrossrefClient
 
     mock_response = MagicMock()
     mock_response.read.return_value = json.dumps({
@@ -65,7 +65,7 @@ def test_title_search_no_match_below_threshold(monkeypatch):
 
 def test_doi_lookup_with_title_cross_check(monkeypatch):
     """DOI hit MUST pass Levenshtein 0.70 title cross-check (DOI_MISMATCH)."""
-    from crossref_client import CrossrefClient
+    from scripts.clients.crossref_client import CrossrefClient
 
     mock_response = MagicMock()
     mock_response.read.return_value = json.dumps({
@@ -89,7 +89,7 @@ def test_doi_lookup_with_title_cross_check(monkeypatch):
 
 def test_doi_lookup_with_matching_title(monkeypatch):
     """DOI hit + matching title -> success."""
-    from crossref_client import CrossrefClient
+    from scripts.clients.crossref_client import CrossrefClient
 
     mock_response = MagicMock()
     mock_response.read.return_value = json.dumps({
@@ -114,7 +114,7 @@ def test_doi_lookup_with_matching_title(monkeypatch):
 
 def test_429_triggers_2s_backoff_3_retries(monkeypatch):
     """Per protocol: 429 -> 2s backoff x 3 retries -> raise CrossrefUnavailable."""
-    from crossref_client import CrossrefClient, CrossrefUnavailable
+    from scripts.clients.crossref_client import CrossrefClient, CrossrefUnavailable
 
     call_count = [0]
 
@@ -139,7 +139,7 @@ def test_429_triggers_2s_backoff_3_retries(monkeypatch):
 
 def test_5xx_skips_immediately(monkeypatch):
     """Per protocol: 5xx -> no retry, raise CrossrefUnavailable. Assert call_count == 1."""
-    from crossref_client import CrossrefClient, CrossrefUnavailable
+    from scripts.clients.crossref_client import CrossrefClient, CrossrefUnavailable
 
     call_count = [0]
 
@@ -159,7 +159,7 @@ def test_5xx_skips_immediately(monkeypatch):
 
 def test_doi_404_treated_as_miss_not_unavailable(monkeypatch):
     """DOI not indexed in Crossref (404) -> return None (miss), not raise CrossrefUnavailable."""
-    from crossref_client import CrossrefClient, CrossrefUnavailable
+    from scripts.clients.crossref_client import CrossrefClient, CrossrefUnavailable
 
     def mock_urlopen(*args, **kwargs):
         raise urllib.error.HTTPError(
@@ -179,7 +179,7 @@ def test_doi_404_treated_as_miss_not_unavailable(monkeypatch):
 
 def test_title_search_prefers_matching_year(monkeypatch):
     """Two candidates same title - year-match wins via 0.05 score bonus."""
-    from crossref_client import CrossrefClient
+    from scripts.clients.crossref_client import CrossrefClient
 
     mock_response = MagicMock()
     # Crossref year is nested: typically under `published-print` or `issued`.
@@ -211,7 +211,7 @@ def test_title_search_prefers_matching_year(monkeypatch):
 
 def test_polite_pool_email_in_user_agent(monkeypatch):
     """CROSSREF_POLITE_EMAIL adds 'mailto:...' to User-Agent header (NOT query param)."""
-    from crossref_client import CrossrefClient
+    from scripts.clients.crossref_client import CrossrefClient
 
     captured_headers = []
 
@@ -242,7 +242,7 @@ def test_oserror_during_read_raises_unavailable(monkeypatch):
     mid-stream). Per v3.9.0 spec §3.7 degradation contract, this MUST be
     translated to CrossrefUnavailable so migrate_literature_corpus_to_v3_9_0
     omits crossref_unmatched instead of aborting the whole backfill."""
-    from crossref_client import CrossrefClient, CrossrefUnavailable
+    from scripts.clients.crossref_client import CrossrefClient, CrossrefUnavailable
 
     mock_response = MagicMock()
     mock_response.read.side_effect = OSError("socket dropped mid-read")
@@ -258,7 +258,7 @@ def test_oserror_during_read_raises_unavailable(monkeypatch):
 def test_invalid_utf8_body_raises_unavailable(monkeypatch):
     """resp.read() returns bytes that aren't valid UTF-8. Per v3.9.0 spec §3.7,
     translate to CrossrefUnavailable not bubble UnicodeDecodeError."""
-    from crossref_client import CrossrefClient, CrossrefUnavailable
+    from scripts.clients.crossref_client import CrossrefClient, CrossrefUnavailable
 
     mock_response = MagicMock()
     mock_response.read.return_value = b"\xff\xfe\xff garbage"
@@ -275,7 +275,7 @@ def test_invalid_json_body_raises_unavailable(monkeypatch):
     """resp.read() returns valid utf-8 but not valid JSON (truncated body /
     HTML error page). Per v3.9.0 spec §3.7, translate to CrossrefUnavailable
     not bubble JSONDecodeError."""
-    from crossref_client import CrossrefClient, CrossrefUnavailable
+    from scripts.clients.crossref_client import CrossrefClient, CrossrefUnavailable
 
     mock_response = MagicMock()
     mock_response.read.return_value = b"<html>503 backend unavailable</html>"
@@ -294,7 +294,7 @@ def test_truncated_read_raises_unavailable(monkeypatch):
     to OpenAlex client."""
     import http.client
 
-    from crossref_client import CrossrefClient, CrossrefUnavailable
+    from scripts.clients.crossref_client import CrossrefClient, CrossrefUnavailable
 
     mock_response = MagicMock()
     mock_response.read.side_effect = http.client.IncompleteRead(
@@ -313,7 +313,7 @@ def test_throttle_uses_monotonic_clock(monkeypatch):
     """time.monotonic for elapsed measurement (NTP-safe). time.time can
     go backward on NTP adjustments, breaking elapsed calculation.
     Aligns OA/CR with semantic_scholar_client.py (#128 §6)."""
-    from crossref_client import CrossrefClient
+    from scripts.clients.crossref_client import CrossrefClient
 
     monotonic_calls = []
     time_calls = []
@@ -342,7 +342,7 @@ def test_throttle_uses_monotonic_clock(monkeypatch):
 
 def test_doi_lookup_quotes_doi_path_segment(monkeypatch):
     """DOI lookup must encode path separators/query markers before urlopen."""
-    from crossref_client import CrossrefClient
+    from scripts.clients.crossref_client import CrossrefClient
 
     captured_urls = []
 
@@ -373,8 +373,8 @@ def test_doi_lookup_quotes_doi_path_segment(monkeypatch):
 
 
 def test_rejects_non_crossref_api_url_before_urlopen(monkeypatch):
-    import crossref_client
-    from crossref_client import CrossrefClient, CrossrefUnavailable
+    from scripts.clients import crossref_client
+    from scripts.clients.crossref_client import CrossrefClient, CrossrefUnavailable
 
     monkeypatch.setattr(crossref_client, "_API_BASE", "http://evil.example")
     urlopen = MagicMock()

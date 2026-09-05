@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.check_v3_10_policy import (
+from scripts.checks.check_v3_10_policy import (
     parse_ref_marker,
     marker_triggers_refusal,
     any_marker_triggers_refusal,
