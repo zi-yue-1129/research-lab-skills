@@ -56,11 +56,11 @@ Otherwise, classify the user's input:
    → Route directly; no clarification, no orchestrator detour.
 
 2. **Cross-phase materials detected** — user provides artifacts spanning ≥ 2 pipeline phases without naming a specific skill (e.g., pre-written abstract + pre-collected literature; full draft + reviewer comments + bibliography):
-   → **Clarify**. Do NOT auto-route to a single-phase agent. List candidate workflows as a-d options in markdown body (NOT via AskUserQuestion tool). See `shared/references/intent_clarification_protocol.md` for the message template.
+   → **Clarify**. Do NOT auto-route to a single-phase agent. List candidate workflows as a-d options in markdown body (NOT via AskUserQuestion tool). See `shared/protocols/intent_clarification_protocol.md` for the message template.
    → Reason: clarification is the safest action when materials don't unambiguously identify intent.
 
 3. **Ambiguous intent, no materials** — user provides no artifacts and no clear request:
-   → Clarify per `shared/references/intent_clarification_protocol.md`.
+   → Clarify per `shared/protocols/intent_clarification_protocol.md`.
 
 ## Routing Rules
 

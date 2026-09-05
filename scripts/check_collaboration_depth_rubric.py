@@ -13,7 +13,7 @@ from pathlib import Path
 
 from _skill_lint import split_frontmatter
 
-RUBRIC_PATH = Path("shared/collaboration_depth_rubric.md")
+RUBRIC_PATH = Path("shared/external/collaboration_depth_rubric.md")
 ORCHESTRATOR_PATH = Path("skills/academic-pipeline/agents/pipeline_orchestrator_agent.md")
 PIPELINE_SKILL_PATH = Path("skills/academic-pipeline/SKILL.md")
 AGENTS_DIR = Path("skills/academic-pipeline/agents")

@@ -187,7 +187,7 @@ Ask the user:
 > "Do you have past papers or writing samples you'd like me to learn your style from? Providing 3+ samples helps me match your natural voice. This is optional."
 
 **If user provides samples:**
-1. Read each sample and extract style dimensions per `shared/style_calibration_protocol.md`
+1. Read each sample and extract style dimensions per `shared/protocols/style_calibration_protocol.md`
 2. Produce a Style Profile artifact (see `shared/handoff_schemas.md` Schema 10)
 3. Attach to Paper Configuration Record as `style_profile` field
 4. Inform user: "I've analyzed your writing style. Key traits: [summary]. I'll use this as a soft guide — discipline conventions take priority."

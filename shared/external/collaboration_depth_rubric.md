@@ -8,7 +8,7 @@ license: CC-BY-NC 4.0
 
 **Status**: v1.0 (introduced ARS v3.5, 2026-04-21)
 **Source**: Wang, S., & Zhang, H. (2026). *IJETHE* 23:11. DOI [10.1186/s41239-026-00585-x](https://doi.org/10.1186/s41239-026-00585-x). Open Access, CC BY 4.0.
-**Canonical location**: `shared/collaboration_depth_rubric.md` in `Imbad0202/academic-research-skills`. External consumers should reference by stable URL; do not vendor (bump the `rubric_version` field on any modification).
+**Canonical location**: `shared/external/collaboration_depth_rubric.md` in `Imbad0202/academic-research-skills`. External consumers should reference by stable URL; do not vendor (bump the `rubric_version` field on any modification).
 
 ---
 

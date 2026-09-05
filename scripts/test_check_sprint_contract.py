@@ -9,7 +9,7 @@ from tempfile import TemporaryDirectory
 from tests.test_helpers import run_script
 
 SCRIPT = Path(__file__).resolve().parent / "check_sprint_contract.py"
-SCHEMA = Path(__file__).resolve().parent.parent / "shared" / "sprint_contract.schema.json"
+SCHEMA = Path(__file__).resolve().parent.parent / "shared" / "schemas" / "sprint_contract.schema.json"
 TEMPLATE_FULL = (
     Path(__file__).resolve().parent.parent / "shared" / "contracts" / "reviewer" / "full.json"
 )
