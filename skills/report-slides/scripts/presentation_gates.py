@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import AbstractSet, Any, Mapping, NoReturn
 
@@ -783,6 +784,62 @@ def review_result_blockers(
             blockers.extend(_art_direction_warning_blockers(
                 project_root, subject_type, subject_id, target, review))
     return blockers
+
+
+def _review_predates_lint_run(review_ts: str, evidence_ts: str) -> bool:
+    """Report whether a review was written before the lint run it answers.
+
+    The two stamps are both RFC3339 but not the same shape: `record_review`
+    writes whole seconds with a `Z` suffix and `record_lint_evidence` writes
+    microseconds with a numeric offset. Comparing them as text happens to work
+    only because `Z` sorts after `.` and `+`, which is a property of the
+    spellings rather than of the instants, and inverts outright for a stamp
+    carrying a non-UTC offset -- which the evidence contract accepts.
+
+    The comparison runs at whole-second resolution because that is all the
+    review stamp carries. A review written later in the same second as the run
+    is indistinguishable from one written just before it, so only a strictly
+    earlier second counts as predating; treating a truncated stamp as the top
+    of its second would reject reviews that did read the run.
+
+    Args:
+        review_ts: The review's recorded timestamp.
+        evidence_ts: The lint run's recorded timestamp.
+
+    Returns:
+        True when the review is stamped in a strictly earlier second than the
+        run. False when either stamp is missing or unparseable, which is the
+        same answer the surrounding check already gives for an absent review
+        timestamp: the order cannot be established, so it is not held against
+        the review. `presentation_evidence_contracts` validates both fields on
+        write, so an unparseable value here means the record was corrupted
+        after the fact, and the other blockers still apply.
+    """
+    review_at = _parse_rfc3339(review_ts)
+    evidence_at = _parse_rfc3339(evidence_ts)
+    if review_at is None or evidence_at is None:
+        return False
+    return (review_at.replace(microsecond=0)
+            < evidence_at.replace(microsecond=0))
+
+
+def _parse_rfc3339(value: str) -> datetime | None:
+    """Parse one timezone-aware RFC3339 timestamp.
+
+    Args:
+        value: The timestamp text.
+
+    Returns:
+        The parsed instant, or None when the value is not a timezone-aware
+        RFC3339 timestamp.
+    """
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else None
+
+
 def _art_direction_warning_blockers(
     project_root: Path, subject_type: str, subject_id: str,
     target: Mapping[str, Any], review: Mapping[str, Any],
@@ -826,7 +883,8 @@ def _art_direction_warning_blockers(
             "rules": list(evidence["errors"]),
         }]
     review_ts = str(review.get("ts") or "")
-    if review_ts and review_ts < str(evidence.get("ts") or ""):
+    if review_ts and _review_predates_lint_run(
+            review_ts, str(evidence.get("ts") or "")):
         # Answers written before the measurement are not answers to it.
         # They match by rule name alone, which a later run reproduces for
         # free, so an old review would silently discharge new warnings.
