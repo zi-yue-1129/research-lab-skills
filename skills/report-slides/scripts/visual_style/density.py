@@ -222,6 +222,11 @@ def check_occupancy(scene: Scene, tokens: DesignTokens) -> List[Finding]:
         raise ValueError("canvas.safe_area leaves no drawable area")
     content = [box for box in scene.boxes if not box.bleed]
     content.extend(run.bbox() for run in scene.texts)
+    # `union_area` counts overlap once, so the heavily overlapping bounding
+    # boxes of adjacent pie wedges inflate nothing. Leaving them out did
+    # inflate something: a slide drawn entirely in `<path>` unioned to zero
+    # and was told to add content it already had.
+    content.extend(box for box in scene.outline_boxes() if not box.bleed)
     ratio = union_area(content) / safe_area
     minimum = float(limits["occupancy_min"])
     maximum = float(limits["occupancy_max"])

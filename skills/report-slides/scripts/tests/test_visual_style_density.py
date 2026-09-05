@@ -10,7 +10,7 @@ import pytest
 from design_tokens import DEFAULT_TOKENS_PATH, DesignTokens
 from fonts import vertical_metrics
 from visual_style import density
-from visual_style.scene import Box, Scene, TextRun
+from visual_style.scene import Box, PathShape, Scene, TextRun
 
 
 @pytest.fixture(scope="module")
@@ -203,3 +203,19 @@ def test_table_cells_are_not_bullets(tokens: DesignTokens) -> None:
                      pptx_role="table")
              for i in range(8)]
     assert density.check_bullet_budget(_scene(texts=cells), tokens) == []
+
+
+def test_occupancy_counts_free_form_shapes(tokens: DesignTokens) -> None:
+    """A slide made of paths is not an empty slide.
+
+    A full-bleed pie or a hand-drawn diagram carries no `<rect>` at all. While
+    paths were unmeasured such a slide unioned to zero area and drew an
+    `occupancy` warning telling the author to add content to a slide that was
+    already full -- the one kind of false positive that teaches an author to
+    stop reading the report.
+    """
+    extent = Box("wedge", "path", 300, 100, 600, 500, "#1e3a5f", None, 0.0,
+                 0.0, None, None, False)
+    shape = PathShape("wedge", "#1e3a5f", None, 0.0, None, None, None, extent)
+    scene = Scene(1200, 675, (), (), (), (), "DejaVu Sans", (shape,))
+    assert density.check_occupancy(scene, tokens) == []

@@ -242,21 +242,31 @@ def test_a_transform_that_cannot_be_measured_is_refused(
         tmp_path: Path) -> None:
     """An unsupported transform raises rather than mismeasuring in silence.
 
-    The linter turns this into an `unreadable-input` error, which tells the
-    author their slide was not checked. Quietly ignoring the rotation and
-    reporting a clean gate would be a lie.
+    This test used to assert that `rotate(45)` was refused, and that
+    expectation was wrong. `svg_to_pptx.style_parser.parse_transform` reads
+    `translate`, `rotate`, `scale` and `matrix`, so a rotated group converts
+    and ships; refusing it here failed the gate as `unreadable-input` on a
+    slide that was perfectly fine, which is not a safe conservative default
+    but a false negative dressed as caution. The linter now composes the
+    matrix and measures the rotated element by its hull.
+
+    `skewX` is the honest example: the converter does not read it either, so
+    an element carrying one is drawn somewhere neither tool can predict.
+    Quietly ignoring it and reporting a clean gate would be a lie.
     """
     with pytest.raises(ValueError, match="transform"):
-        _parse(tmp_path, '<g transform="rotate(45)"><rect x="10" y="20" '
+        _parse(tmp_path, '<g transform="skewX(20)"><rect x="10" y="20" '
                          'width="30" height="40"/></g>')
 
 
 def test_a_path_is_captured_for_colour_linting(tmp_path: Path) -> None:
     """Pie wedges are `<path>` elements and their fill must be linted.
 
-    Geometry is deliberately not extracted: a bounding box guessed from the
-    `d` string is wrong for arcs in one direction or the other, and a wrong
-    box is worse than a declared absence.
+    Geometry used to be deliberately absent here, on the grounds that a box
+    guessed from the `d` string is wrong for arcs. `visual_style.paths` no
+    longer guesses -- it solves the arc's endpoint parameterisation -- so the
+    extent is now measured too and reaches `safe-area` and `occupancy`. The
+    fill assertions below are unchanged and still the point of this test.
     """
     scene = _parse(tmp_path, '<path d="M0,0 L10,0 L10,10 Z" fill="#ff00ff" '
                              'data-style-role="chart.series"/>')
@@ -377,3 +387,169 @@ def test_trailing_junk_after_a_transform_is_refused(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="transform"):
         _parse(tmp_path, '<g transform="translate(10,20) 3 4">'
                          '<rect x="10" y="20" width="30" height="40"/></g>')
+
+
+_OUTLINE_SVG = """\
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675">
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <path id="wedge" d="M600 337 L600 137 A200 200 0 0 1 800 337 Z"
+        fill="#1e3a5f"/>
+  <polygon id="head" points="700,145 720,140 720,150" fill="#475569"/>
+</svg>"""
+
+
+def test_a_path_carries_its_measured_extent(tmp_path: Path) -> None:
+    """A `<path>` is measured, not merely catalogued for its fill.
+
+    A pie chart is nothing but `<path>`, so while paths had no geometry a
+    wedge could run off the canvas and every geometric rule reported a clean
+    slide -- and `visual-review.md` tells the human reviewer those properties
+    are already settled, so nobody was looking.
+    """
+    path = tmp_path / "outline.svg"
+    path.write_text(_OUTLINE_SVG, encoding="utf-8")
+    scene = parse_scene(path, _FAMILY)
+    wedge = next(shape for shape in scene.paths if shape.element_id == "wedge")
+    assert wedge.extent is not None
+    assert (wedge.extent.x, wedge.extent.y) == pytest.approx((600.0, 137.0))
+    assert (wedge.extent.w, wedge.extent.h) == pytest.approx((200.0, 200.0))
+
+
+def test_outline_boxes_covers_paths_and_polygons(tmp_path: Path) -> None:
+    """Both free-form shape kinds reach the rules through one accessor."""
+    path = tmp_path / "outline.svg"
+    path.write_text(_OUTLINE_SVG, encoding="utf-8")
+    scene = parse_scene(path, _FAMILY)
+    outlines = {box.element_id: box for box in scene.outline_boxes()}
+    assert set(outlines) == {"wedge", "head"}
+    head = outlines["head"]
+    assert (head.x, head.y, head.w, head.h) == pytest.approx(
+        (700.0, 140.0, 20.0, 10.0))
+
+
+def test_outlines_stay_out_of_the_box_list(tmp_path: Path) -> None:
+    """Outlines are a separate channel, not extra `boxes`.
+
+    `off-grid`, `node-gap`, `component-drift` and `equal-card-repetition` all
+    reason about authored rectangles. A wedge is not a card and its bounding
+    box has no business being compared to one, so the extents travel in their
+    own accessor and each rule opts in.
+    """
+    path = tmp_path / "outline.svg"
+    path.write_text(_OUTLINE_SVG, encoding="utf-8")
+    scene = parse_scene(path, _FAMILY)
+    assert scene.boxes == ()
+
+
+def test_a_path_whose_data_is_unreadable_is_refused(tmp_path: Path) -> None:
+    """An unparseable `d` raises rather than silently measuring nothing."""
+    path = tmp_path / "bad.svg"
+    path.write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675">'
+        '<path id="p" d="M10 10 L20 banana"/></svg>', encoding="utf-8")
+    with pytest.raises(ValueError, match="unreadable"):
+        parse_scene(path, _FAMILY)
+
+
+_DEFS_SVG = """\
+<svg xmlns="http://www.w3.org/2000/svg"
+     xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1200 675">
+  <defs>
+    <rect id="tile" x="0" y="0" width="120" height="60" fill="#f8fafc"
+          stroke="#475569" stroke-width="1.5" data-style-role="node.primary"/>
+    <marker id="arrow" markerWidth="10" markerHeight="10">
+      <polygon points="0,0 10,5 0,10" fill="#475569"/>
+    </marker>
+  </defs>
+  <use href="#tile" x="200" y="300"/>
+  <use xlink:href="#tile" x="500" y="300"/>
+</svg>"""
+
+
+def test_defs_are_a_library_not_content(tmp_path: Path) -> None:
+    """Nothing inside `<defs>` is drawn where it sits.
+
+    Every deck this skill renders defines its arrowhead as a `<marker>` at the
+    origin. Walking into `<defs>` measured that arrowhead as a real element at
+    (0, 0) -- outside the safe area on every slide -- so the rule that should
+    have caught a genuine margin breach was drowning in one guaranteed false
+    error per slide instead.
+    """
+    path = tmp_path / "defs.svg"
+    path.write_text(_DEFS_SVG, encoding="utf-8")
+    scene = parse_scene(path, _FAMILY)
+    assert all(box.element_id != "arrow" for box in scene.outline_boxes())
+    assert not any(box.x == 0.0 and box.y == 0.0 for box in scene.boxes)
+
+
+def test_use_draws_the_referenced_element_at_its_offset(
+        tmp_path: Path) -> None:
+    """`<use>` is how a deck reuses a shape, and the converter honours it.
+
+    `svg_to_pptx` splices the referenced element in with a prepended
+    `translate(x, y)`, so a `<use>` becomes a real shape in the PPTX. A linter
+    that ignores `<use>` measures a different slide from the one that ships.
+    """
+    path = tmp_path / "defs.svg"
+    path.write_text(_DEFS_SVG, encoding="utf-8")
+    scene = parse_scene(path, _FAMILY)
+    placed = sorted((box.x, box.y, box.w, box.h) for box in scene.boxes)
+    assert placed == [(200.0, 300.0, 120.0, 60.0),
+                      (500.0, 300.0, 120.0, 60.0)]
+
+
+def test_a_use_of_a_missing_id_is_refused(tmp_path: Path) -> None:
+    """A dangling reference draws nothing and must not pass silently."""
+    path = tmp_path / "dangling.svg"
+    path.write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675">'
+        '<use href="#nowhere" x="10" y="10"/></svg>', encoding="utf-8")
+    with pytest.raises(ValueError, match="nowhere"):
+        parse_scene(path, _FAMILY)
+
+
+_TRANSFORM_SVG = """\
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675">
+  <g transform="scale(2)">
+    <rect id="scaled" x="100" y="50" width="60" height="30" fill="#f8fafc"/>
+    <text id="grown" x="120" y="70" font-size="12" fill="#374151">Legend</text>
+  </g>
+  <g transform="translate(100,100) rotate(90)">
+    <rect id="turned" x="0" y="0" width="40" height="20" fill="#f8fafc"/>
+  </g>
+</svg>"""
+
+
+def test_a_scaled_group_is_measured_at_its_drawn_size(tmp_path: Path) -> None:
+    """`scale` is one of the four functions the converter reads.
+
+    Refusing it made a convertible slide fail the gate as `unreadable-input`,
+    which is a worse answer than measuring it: the deck ships either way, and
+    only one of the two outcomes tells the author anything true.
+    """
+    path = tmp_path / "transform.svg"
+    path.write_text(_TRANSFORM_SVG, encoding="utf-8")
+    scene = parse_scene(path, _FAMILY)
+    box = next(b for b in scene.boxes if b.element_id == "scaled")
+    assert (box.x, box.y, box.w, box.h) == pytest.approx(
+        (200.0, 100.0, 120.0, 60.0))
+
+
+def test_a_scaled_text_run_carries_its_drawn_size(tmp_path: Path) -> None:
+    """12pt inside `scale(2)` is 24pt on the slide, and the floors know it."""
+    path = tmp_path / "transform.svg"
+    path.write_text(_TRANSFORM_SVG, encoding="utf-8")
+    scene = parse_scene(path, _FAMILY)
+    run = next(t for t in scene.texts if t.element_id == "grown")
+    assert run.size == pytest.approx(24.0)
+    assert (run.x, run.y) == pytest.approx((240.0, 140.0))
+
+
+def test_a_rotated_group_is_measured_by_its_hull(tmp_path: Path) -> None:
+    """A quarter-turned 40x20 rect occupies 20x40 where it is drawn."""
+    path = tmp_path / "transform.svg"
+    path.write_text(_TRANSFORM_SVG, encoding="utf-8")
+    scene = parse_scene(path, _FAMILY)
+    box = next(b for b in scene.boxes if b.element_id == "turned")
+    assert (box.x, box.y, box.w, box.h) == pytest.approx(
+        (80.0, 100.0, 20.0, 40.0))

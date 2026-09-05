@@ -233,14 +233,22 @@ def check_text_contrast(scene: Scene, tokens: DesignTokens) -> List[Finding]:
     contrast = tokens.raw["color"]["contrast"]
     findings: List[Finding] = []
     for run in scene.texts:
-        foreground = normalize_hex(run.fill)
-        if foreground is None:
+        # A `<tspan>` is its own PPTX run with its own colour and its own
+        # size, so the element's `fill` and `font-size` describe only part of
+        # what ships. The floor follows the smallest size rendered -- a 16pt
+        # suffix inside a 26pt line is not large text -- and every colour in
+        # the run is measured, worst first.
+        palette = [normalize_hex(paint) for paint in (run.fills or (run.fill,))]
+        candidates = [paint for paint in palette if paint is not None]
+        if not candidates:
             continue
         bbox = run.bbox()
         background = background_at(bbox.x + bbox.w / 2, bbox.y + bbox.h / 2,
                                    scene, tokens, exclude=run.element_id)
-        large = _is_large_text(run.size, run.weight)
+        large = _is_large_text(run.min_size or run.size, run.weight)
         floor = float(contrast["large_text_min" if large else "text_min"])
+        foreground = min(
+            candidates, key=lambda paint: contrast_ratio(paint, background))
         ratio = contrast_ratio(foreground, background)
         if ratio < floor:
             findings.append(Finding(

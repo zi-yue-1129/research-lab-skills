@@ -5,7 +5,7 @@ roles, and measured text extents are resolved exactly once per slide.
 """
 from __future__ import annotations
 
-import re
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
@@ -13,6 +13,9 @@ from typing import Dict, List, Optional, Tuple, Union
 from lxml import etree
 
 from fonts import text_width, vertical_metrics
+
+from .paths import path_bounds
+from .transforms import IDENTITY, Affine, parse_transform
 
 _CANVAS_TOLERANCE = 0.5
 
@@ -287,6 +290,8 @@ class Polygon:
         points: The polygon vertices.
         fill: Fill colour, or None when unfilled.
         node_id: The enclosing group's `data-node-id`, when inside one.
+        extent: The axis-aligned bounding box of the vertices, or None when
+            the element declares no points.
     """
 
     element_id: str
@@ -295,20 +300,25 @@ class Polygon:
     node_id: Optional[str]
     stroke: Optional[str] = None
     style_role: Optional[str] = None
+    extent: Optional[Box] = None
 
 
 @dataclass(frozen=True)
 class PathShape:
-    """One `<path>`, captured for colour linting only.
+    """One `<path>`, with its fill, its stroke, and its measured extent.
 
     Pie wedges and any hand-authored curve arrive as `<path>`, and until this
     existed their fills were invisible to every rule: an off-palette wedge
     passed the gate untouched.
 
-    Geometry is deliberately absent. A bounding box reconstructed from the `d`
-    string is wrong for arcs -- bounding the control points overstates it and
-    bounding the endpoints understates it -- and a wrong box either invents
-    findings or hides them. A declared absence is honest; a guess is not.
+    Geometry was once declared absent here on the grounds that a reconstructed
+    box is wrong for arcs. That reasoning was half right and the conclusion was
+    wrong: `visual_style.paths` computes the true extent of an arc from its
+    endpoint parameterisation rather than guessing from control points, and the
+    only place it over-reports is a rotated elliptical arc, where it returns
+    the circumscribing box. Over-reporting starts a conversation; measuring
+    nothing at all let a chart run off the canvas while the report said clean
+    and `visual-review.md` told the human those margins were already settled.
 
     Attributes:
         element_id: Identifier for reporting.
@@ -318,6 +328,8 @@ class PathShape:
         style_role: The `data-style-role` token role, when declared.
         node_id: The enclosing group's `data-node-id`, when inside one.
         pptx_role: The nearest enclosing `data-pptx-role`, when inside one.
+        extent: The axis-aligned bounding box of the drawn outline, or None
+            when the `d` attribute draws nothing.
     """
 
     element_id: str
@@ -327,6 +339,7 @@ class PathShape:
     style_role: Optional[str]
     node_id: Optional[str]
     pptx_role: Optional[str] = None
+    extent: Optional[Box] = None
 
 
 @dataclass(frozen=True)
@@ -371,63 +384,26 @@ class Scene:
             grouped.setdefault(box.node_id, []).append(box)
         return grouped
 
+    def outline_boxes(self) -> Tuple[Box, ...]:
+        """Return the extents of the free-form shapes on this slide.
 
-_TRANSFORM_CALL_RE = re.compile(r"([a-zA-Z]+)\s*\(([^)]*)\)")
-_NUMBER_RE = re.compile(r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?")
-_ARGUMENT_SEPARATORS = " \t\r\n,"
+        Paths and polygons travel in their own channel rather than in `boxes`
+        so that each rule opts in. `safe-area` and `occupancy` want them: a
+        bounding box is a safe over-estimate there, and a slide drawn entirely
+        in `<path>` was otherwise measured as empty. `element-overlap`,
+        `off-grid`, `node-gap`, `component-drift` and `equal-card-repetition`
+        must not have them: adjacent pie wedges share a centre, so their boxes
+        overlap almost entirely while the wedges never touch, and an arrowhead
+        is drawn against the node edge on purpose.
 
-
-def _parse_transform(raw: Optional[str], element_id: str
-                     ) -> Tuple[float, float]:
-    """Resolve a `transform` attribute into a translation.
-
-    Only `translate` is supported. Anything else changes the shape of what is
-    drawn, and measuring a rotated group at its authored coordinates reports a
-    clean gate for a slide nobody checked.
-
-    Every character of the attribute has to be accounted for. An earlier
-    version matched translate arguments with a digits-and-dots pattern, so
-    `translate(1e2,0)` matched nothing at all and the translation was silently
-    dropped -- the element was then measured a hundred units from where it is
-    drawn and the slide passed. Refusing is the honest outcome for anything
-    this parser cannot read: the linter turns the error into
-    `unreadable-input`, which names the file.
-
-    Args:
-        raw: The raw `transform` attribute, or None.
-        element_id: Identifier used in the error message.
-
-    Returns:
-        `(dx, dy)` in SVG units.
-
-    Raises:
-        ValueError: If the transform uses anything other than `translate`, or
-            carries anything this parser cannot read as a number.
-    """
-    if not raw or not raw.strip():
-        return 0.0, 0.0
-    dx = dy = 0.0
-    seen = False
-    for match in _TRANSFORM_CALL_RE.finditer(raw):
-        seen = True
-        name, arguments = match.group(1), match.group(2)
-        if name != "translate":
-            raise ValueError(
-                f"{element_id} carries an unsupported transform {name}; "
-                f"only translate can be measured")
-        numbers = _NUMBER_RE.findall(arguments)
-        residue = _NUMBER_RE.sub("", arguments).strip(_ARGUMENT_SEPARATORS)
-        if residue or not 1 <= len(numbers) <= 2:
-            raise ValueError(
-                f"{element_id} has a transform this parser cannot read: "
-                f"translate({arguments})")
-        dx += float(numbers[0])
-        dy += float(numbers[1]) if len(numbers) > 1 else 0.0
-    outside = _TRANSFORM_CALL_RE.sub("", raw).strip()
-    if outside or not seen:
-        raise ValueError(
-            f"{element_id} has a transform this parser cannot read: {raw!r}")
-    return dx, dy
+        Returns:
+            One box per measurable path and polygon, in document order.
+        """
+        outlines = [shape.extent for shape in self.paths
+                    if shape.extent is not None]
+        outlines.extend(polygon.extent for polygon in self.polygons
+                        if polygon.extent is not None)
+        return tuple(sorted(outlines, key=lambda box: box.paint_order))
 
 
 def _tspan_styling(elem, base_size: float, base_fill: str
@@ -576,20 +552,19 @@ def parse_scene(svg_path: Union[str, Path], font_family: str) -> Scene:
     backgrounds: List[Box] = []
 
     def walk(elem, node_id: Optional[str], pptx_role: Optional[str],
-             dx: float, dy: float, index: List[int]) -> None:
+             matrix: Affine, index: List[int]) -> None:
         """Recursively collect scene content.
 
         Args:
             elem: Current element.
             node_id: Inherited `data-node-id`, if any.
             pptx_role: Inherited `data-pptx-role`, if any.
-            dx: Accumulated x translation from enclosing transforms.
-            dy: Accumulated y translation from enclosing transforms.
+            matrix: Accumulated transform from the enclosing groups.
             index: Single-element list used as a mutable counter for ids.
 
         Raises:
-            ValueError: If an element carries a transform that cannot be
-                resolved to a translation.
+            ValueError: If an element carries a transform this parser cannot
+                resolve.
         """
         for child in elem:
             tag = _local_tag(child)
@@ -598,22 +573,27 @@ def parse_scene(svg_path: Union[str, Path], font_family: str) -> Scene:
             index[0] += 1
             order = index[0]
             element_id = child.get("id") or f"{tag}#{order}"
-            tdx, tdy = _parse_transform(child.get("transform"), element_id)
-            cdx, cdy = dx + tdx, dy + tdy
+            local = matrix.compose(
+                parse_transform(child.get("transform"), element_id))
             child_node = child.get("data-node-id") or node_id
             child_role = child.get("data-pptx-role") or pptx_role
             role = child.get("data-style-role")
             bleed = (child.get("data-bleed") or "").strip().lower() == "true"
 
+            if tag == "defs":
+                # A definition is a library entry, not a drawing. Walking into
+                # it measured every deck's arrowhead marker as a real element
+                # at the origin, one false `safe-area` error per slide.
+                continue
+
             if tag == "g":
-                walk(child, child_node, child_role, cdx, cdy, index)
+                walk(child, child_node, child_role, local, index)
                 continue
 
             if tag == "rect":
-                x = _number(child.get("x")) + cdx
-                y = _number(child.get("y")) + cdy
-                w = _number(child.get("width"))
-                h = _number(child.get("height"))
+                x, y, w, h = local.bounds(
+                    _number(child.get("x")), _number(child.get("y")),
+                    _number(child.get("width")), _number(child.get("height")))
                 box = Box(
                     element_id, tag, x, y, w, h,
                     child.get("fill"), child.get("stroke"),
@@ -630,23 +610,36 @@ def parse_scene(svg_path: Union[str, Path], font_family: str) -> Scene:
                 # slide is actually drawn on, so the colour rules need it.
                 (backgrounds if is_background else boxes).append(box)
             elif tag in ("circle", "ellipse"):
-                cx = _number(child.get("cx")) + cdx
-                cy = _number(child.get("cy")) + cdy
+                cx = _number(child.get("cx"))
+                cy = _number(child.get("cy"))
                 if tag == "circle":
                     rx = ry = _number(child.get("r"))
                 else:
                     rx = _number(child.get("rx"))
                     ry = _number(child.get("ry"))
+                ex, ey, ew, eh = local.bounds(
+                    cx - rx, cy - ry, 2 * rx, 2 * ry)
                 boxes.append(Box(
-                    element_id, tag, cx - rx, cy - ry, 2 * rx, 2 * ry,
+                    element_id, tag, ex, ey, ew, eh,
                     child.get("fill"), child.get("stroke"),
-                    _number(child.get("stroke-width")), min(rx, ry),
+                    _number(child.get("stroke-width")),
+                    min(rx, ry) * local.scale_factor(),
                     role, child_node, bleed, child_role, order))
             elif tag == "path":
+                bounds = _path_extent(child.get("d") or "", element_id)
+                extent = None
+                if bounds is not None:
+                    placed = local.bounds(*bounds)
+                    extent = Box(
+                        element_id, tag, placed[0], placed[1],
+                        placed[2], placed[3], child.get("fill"),
+                        child.get("stroke"),
+                        _number(child.get("stroke-width")), 0.0, role,
+                        child_node, bleed, child_role, order)
                 paths.append(PathShape(
                     element_id, child.get("fill"), child.get("stroke"),
                     _number(child.get("stroke-width")), role, child_node,
-                    child_role))
+                    child_role, extent))
             elif tag == "text":
                 size = _number(child.get("font-size"), 0.0)
                 weight = _weight_of(child.get("font-weight"))
@@ -654,33 +647,54 @@ def parse_scene(svg_path: Union[str, Path], font_family: str) -> Scene:
                 ascent, descent = vertical_metrics(font_family, size)
                 fill = child.get("fill") or "#000000"
                 min_size, fills = _tspan_styling(child, size, fill)
+                # Glyphs have no orientation to carry through a matrix, so
+                # every length scales by the same factor -- 1.0 under any
+                # rotation, `s` under `scale(s)`. 12pt inside `scale(2)` is
+                # 24pt on the slide, and `type-floor` has to see the 24.
+                growth = local.scale_factor()
+                tx, ty = local.apply(_number(child.get("x")),
+                                     _number(child.get("y")))
                 texts.append(TextRun(
-                    element_id, content,
-                    _number(child.get("x")) + cdx, _number(child.get("y")) + cdy,
-                    size, weight, fill,
+                    element_id, content, tx, ty,
+                    size * growth, weight, fill,
                     child.get("text-anchor") or "start",
-                    role, child_node, _line_count(child), measured,
-                    ascent, descent, _line_offset(child),
-                    min_size, fills, child_role, order))
+                    role, child_node, _line_count(child), measured * growth,
+                    ascent * growth, descent * growth,
+                    _line_offset(child) * growth,
+                    min_size * growth, fills, child_role, order))
             elif tag == "line":
                 if not _is_connector(child):
                     continue
+                start_point = local.apply(_number(child.get("x1")),
+                                          _number(child.get("y1")))
+                end_point = local.apply(_number(child.get("x2")),
+                                        _number(child.get("y2")))
                 connectors.append(Connector(
                     element_id,
-                    _number(child.get("x1")) + cdx, _number(child.get("y1")) + cdy,
-                    _number(child.get("x2")) + cdx, _number(child.get("y2")) + cdy,
+                    start_point[0], start_point[1],
+                    end_point[0], end_point[1],
                     child.get("stroke"), _number(child.get("stroke-width"), 1.0),
                     _marker_requested(child.get("marker-start")),
                     _marker_requested(child.get("marker-end")),
                     child_node, child.get("data-from"), child.get("data-to"),
                     role))
             elif tag in ("polygon", "polyline"):
-                points = tuple((px + cdx, py + cdy)
+                points = tuple(local.apply(px, py)
                                for px, py in _parse_points(child.get("points", "")))
                 if tag == "polygon":
+                    extent = None
+                    if points:
+                        xs = [px for px, _ in points]
+                        ys = [py for _, py in points]
+                        extent = Box(
+                            element_id, tag, min(xs), min(ys),
+                            max(xs) - min(xs), max(ys) - min(ys),
+                            child.get("fill"), child.get("stroke"),
+                            _number(child.get("stroke-width")), 0.0, role,
+                            child_node, bleed, child_role, order)
                     polygons.append(Polygon(
                         element_id, points, child.get("fill"), child_node,
-                        child.get("stroke"), role))
+                        child.get("stroke"), role, extent))
                 elif not _is_connector(child):
                     continue
                 else:
@@ -702,12 +716,84 @@ def parse_scene(svg_path: Union[str, Path], font_family: str) -> Scene:
                              if position == len(segments) - 1 else None),
                             role))
             else:
-                walk(child, child_node, child_role, cdx, cdy, index)
+                walk(child, child_node, child_role, local, index)
 
-    walk(root, None, None, 0.0, 0.0, [0])
+    _expand_use_elements(root)
+    walk(root, None, None, IDENTITY, [0])
     return Scene(width, height, tuple(boxes), tuple(texts),
                  tuple(connectors), tuple(polygons), font_family,
                  tuple(paths), backgrounds[-1] if backgrounds else None)
+
+
+_XLINK_HREF = "{http://www.w3.org/1999/xlink}href"
+
+
+def _expand_use_elements(root) -> None:
+    """Replace every `<use>` with a clone of what it references, in place.
+
+    This mirrors `svg_to_pptx.converter._resolve_use_elements` deliberately and
+    exactly, down to indexing only the direct children of `<defs>`: the linter
+    has to measure the drawing that ships, and the converter is what decides
+    what ships. A `<use>` the converter cannot resolve draws nothing at all, so
+    it is refused here rather than quietly measured as empty.
+
+    Args:
+        root: The parsed `<svg>` root, modified in place.
+
+    Raises:
+        ValueError: If a `<use>` names something no `<defs>` entry defines.
+    """
+    definitions: Dict[str, object] = {}
+    for elem in root.iter():
+        if _local_tag(elem) != "defs":
+            continue
+        for child in elem:
+            definition_id = child.get("id")
+            if definition_id:
+                definitions[definition_id] = child
+
+    for use_elem in list(root.iter()):
+        if _local_tag(use_elem) != "use":
+            continue
+        href = use_elem.get("href") or use_elem.get(_XLINK_HREF, "")
+        referenced = definitions.get(href[1:]) if href.startswith("#") else None
+        if referenced is None:
+            raise ValueError(
+                f"<use> references {href!r}, which no <defs> child defines; "
+                "the converter would draw nothing there")
+        clone = deepcopy(referenced)
+        use_x = use_elem.get("x", "0")
+        use_y = use_elem.get("y", "0")
+        if use_x != "0" or use_y != "0":
+            existing = clone.get("transform", "")
+            clone.set("transform",
+                      f"translate({use_x},{use_y}) {existing}".strip())
+        parent = use_elem.getparent()
+        if parent is not None:
+            parent.insert(list(parent).index(use_elem), clone)
+            parent.remove(use_elem)
+
+
+def _path_extent(data: str, element_id: str
+                 ) -> Optional[Tuple[float, float, float, float]]:
+    """Return the bounding box of a `<path>`, naming the element on failure.
+
+    Args:
+        data: The `d` attribute.
+        element_id: Identifier used in the error message.
+
+    Returns:
+        `(x, y, width, height)`, or None when the path draws nothing.
+
+    Raises:
+        ValueError: If the path data cannot be read. Refusing is the point: a
+            path measured as absent is a hole in every geometric rule, and the
+            author would never learn the linter had skipped it.
+    """
+    try:
+        return path_bounds(data)
+    except ValueError as exc:
+        raise ValueError(f"{element_id} has unreadable path data: {exc}") from exc
 
 
 def _marker_requested(value: Optional[str]) -> bool:

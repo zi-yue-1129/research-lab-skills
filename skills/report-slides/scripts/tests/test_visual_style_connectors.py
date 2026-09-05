@@ -198,10 +198,18 @@ def test_connectors_sharing_an_endpoint_do_not_cross(
 def test_check_runs_every_connector_rule(tokens: DesignTokens) -> None:
     """The module entry point aggregates all six rules.
 
-    `c1` ends in open space, `c2` claims a port it does not touch, `c3` runs
-    straight through `n3`, `c4` skims six units past it, the polygon is a
-    hand-drawn arrowhead beside a connector end, and the three connectors on
-    the right cross each other three times against a budget of one.
+    `c2` claims a port it does not touch, `c3` runs straight through `n3`,
+    `c4` skims six units past it, and the polygon is a hand-drawn arrowhead
+    beside `c1`'s endpoint.
+
+    Two counts in this fixture are easy to state wrongly, so they are stated
+    here exactly. `connector-dangling` fires eleven times, not once: only
+    `c2` declares its endpoints, so every free end of `c1`, `c3`, `c4`, `c5`,
+    `c6` and `c7` is reported. And there are four crossings, not three --
+    `c3` is vertical through x=400 and `c4` is horizontal at y=396, so they
+    cross at (400, 396) as well as the three on the right. Both are correct
+    behaviour; the assertion below is on the set of rules, and this note is
+    what stops the next reader from "fixing" a count that was never wrong.
     """
     node_c = _box("n3", 350, 300)
     scene = _scene(

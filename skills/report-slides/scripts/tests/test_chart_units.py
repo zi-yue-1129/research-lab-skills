@@ -191,3 +191,50 @@ def test_a_percentage_axis_keeps_whole_number_ticks() -> None:
     assert _AXIS_TICK_RE.findall(markup) == [
         "0%", "20%", "40%", "60%", "80%", "100%"]
     assert "98.4%" in _VALUE_LABEL_RE.findall(markup)
+
+
+_LINE_Y_RE = re.compile(r'<line [^>]*y1="([-\d.]+)"')
+
+
+def _lowest_gridline(markup: str) -> float:
+    """Return the lowest horizontal rule in a rendered chart.
+
+    Args:
+        markup: The rendered SVG.
+
+    Returns:
+        The largest `y1` of any `<line>`, which is the plot's baseline axis.
+    """
+    return max(float(value) for value in _LINE_Y_RE.findall(markup))
+
+
+def test_chart_area_only_reserves_the_footer_band_when_there_is_a_footer(
+) -> None:
+    """A deck with no footer gets that band back.
+
+    `chart_area()` subtracted `footer_band_height()` unconditionally, so a
+    slide with no footer shrank its plot to clear a row nothing occupies. The
+    reservation follows the footer.
+    """
+    gs.apply_tokens(_DEFAULT_TOKENS)
+    _, _, _, with_footer = gs.chart_area(has_footer=True)
+    _, _, _, without_footer = gs.chart_area(has_footer=False)
+    assert without_footer - with_footer == pytest.approx(
+        gs.footer_band_height())
+
+
+def test_a_chart_with_no_footer_draws_a_taller_plot() -> None:
+    """The renderers pass what they know: whether a footer was asked for.
+
+    Without this the argument would exist and never be used, which is a worse
+    state than not having it: the code would claim to reserve conditionally
+    while reserving unconditionally.
+    """
+    gs.apply_tokens(_DEFAULT_TOKENS)
+    slide = {"index": 1, "type": "bar_chart", "title": "Accuracy",
+             "categories": ["Dev"], "y_max": 100, "unit": "%",
+             "series": [{"label": "run", "color": "#047857",
+                         "values": [80.0]}]}
+    footed = _lowest_gridline(gs.generate_slide(slide, {"footer": "Notes"}))
+    bare = _lowest_gridline(gs.generate_slide(slide, {}))
+    assert bare > footed

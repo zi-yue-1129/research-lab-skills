@@ -88,12 +88,20 @@ The subfigure passes only when all of these are true:
 Measurable conditions are settled before this gate by
 `scripts/validate_visual_style.py` (SKILL.md Stage 10). A slide that has not
 passed that linter does not reach visual review at all, so do not re-litigate
-safe area, overlap, spacing, type size, contrast, palette conformance,
-connector attachment, or component consistency here — those have already been
-measured, and a prose opinion cannot overturn a measurement.
+safe area, overlap, gaps and padding, type size, contrast, palette
+conformance, connector attachment, or component consistency here — those have
+already been measured, and a prose opinion cannot overturn a measurement.
+
+One measurable-sounding property is **not** settled by the linter and is
+still yours: **alignment**. `off-grid` compares each coordinate against
+`canvas.grid` on its own, which says nothing about whether three cards share a
+left edge, whether a column of labels is ragged, or whether a heading sits on
+the same axis as the body it introduces. Elements can each be perfectly on the
+grid and still not line up with each other. Judge that here.
 
 What this gate judges is what the linter cannot:
 
+- whether elements that should share an edge or an axis actually do;
 - whether the visual states the slide's claim, or merely decorates it;
 - whether the hierarchy directs the eye to what matters first;
 - whether the composition reads at projection distance and at thumbnail size;

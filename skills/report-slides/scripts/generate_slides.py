@@ -381,7 +381,7 @@ def footer_band_height() -> float:
     return ascent + descent
 
 
-def chart_area(widest_y_tick: str = "100%") -> tuple:
+def chart_area(widest_y_tick: str = "100%", has_footer: bool = True) -> tuple:
     """Compute the plot rectangle from the active tokens.
 
     The area clears the frame rule at the top, the widest y-tick label on the
@@ -393,6 +393,9 @@ def chart_area(widest_y_tick: str = "100%") -> tuple:
         widest_y_tick: The widest label the caller will draw beside the axis.
             The gutter was measured from a hardcoded `100%`, so a chart whose
             unit is wider than that ran its ticks into the left margin.
+        has_footer: Whether this slide draws a deck footer. The band was
+            reserved unconditionally, so a slide with no footer shrank its
+            plot to clear a row nothing occupies.
 
     Returns:
         `(left, right, top, bottom)` in SVG units.
@@ -406,7 +409,8 @@ def chart_area(widest_y_tick: str = "100%") -> tuple:
     foot_adv = t_size("footnote") * t_lh("footnote")
     # category labels, then legend row, then note row, all of which have to
     # sit above the band the deck footer already owns.
-    bottom = (S["h"] - safe["bottom"] - footer_band_height()
+    reserved = footer_band_height() if has_footer else 0.0
+    bottom = (S["h"] - safe["bottom"] - reserved
               - (axis_adv + axis_adv + foot_adv + 24))
     return left, right, top, bottom
 
@@ -709,7 +713,8 @@ def render_bar_chart(sl: dict, meta: dict) -> str:
     # precision rounded a QWK of 0.853 to 0.9.
     value_decimals = tick_decimals(y_max) + 1
     CL, CR, CT, CB = chart_area(
-        max(tick_labels, key=lambda label: measured_width(label, "axis")))
+        max(tick_labels, key=lambda label: measured_width(label, "axis")),
+        has_footer=bool(footer))
     CW, CH = CR - CL, CB - CT
 
     for i in range(6):
@@ -806,7 +811,8 @@ def render_line_chart(sl: dict, meta: dict) -> str:
     # precision rounded a QWK of 0.853 to 0.9.
     value_decimals = tick_decimals(y_max) + 1
     CL, CR, CT, CB = chart_area(
-        max(tick_labels, key=lambda label: measured_width(label, "axis")))
+        max(tick_labels, key=lambda label: measured_width(label, "axis")),
+        has_footer=bool(footer))
     CW, CH = CR - CL, CB - CT
 
     for i in range(6):
@@ -881,7 +887,7 @@ def render_pie_chart(sl: dict, meta: dict) -> str:
     if not categories or not values:
         return svg("\n  ".join(parts))
 
-    CL, CR, CT, CB = chart_area()
+    CL, CR, CT, CB = chart_area(has_footer=bool(footer))
     cx, cy, r = 420, 340, 200
     total = sum(values) or 1
     chart_parts = []

@@ -49,6 +49,10 @@ def check_safe_area(scene: Scene, tokens: DesignTokens) -> List[Finding]:
     findings: List[Finding] = []
     candidates: List[Box] = [box for box in scene.boxes if not box.bleed]
     candidates.extend(run.bbox() for run in scene.texts)
+    # A pie chart carries no rect at all. Free-form outlines are held to the
+    # margins like everything else, because a wedge that runs off the canvas
+    # is exactly the defect this rule exists to catch.
+    candidates.extend(box for box in scene.outline_boxes() if not box.bleed)
     for box in candidates:
         breaches: List[str] = []
         if box.x < left - _EDGE_TOLERANCE:
@@ -210,8 +214,12 @@ def node_bounds(scene: Scene) -> Dict[str, Box]:
 def check_node_gap(scene: Scene, tokens: DesignTokens) -> List[Finding]:
     """Report node pairs closer than `spacing.node_gap_min`.
 
-    Overlapping nodes are left to `element-overlap`; reporting both would
-    double-count one defect.
+    Materially overlapping nodes are left to `element-overlap`; reporting both
+    would double-count one defect. The word doing the work is "materially":
+    this used to stand aside for any intersection at all, while the overlap
+    rule ignores anything shallower than half a unit, so a 0.3-unit collision
+    fell between the two and no rule spoke. Both rules now draw the line in
+    the same place.
 
     Args:
         scene: The parsed slide.
@@ -224,7 +232,7 @@ def check_node_gap(scene: Scene, tokens: DesignTokens) -> List[Finding]:
     findings: List[Finding] = []
     bounds = node_bounds(scene)
     for (id_a, box_a), (id_b, box_b) in combinations(sorted(bounds.items()), 2):
-        if box_a.intersects(box_b):
+        if _material_overlap(box_a, box_b):
             continue
         gap = box_a.gap_to(box_b)
         if gap < minimum - _EDGE_TOLERANCE:
@@ -236,15 +244,18 @@ def check_node_gap(scene: Scene, tokens: DesignTokens) -> List[Finding]:
     return findings
 
 
-def _enclosing_box(run: TextRun, scene: Scene) -> Optional[Box]:
-    """Return the smallest box of the run's own node that encloses its centre.
+def _enclosing_box(run: TextRun, scene: Scene, pad_x: float,
+                   pad_y: float) -> Optional[Box]:
+    """Return the box of the run's own node that the label is meant to sit on.
 
     Args:
         run: The text run.
         scene: The parsed slide.
+        pad_x: Required horizontal inset from `spacing.node_padding`.
+        pad_y: Required vertical inset from `spacing.node_padding`.
 
     Returns:
-        The enclosing box, or None when the run sits in no node box.
+        The host box, or None when no box of the node was meant to host it.
     """
     if run.node_id is None:
         return None
@@ -257,17 +268,21 @@ def _enclosing_box(run: TextRun, scene: Scene) -> Optional[Box]:
     candidates = [box for box in own if box.contains_point(cx, cy)]
     if candidates:
         return min(candidates, key=lambda box: box.area)
-    # The label's centre is outside every box of its node. Half in and half out
-    # is a label that has escaped the surface it is meant to sit on, and
-    # returning None there meant the further it drifted the more certainly it
-    # was ignored. Wholly outside is a different idiom, not a defect: a
-    # timeline's node is a ten-unit dot with its label deliberately placed
-    # beyond it on a stem, and holding that to node padding reports every
-    # event on every timeline slide.
-    overlapping = [box for box in own if box.intersects(bbox)]
-    if not overlapping:
+    # The label's centre is outside every box of its node. What decides
+    # whether that is an idiom or a defect is capacity, not distance: a
+    # timeline node is a twenty-unit dot that could never seat a hundred-unit
+    # label, so its label belongs outside on a stem, while a 200x88 plate was
+    # built to hold one and a label that has left it has escaped.
+    #
+    # Overlap was tried as the discriminator first and it was far too
+    # permissive: a label 400 units clear of its plate touches nothing, so it
+    # passed silently -- the most visible way an architecture diagram can
+    # break, waved through by the rule meant to catch it.
+    host = max(own, key=lambda box: box.area)
+    if (host.w < bbox.w + 2 * pad_x - _EDGE_TOLERANCE
+            or host.h < bbox.h + 2 * pad_y - _EDGE_TOLERANCE):
         return None
-    return max(overlapping, key=lambda box: box.area)
+    return host
 
 
 def check_node_padding(scene: Scene, tokens: DesignTokens) -> List[Finding]:
@@ -285,7 +300,7 @@ def check_node_padding(scene: Scene, tokens: DesignTokens) -> List[Finding]:
     pad_y = float(padding["y"])
     findings: List[Finding] = []
     for run in scene.texts:
-        host = _enclosing_box(run, scene)
+        host = _enclosing_box(run, scene, pad_x, pad_y)
         if host is None:
             continue
         bbox = run.bbox()

@@ -27,7 +27,8 @@ from fonts import resolve_font_stack
 from validate_visual_style import lint_svg
 
 _ARCHETYPES = (
-    "bullets", "bar_chart", "two_column", "timeline", "table", "architecture",
+    "bullets", "bar_chart", "pie_chart", "two_column", "timeline", "table",
+    "architecture",
 )
 
 _META = {"footer": "Lab notes 2026-09-05"}
@@ -49,8 +50,15 @@ _SLIDES: Dict[str, Dict[str, Any]] = {
         ],
         "y_max": 100, "unit": "%", "note": "Median of five runs.",
     },
+    "pie_chart": {
+        "index": 3, "type": "pie_chart", "title": "Where the time went",
+        "categories": ["Rendering", "Linting", "Review"],
+        "values": [46.0, 31.0, 23.0],
+        "colors": ["#1e3a5f", "#047857", "#b45309"],
+        "note": "Wall-clock across the run.",
+    },
     "two_column": {
-        "index": 3, "type": "two_column", "title": "Before and after",
+        "index": 4, "type": "two_column", "title": "Before and after",
         "left": {"title": "Problem",
                  "content": ["Prose-only gates", "No measured floors"]},
         "right": {"title": "This run",
@@ -130,9 +138,20 @@ _ARCHITECTURE_SVG = """\
 #
 # `bar_chart` reports nothing at all. That is the shape a clean slide has, and
 # it is worth one line of its own: the entry is not an oversight.
+#
+# `pie_chart` is here because a pie is drawn entirely in `<path>`, and until
+# `Scene.outline_boxes()` existed those paths were unmeasured: this slide
+# unioned to 0.03 of the safe area -- the title and the legend -- and the gate
+# reported a slide carrying a 400-unit disc as nearly empty. It now measures
+# 0.27, still under `occupancy_min`, and that is a true observation about the
+# renderer: a radius-200 pie placed left of centre leaves the right half of
+# the frame to a three-row legend. It is the art-direction reviewer's question
+# to answer, not a build failure, which is why it is a warning and why the
+# entry is recorded rather than fixed here.
 _EXPECTED: Dict[str, Set[str]] = {
     "bullets": {"occupancy", "off-grid"},
     "bar_chart": set(),
+    "pie_chart": {"occupancy"},
     "two_column": {"occupancy", "off-grid"},
     "timeline": {"occupancy", "off-grid"},
     "table": {"occupancy", "off-grid"},

@@ -287,3 +287,62 @@ def test_a_connector_below_the_graphic_floor_is_an_error(
                               False, True, None)])
     rules = {f.rule for f in color.check_graphic_contrast(scene, tokens)}
     assert rules == {"graphic-contrast"}
+
+
+def test_a_tspan_colour_is_judged_like_any_other_text(
+        tokens: DesignTokens) -> None:
+    """Contrast is a property of every colour a run paints, not just the first.
+
+    A `<text>` whose `fill` is legible can still carry a `<tspan>` in a pale
+    accent -- that is precisely how an emphasised word or a unit suffix gets
+    written -- and the converter turns each tspan into its own PPTX run with
+    its own colour. Reading only the element's own `fill` meant the illegible
+    half of the line was never measured, while `token-color` did read
+    `run.fills` and flagged the same colour for being off-palette. One rule
+    seeing the tspan and the other not is not a policy, it is an oversight.
+    """
+    run = replace(_text("t1", "#374151"), fills=("#374151", "#e2e8f0"))
+    findings = color.check_text_contrast(_scene(texts=[run]), tokens)
+    assert [f.rule for f in findings] == ["text-contrast"]
+    assert "#e2e8f0" in findings[0].message
+
+
+def test_a_run_whose_every_colour_is_legible_is_clean(
+        tokens: DesignTokens) -> None:
+    """Two legible colours in one run produce no finding and no duplicate."""
+    run = replace(_text("t1", "#374151"), fills=("#374151", "#1e3a5f"))
+    assert color.check_text_contrast(_scene(texts=[run]), tokens) == []
+
+
+def test_only_the_worst_colour_in_a_run_is_reported(
+        tokens: DesignTokens) -> None:
+    """One run is one finding; an author fixes a line, not a colour list."""
+    run = replace(_text("t1", "#e2e8f0"), fills=("#e2e8f0", "#f8fafc"))
+    findings = color.check_text_contrast(_scene(texts=[run]), tokens)
+    assert len(findings) == 1
+
+
+def test_the_floor_follows_the_smallest_size_in_the_run(
+        tokens: DesignTokens) -> None:
+    """A large-text exemption cannot be claimed by the half that is not large.
+
+    `#7c8ca0` on white is 3.43:1: above the 3.0 large-text floor, below the 4.5
+    body floor. At 26pt bold the whole line is large text and the colour is
+    admissible. Put a 16pt `<tspan>` in that line -- a unit suffix, a footnote
+    marker -- and 16pt is not large text at any weight, so those glyphs are
+    held to 4.5 and fail. Judging the run by its own `font-size` alone granted
+    the small half an exemption it had not earned.
+    """
+    run = replace(_text("t1", "#7c8ca0", size=26, weight=600),
+                  min_size=16.0, fills=("#7c8ca0",))
+    findings = color.check_text_contrast(_scene(texts=[run]), tokens)
+    assert [f.rule for f in findings] == ["text-contrast"]
+    assert "4.5" in findings[0].message
+
+
+def test_a_uniformly_large_run_keeps_the_large_text_floor(
+        tokens: DesignTokens) -> None:
+    """The same colour at one size throughout is still admissible."""
+    run = replace(_text("t1", "#7c8ca0", size=26, weight=600),
+                  min_size=26.0, fills=("#7c8ca0",))
+    assert color.check_text_contrast(_scene(texts=[run]), tokens) == []

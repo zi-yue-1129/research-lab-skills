@@ -10,7 +10,7 @@ import pytest
 from design_tokens import DEFAULT_TOKENS_PATH, DesignTokens
 from fonts import vertical_metrics
 from visual_style import geometry
-from visual_style.scene import Box, Scene, TextRun
+from visual_style.scene import Box, PathShape, Scene, TextRun
 
 
 @pytest.fixture(scope="module")
@@ -279,3 +279,115 @@ def test_a_label_placed_beside_its_node_is_fine(tokens: DesignTokens) -> None:
         boxes=[_box("dot", 300, 300, 20, 20, node_id="n1")],
         texts=[_text("label", 260, 260, 100, node_id="n1")])
     assert geometry.check_node_padding(scene, tokens) == []
+
+
+def _outline(element_id: str, x: float, y: float, w: float, h: float,
+             bleed: bool = False) -> PathShape:
+    """Build a measured `<path>` for rule testing."""
+    extent = Box(element_id, "path", x, y, w, h, "#1e3a5f", None, 0.0, 0.0,
+                 None, None, bleed)
+    return PathShape(element_id, "#1e3a5f", None, 0.0, None, None, None,
+                     extent)
+
+
+def _outline_scene(paths) -> Scene:
+    """Build a scene whose only content is free-form shapes."""
+    return Scene(1200, 675, (), (), (), (), "DejaVu Sans", tuple(paths))
+
+
+def test_a_wedge_that_leaves_the_safe_area_is_an_error(
+        tokens: DesignTokens) -> None:
+    """Free-form shapes are held to the margins like everything else.
+
+    A pie chart is drawn entirely in `<path>`, so while paths were unmeasured
+    a wedge could run past the right margin and the gate reported the slide
+    clean -- and the human reviewer had been told the margins were already
+    checked by the linter.
+    """
+    scene = _outline_scene([_outline("wedge", 900, 100, 260, 90)])
+    findings = geometry.check_safe_area(scene, tokens)
+    assert [f.rule for f in findings] == ["safe-area"]
+    assert findings[0].element_id == "wedge"
+
+
+def test_a_bleeding_wedge_is_exempt_like_any_other_bleed(
+        tokens: DesignTokens) -> None:
+    """`data-bleed` means the same thing on a path as on a rect."""
+    scene = _outline_scene([_outline("wedge", 0, 0, 1200, 40, bleed=True)])
+    assert geometry.check_safe_area(scene, tokens) == []
+
+
+def test_outline_extents_do_not_trip_element_overlap(
+        tokens: DesignTokens) -> None:
+    """A bounding box is not the shape, so it cannot arbitrate collisions.
+
+    Adjacent pie wedges share a centre: their bounding boxes overlap almost
+    completely while the wedges themselves do not touch, and an arrowhead is
+    drawn deliberately against the node edge it points at. Feeding either into
+    `element-overlap` would manufacture errors on every correct chart, so the
+    extents reach `safe-area` and `occupancy` -- where a superset is a safe
+    over-estimate -- and stop there.
+    """
+    scene = _outline_scene([_outline("w1", 400, 200, 200, 200),
+                            _outline("w2", 450, 200, 200, 200)])
+    assert geometry.check_overlap(scene, tokens) == []
+
+
+def test_a_label_stranded_far_from_a_plate_that_could_hold_it_is_an_error(
+        tokens: DesignTokens) -> None:
+    """Escaping a surface that had room for you is a defect, not an idiom.
+
+    The wholly-outside exemption was written for the timeline dot, and as
+    written it exempted everything: a label 400 units clear of the 200x88
+    plate it belongs to passed silently, which is the single most visible way
+    an architecture diagram can break. The discriminator is capacity, not
+    distance -- a node big enough to seat the label with its padding was
+    supposed to be seating it.
+    """
+    scene = _scene(
+        boxes=[_box("plate", 96, 96, 200, 88, node_id="n1")],
+        texts=[_text("label", 700, 400, 120, node_id="n1")])
+    findings = geometry.check_node_padding(scene, tokens)
+    assert [f.rule for f in findings] == ["node-padding"]
+    assert "plate" in findings[0].message
+
+
+def test_a_label_beside_a_node_too_small_to_seat_it_is_still_fine(
+        tokens: DesignTokens) -> None:
+    """A 20x20 dot cannot hold a 100-unit label, so its label sits outside.
+
+    This is the case the exemption exists for and it must keep passing: every
+    event on every timeline slide is drawn this way.
+    """
+    scene = _scene(
+        boxes=[_box("dot", 300, 300, 20, 20, node_id="n1")],
+        texts=[_text("label", 260, 500, 100, node_id="n1")])
+    assert geometry.check_node_padding(scene, tokens) == []
+
+
+def test_nodes_that_graze_are_caught_by_one_rule_or_the_other(
+        tokens: DesignTokens) -> None:
+    """Two tolerances that disagree leave a band where nothing is checked.
+
+    `element-overlap` ignores intersections shallower than half a unit, which
+    is right: renderers tile abutting bands with accumulated floats. But
+    `node-gap` skipped every pair that merely `intersects`, so a 0.3-unit
+    overlap between two nodes fell between the two rules -- overlapping enough
+    for the gap rule to stand aside, not enough for the overlap rule to speak.
+    Two nodes touching each other at all are certainly not 24 units apart.
+    """
+    scene = _scene(boxes=[_box("a", 100, 100, 200, 90, node_id="n1"),
+                          _box("b", 299.7, 100, 200, 90, node_id="n2")])
+    assert geometry.check_overlap(scene, tokens) == []
+    findings = geometry.check_node_gap(scene, tokens)
+    assert [f.rule for f in findings] == ["node-gap"]
+
+
+def test_materially_overlapping_nodes_are_still_left_to_the_overlap_rule(
+        tokens: DesignTokens) -> None:
+    """One defect, one finding: a real collision is not also a gap error."""
+    scene = _scene(boxes=[_box("a", 100, 100, 200, 90, node_id="n1"),
+                          _box("b", 250, 100, 200, 90, node_id="n2")])
+    assert [f.rule for f in geometry.check_overlap(scene, tokens)] == [
+        "element-overlap"]
+    assert geometry.check_node_gap(scene, tokens) == []
