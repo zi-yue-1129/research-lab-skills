@@ -363,7 +363,7 @@ jobs:
         run: python3 -m unittest tests.checks.test_check_v3_8_annotation_literal_sync -v
 
       - name: Check cross-model grounding-guard doc sync (#346 / #349)
-        # Drift guard: asserts shared/cross_model_verification.md references the canonical jq
+        # Drift guard: asserts shared/protocols/cross_model_verification.md references the canonical jq
         # filters under scripts/cross_model_verification/ via `jq -f` and still carries the
         # NOT_SEARCHED + CROSS-MODEL-ERROR safety branches — so a doc edit can't re-inline a
         # weaker filter or drop a branch while the behavioral tests keep passing against the

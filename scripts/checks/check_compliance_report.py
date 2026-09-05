@@ -16,7 +16,7 @@ from pathlib import Path
 
 import jsonschema
 
-SCHEMA_PATH = Path(__file__).resolve().parents[2] / "shared" / "compliance_report.schema.json"
+SCHEMA_PATH = Path(__file__).resolve().parents[2] / "shared" / "schemas" / "compliance_report.schema.json"
 
 
 def load_schema() -> dict:
@@ -69,7 +69,7 @@ def warn_suspicious(report: dict) -> list[str]:
             warnings.append(
                 "WARNING: prisma_trAIce subtree is present but protocol_maturity is missing. "
                 "Per issue #95, compliance_agent should populate protocol_maturity from "
-                "shared/prisma_trAIce_protocol.md. This warning is opt-in "
+                "shared/external/prisma_trAIce_protocol.md. This warning is opt-in "
                 "(ARS_WARN_MISSING_MATURITY=1) and does not fail validation."
             )
     return warnings
@@ -92,7 +92,7 @@ def main() -> int:
             print(f"ERROR: {e}")
         print(
             f"\n{len(errors)} schema violation(s). "
-            "See shared/compliance_report.schema.json for field definitions.",
+            "See shared/schemas/compliance_report.schema.json for field definitions.",
             file=sys.stderr,
         )
         return 1

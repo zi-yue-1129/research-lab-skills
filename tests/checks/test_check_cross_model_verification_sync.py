@@ -12,7 +12,7 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 LINT = REPO / "scripts" / "checks" / "check_cross_model_verification_sync.py"
-DOC = REPO / "shared" / "cross_model_verification.md"
+DOC = REPO / "shared" / "protocols" / "cross_model_verification.md"
 
 # A re-inline of the (pre-#349 naive) Gemini sources jq, used by the re-inline mutation test.
 REINLINE_OLD = 'cites="$(jq -r -f "$GUARD/gemini_sources.jq" <<<"$body")"'

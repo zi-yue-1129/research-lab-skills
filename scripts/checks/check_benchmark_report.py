@@ -15,7 +15,7 @@ from pathlib import Path
 
 import jsonschema
 
-SCHEMA_PATH = Path(__file__).resolve().parents[2] / "shared" / "benchmark_report.schema.json"
+SCHEMA_PATH = Path(__file__).resolve().parents[2] / "shared" / "schemas" / "benchmark_report.schema.json"
 
 
 def load_schema() -> dict:
@@ -63,7 +63,7 @@ def main() -> int:
             print(f"ERROR: {e}")
         print(
             f"\n{len(errors)} schema violation(s). "
-            f"See shared/benchmark_report_pattern.md for field rationale.",
+            f"See shared/patterns/benchmark_report_pattern.md for field rationale.",
             file=sys.stderr,
         )
         return 1

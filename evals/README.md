@@ -21,7 +21,7 @@ evals/
 
 ## Running the harness (#184 Phase 1b)
 
-The multi-task harness `scripts/evals/run_evals.py` discovers every `gold/<task>/manifest.yaml`, measures each task, and emits a report shaped by `shared/evals_lift_report.schema.json`:
+The multi-task harness `scripts/evals/run_evals.py` discovers every `gold/<task>/manifest.yaml`, measures each task, and emits a report shaped by `shared/schemas/evals_lift_report.schema.json`:
 
 ```
 PYTHONPATH=. python -m scripts.evals.run_evals                          # all tasks

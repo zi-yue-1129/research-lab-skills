@@ -123,7 +123,7 @@ ARS 暴露若干 opt-in flag，全部預設 OFF；設定後僅影響當前 sessi
 | `ARS_CROSS_MODEL` | v3.0 | 啟用跨模型驗證（見下節） | [§「跨模型驗證」](#跨模型驗證選用) |
 | `ARS_SOCRATIC_READING_PROBE=1` | v3.5.1 | 啟用 `socratic_mentor_agent` 的讀書檢查 probe layer。僅 goal-oriented intent；使用者引用過具體論文時最多觸發一次；婉拒不留紀錄懲罰。 | `deep-research/agents/socratic_mentor_agent.md` |
 | `ARS_PASSPORT_RESET=1` | v3.6.3 | 把每個 FULL checkpoint 提升為 context 重置邊界。**emit** boundary entry 必須設此 flag；新 session 用 `resume_from_passport=<hash>` 續跑**不需要** flag。`systematic-review` 模式下 flag ON 時，每個 FULL checkpoint 一律強制重置。 | `academic-pipeline/references/passport_as_reset_boundary.md` |
-| `ARS_CROSS_MODEL_SAMPLE_INTERVAL` | v3.5.0 | 跨模型完整性抽查的取樣間隔（advisory） | `shared/cross_model_verification.md` |
+| `ARS_CROSS_MODEL_SAMPLE_INTERVAL` | v3.5.0 | 跨模型完整性抽查的取樣間隔（advisory） | `shared/protocols/cross_model_verification.md` |
 | `ARS_VERIFICATION_CACHE_PATH` | v3.11 | 覆寫引用查驗 cache 的位置（見下節）。不是 on/off flag——cache 預設開啟，此變數只改位置。 | `scripts/audit/verification_cache.py` |
 
 ---
@@ -169,7 +169,7 @@ claude
 
 ### 費用
 
-完整 pipeline 會增加約 $0.60-1.10 的跨模型 API 費用（GPT-5.4 Pro 定價）。詳細拆解見 [`shared/cross_model_verification.md`](../shared/cross_model_verification.md)。
+完整 pipeline 會增加約 $0.60-1.10 的跨模型 API 費用（GPT-5.4 Pro 定價）。詳細拆解見 [`shared/protocols/cross_model_verification.md`](../shared/protocols/cross_model_verification.md)。
 
 ### 沒有 API key？沒問題
 

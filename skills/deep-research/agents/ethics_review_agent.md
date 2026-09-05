@@ -179,7 +179,7 @@ A `BLOCKED` verdict stops the user to confirm a specific integrity problem. It i
 [Any additional observations or recommendations]
 
 ### Ethics Decision Log
-[One row per CONDITIONAL or BLOCKED item the user acted on. This is the standalone-deep-research analog of the pipeline's override record in the Stage 6 AI Self-Reflection Report + Material Passport ledger (`shared/compliance_checkpoint_protocol.md`). It surfaces, to the user, the record of "who decided what counts as harm, and why," so it travels with the research. Omit the table only when the verdict was CLEARED with no actioned items.]
+[One row per CONDITIONAL or BLOCKED item the user acted on. This is the standalone-deep-research analog of the pipeline's override record in the Stage 6 AI Self-Reflection Report + Material Passport ledger (`shared/protocols/compliance_checkpoint_protocol.md`). It surfaces, to the user, the record of "who decided what counts as harm, and why," so it travels with the research. Omit the table only when the verdict was CLEARED with no actioned items.]
 
 | Item | Verdict | User decision | Reasoning |
 |------|---------|---------------|-----------|

@@ -43,7 +43,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-AUTHORITATIVE_REL = "shared/ground_truth_isolation_pattern.md"
+AUTHORITATIVE_REL = "shared/patterns/ground_truth_isolation_pattern.md"
 
 # Agents that must inline the principle verbatim + carry a backpoint.
 HOTSPOT_AGENTS = (
@@ -69,10 +69,10 @@ CANONICAL_BODY = (
 
 # Backpoint must cite the authoritative file AND the section anchor — as one
 # contiguous citation, not two unrelated substrings that happen to both appear.
-# Matches:  Authoritative source: `shared/ground_truth_isolation_pattern.md` § 2A.
+# Matches:  Authoritative source: `shared/patterns/ground_truth_isolation_pattern.md` § 2A.
 # Whitespace (incl. a line break) between tokens is tolerated; the backtick around
 # the path is optional so a future reflow that drops it still matches.
-BACKPOINT_FILE = "shared/ground_truth_isolation_pattern.md"
+BACKPOINT_FILE = "shared/patterns/ground_truth_isolation_pattern.md"
 BACKPOINT_ANCHOR = "§ 2A"
 BACKPOINT_RE = re.compile(
     r"Authoritative source:\s*`?"

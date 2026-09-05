@@ -739,7 +739,7 @@ Files that may need touch:
 | `academic-paper/agents/draft_writer_agent.md` | Same | MED — 520 lines |
 | `shared/contracts/passport/audit_artifact_entry.schema.json` | **NO TOUCH** (D5) | — |
 | `shared/contracts/material_passport*` | No root schema exists; aggregate referenced through orchestrator | — |
-| `shared/sprint_contract.schema.json` (Schema 13.1) | **NO TOUCH** (D6 zero-touch) | — |
+| `shared/schemas/sprint_contract.schema.json` (Schema 13.1) | **NO TOUCH** (D6 zero-touch) | — |
 | `scripts/check_audit_artifact_consistency.py` | **NO TOUCH** (D5 — separate lint) | — |
 | `README.md` + `README.zh-TW.md` | v3.8 anchor + Zhao 2026 + RubricEM cite | LOW |
 | `CHANGELOG.md` | v3.8 entry | LOW |
@@ -747,7 +747,7 @@ Files that may need touch:
 
 Boundary preservation lints (run as part of PR checks):
 - `scripts/check_v3_6_7_pattern_protection.py` — verify PATTERN PROTECTION blocks unchanged
-- `git diff main..HEAD -- shared/sprint_contract.schema.json` MUST be empty (v3.6.6 zero-touch)
+- `git diff main..HEAD -- shared/schemas/sprint_contract.schema.json` MUST be empty (v3.6.6 zero-touch)
 - `git diff main..HEAD -- shared/contracts/passport/audit_artifact_entry.schema.json` MUST be empty (D5)
 
 ## 9. Acceptance criteria

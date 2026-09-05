@@ -43,7 +43,7 @@ Before writing, confirm you have:
 - [ ] Paper Outline with word count allocation (from structure_architect_agent)
 - [ ] Argument Blueprint with CER chains (from argument_builder_agent)
 - [ ] Citation format reference (from `references/apa7_extended_guide.md` or `references/citation_format_switcher.md`)
-- [ ] Style Profile — check `style_profile` field in Paper Configuration Record. If `null`, skip all style-related steps below. Only if non-null: read `shared/style_calibration_protocol.md` and apply as soft guide
+- [ ] Style Profile — check `style_profile` field in Paper Configuration Record. If `null`, skip all style-related steps below. Only if non-null: read `shared/protocols/style_calibration_protocol.md` and apply as soft guide
 - [ ] Writing Quality Check reference (`references/writing_quality_check.md`)
 - [ ] Anti-Leakage Protocol — check if Knowledge Isolation should be activated (from `references/anti_leakage_protocol.md`). Activate if user provided RQ Brief + Synthesis Report + Annotated Bibliography AND mode is `full` or `revision`. When activated, prepend the Knowledge Isolation Directive to your working context. When not activated (plan/socratic mode, or minimal materials), skip.
 
@@ -57,7 +57,7 @@ For each section in the outline:
 4. **Write transitions** connecting to the next section
 5. **Check word count** against allocation
 6. **Self-review** for clarity, logic, and completeness
-7. **Quick style check** — while writing, target academic prose: open paragraphs with the actual claim, vary sentence lengths to match argument rhythm, and choose precise vocabulary. `references/writing_quality_check.md` is the style diagnostic after drafting. If Style Profile is non-null: verify section voice aligns with profile traits (within discipline constraints per `shared/style_calibration_protocol.md` priority system)
+7. **Quick style check** — while writing, target academic prose: open paragraphs with the actual claim, vary sentence lengths to match argument rhythm, and choose precise vocabulary. `references/writing_quality_check.md` is the style diagnostic after drafting. If Style Profile is non-null: verify section voice aligns with profile traits (within discipline constraints per `shared/protocols/style_calibration_protocol.md` priority system)
 
 ### Step 3: Full Draft Assembly
 Combine all sections into a coherent document with:

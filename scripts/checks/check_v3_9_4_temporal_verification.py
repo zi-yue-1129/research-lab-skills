@@ -39,7 +39,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SCHEMAS = REPO_ROOT / "shared/contracts/passport"
 
 BIBLIOGRAPHY_AGENT_PATH = REPO_ROOT / "skills/deep-research/agents/bibliography_agent.md"
-BIBLIOGRAPHY_AGENT_SHA256 = "e7b177a0e3a5ca6ef5c3c224266e977b95f01160f8fa662dcbdd96622d71af2c"  # updated for the scripts/ regrouping: the file's only delta is one advisory-verifier path moving from scripts/check_pipeline_integrity.py to scripts/checks/check_pipeline_integrity.py. No temporal, version-family or M5/M6 ownership change, so the F2 invariant this gate protects is untouched. Previous baseline c8b02f5… was the agent-state Source/Evidence registration state.
+BIBLIOGRAPHY_AGENT_SHA256 = "293bf0ac72d8e707e84023e3f3699d505a0b3c25c6914cb1dd1b885a554f2377"  # updated for the stage-A + stage-C merge: the file carries exactly two path deltas, one advisory-verifier reference moving to scripts/checks/check_pipeline_integrity.py and one authoritative-source reference moving to shared/patterns/ground_truth_isolation_pattern.md. No temporal, version-family or M5/M6 ownership change, so the F2 invariant this gate protects is untouched. The two branch baselines e7b177a0… and ef211df8… each recorded only one of the two deltas.
 
 
 def _validate(yaml_path: Path, schema_path: Path) -> list[str]:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Warn when shared/prisma_trAIce_protocol.md is older than 180 days.
+"""Warn when shared/external/prisma_trAIce_protocol.md is older than 180 days.
 
 Non-blocking: exit 0 even on stale, but print warning to stderr.
 Exit 1 only on parse error (missing or malformed snapshot_date).
@@ -7,7 +7,7 @@ Exit 1 only on parse error (missing or malformed snapshot_date).
 Usage:
   python scripts/checks/check_prisma_trAIce_freshness.py [path]
 
-Default path: shared/prisma_trAIce_protocol.md (relative to repo root).
+Default path: shared/external/prisma_trAIce_protocol.md (relative to repo root).
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from pathlib import Path
 
 import yaml
 
-DEFAULT_PATH = Path(__file__).resolve().parents[2] / "shared" / "prisma_trAIce_protocol.md"
+DEFAULT_PATH = Path(__file__).resolve().parents[2] / "shared" / "external" / "prisma_trAIce_protocol.md"
 STALE_THRESHOLD_DAYS = 180
 
 

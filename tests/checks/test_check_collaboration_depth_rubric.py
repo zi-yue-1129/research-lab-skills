@@ -46,12 +46,12 @@ def _valid_agent_text() -> str:
         name: collaboration_depth_agent
         measures: collaboration_depth
         blocking: false
-        rubric_ref: shared/collaboration_depth_rubric.md
+        rubric_ref: shared/external/collaboration_depth_rubric.md
         ---
 
         # collaboration_depth_agent
 
-        Observer. Reads dialogue log; scores per rubric at shared/collaboration_depth_rubric.md.
+        Observer. Reads dialogue log; scores per rubric at shared/external/collaboration_depth_rubric.md.
         """)
 
 
@@ -80,8 +80,8 @@ def _valid_skill_md_text() -> str:
 
 
 def _make_repo(root: Path) -> None:
-    (root / "shared").mkdir(parents=True)
-    (root / "shared" / "collaboration_depth_rubric.md").write_text(_valid_rubric_text())
+    (root / "shared" / "external").mkdir(parents=True)
+    (root / "shared" / "external" / "collaboration_depth_rubric.md").write_text(_valid_rubric_text())
     agents = root / "skills" / "academic-pipeline" / "agents"
     agents.mkdir(parents=True)
     (agents / "collaboration_depth_agent.md").write_text(_valid_agent_text())
@@ -101,7 +101,7 @@ class TestCollaborationDepthRubric(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             _make_repo(root)
-            (root / "shared" / "collaboration_depth_rubric.md").unlink()
+            (root / "shared" / "external" / "collaboration_depth_rubric.md").unlink()
             r = _run(root)
             self.assertEqual(r.returncode, 1)
             self.assertIn("collaboration_depth_rubric.md does not exist", r.stdout)
@@ -110,7 +110,7 @@ class TestCollaborationDepthRubric(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             _make_repo(root)
-            path = root / "shared" / "collaboration_depth_rubric.md"
+            path = root / "shared" / "external" / "collaboration_depth_rubric.md"
             path.write_text(_valid_rubric_text().replace("10.1186/s41239-026-00585-x", ""))
             r = _run(root)
             self.assertEqual(r.returncode, 1)
@@ -120,7 +120,7 @@ class TestCollaborationDepthRubric(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             _make_repo(root)
-            path = root / "shared" / "collaboration_depth_rubric.md"
+            path = root / "shared" / "external" / "collaboration_depth_rubric.md"
             path.write_text(_valid_rubric_text().replace('rubric_version: "1.0"', "unused: true"))
             r = _run(root)
             self.assertEqual(r.returncode, 1)
@@ -130,7 +130,7 @@ class TestCollaborationDepthRubric(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             _make_repo(root)
-            path = root / "shared" / "collaboration_depth_rubric.md"
+            path = root / "shared" / "external" / "collaboration_depth_rubric.md"
             path.write_text(_valid_rubric_text().replace("## Cognitive Vigilance", "## Something Else"))
             r = _run(root)
             self.assertEqual(r.returncode, 1)
@@ -141,7 +141,7 @@ class TestCollaborationDepthRubric(unittest.TestCase):
             root = Path(tmp)
             _make_repo(root)
             agent = root / "skills" / "academic-pipeline" / "agents" / "collaboration_depth_agent.md"
-            agent.write_text(_valid_agent_text().replace("shared/collaboration_depth_rubric.md", "nope.md"))
+            agent.write_text(_valid_agent_text().replace("shared/external/collaboration_depth_rubric.md", "nope.md"))
             r = _run(root)
             self.assertEqual(r.returncode, 1)
             self.assertIn("rubric_ref", r.stdout)
@@ -158,11 +158,11 @@ class TestCollaborationDepthRubric(unittest.TestCase):
             _make_repo(root)
             agent = root / "skills" / "academic-pipeline" / "agents" / "collaboration_depth_agent.md"
             drifted = _valid_agent_text().replace(
-                "rubric_ref: shared/collaboration_depth_rubric.md",
+                "rubric_ref: shared/external/collaboration_depth_rubric.md",
                 "rubric_ref: nope.md",
             )
             # Sanity: the drifted text still has the right path in the body.
-            assert "shared/collaboration_depth_rubric.md" in drifted
+            assert "shared/external/collaboration_depth_rubric.md" in drifted
             agent.write_text(drifted)
             r = _run(root)
             self.assertEqual(r.returncode, 1)

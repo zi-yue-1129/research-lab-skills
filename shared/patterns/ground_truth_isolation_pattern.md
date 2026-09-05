@@ -208,7 +208,7 @@ not a duplication of their contents.
 | Anti-leakage protocol | `academic-paper/references/anti_leakage_protocol.md` |
 | Integrity gates (Stage 2.5/4.5) + 7-mode failure checklist | `academic-pipeline/references/ai_research_failure_modes.md` |
 | Reviewer calibration mode (FNR/FPR with private gold set) | `academic-paper-reviewer/references/calibration_mode_protocol.md` |
-| Cross-model verification | `shared/cross_model_verification.md` |
+| Cross-model verification | `shared/protocols/cross_model_verification.md` |
 | Declarative posture | `shared/handoff_schemas.md` (`data_access_level` and `task_type` sections) |
 
 This pattern document is the narrative rationale; those six reference files

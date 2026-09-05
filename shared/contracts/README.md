@@ -7,7 +7,7 @@ ports, and (v3.6.7+) cross-model audit artifact pipelines.
 
 Sprint contract templates for reviewer hard-gate orchestration.
 
-Schema: `shared/sprint_contract.schema.json` (Schema 13).
+Schema: `shared/schemas/sprint_contract.schema.json` (Schema 13).
 Validator: `scripts/checks/check_sprint_contract.py`.
 Spec: `docs/design/2026-04-23-ars-v3.6.2-sprint-contract-design.md`.
 Protocol: `academic-paper-reviewer/references/sprint_contract_protocol.md`.

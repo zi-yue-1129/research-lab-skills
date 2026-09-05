@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/Imbad0202/academic-research-skills/shared/benchmark_report.schema.json",
+  "$id": "https://github.com/Imbad0202/academic-research-skills/shared/schemas/benchmark_report.schema.json",
   "title": "ARS Benchmark Report",
   "type": "object",
   "required": [

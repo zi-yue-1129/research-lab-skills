@@ -43,7 +43,7 @@ The repo already makes `ARS_CROSS_MODEL` **default-on inside calibration mode** 
 - In **ordinary reviewer / judge paths**, cross-model is **opt-in, "for best results"** (the citation-claim judge already supports a non-default judge model).
 - **Calibration mode is the explicit exception**: calibration itself is opt-in, but *once invoked* it defaults to cross-model when configured.
 - Absent cross-model is **warn-and-continue**, never a gate. The suite is designed to work single-model.
-- The existing cross-model **consent / privacy boundary** is preserved: sending a user's manuscript to another provider requires explicit consent (per `shared/cross_model_verification.md`); this recommendation does not weaken it.
+- The existing cross-model **consent / privacy boundary** is preserved: sending a user's manuscript to another provider requires explicit consent (per `shared/protocols/cross_model_verification.md`); this recommendation does not weaken it.
 
 ### 4. Paraphrase spot-check — kept, honestly de-powered (plain language)
 

@@ -246,7 +246,7 @@ Collaboration Depth (advisory, Wang & Zhang 2026 — never blocks):
   Depth-deepening moves you could try next stage:
   - [specific, actionable, rubric-grounded]
   - [specific, actionable, rubric-grounded]
-  Full rubric: shared/collaboration_depth_rubric.md
+  Full rubric: shared/external/collaboration_depth_rubric.md
 
 Next step: Stage [Y] [Name]
 Purpose: [One-sentence description]
@@ -289,7 +289,7 @@ See [`../references/passport_as_reset_boundary.md`](../references/passport_as_re
 
 ```
 ━━━ [OK] Stage [X] [Name] -> Stage [Y] [Name] ready ━━━
-Collaboration Depth (advisory): Zone [1|2|3] · DI [N] / CV [N] / CR [N] · rubric: shared/collaboration_depth_rubric.md
+Collaboration Depth (advisory): Zone [1|2|3] · DI [N] / CV [N] / CR [N] · rubric: shared/external/collaboration_depth_rubric.md
 Reply `continue` to proceed or `pause` to stop here.
 ```
 
@@ -370,7 +370,7 @@ When a sub-skill stage fails or produces unacceptable output:
 
 ### Collaboration Depth Observer (advisory, never blocks)
 
-**When.** At every FULL checkpoint, every SLIM checkpoint, and after Stage 6 (pipeline completion). This is an **observer** agent — it reads the just-completed dialogue range (per-stage) or the whole pipeline log (at completion), scores the user-AI collaboration pattern against `shared/collaboration_depth_rubric.md`, and emits a short advisory report. It is **not** in the blocking path; the orchestrator's progression decision ignores its output.
+**When.** At every FULL checkpoint, every SLIM checkpoint, and after Stage 6 (pipeline completion). This is an **observer** agent — it reads the just-completed dialogue range (per-stage) or the whole pipeline log (at completion), scores the user-AI collaboration pattern against `shared/external/collaboration_depth_rubric.md`, and emits a short advisory report. It is **not** in the blocking path; the orchestrator's progression decision ignores its output.
 
 **How the orchestrator invokes it.**
 1. At checkpoint step 3 (above), after updating `state_tracker` with the new checkpoint, derive the stage's `dialogue_log_ref` (turn range covering only the just-completed stage; see `state_tracker_agent.md`).
@@ -379,7 +379,7 @@ When a sub-skill stage fails or produces unacceptable output:
 4. Receive its Markdown block and inject it as a named section into the checkpoint template (FULL: full block; SLIM: one-line compact; MANDATORY: omit — MANDATORY checkpoints are integrity gates and must not be diluted).
 5. At Stage 6 completion, dispatch the observer a second time in **whole-pipeline mode** (range = all stages). Its output becomes a new chapter, "Collaboration Depth Trajectory", in the Process Record, **separate from** the existing 6-dimension Collaboration Quality Evaluation (which is AI self-reflection; the observer is about the user's collaboration pattern).
 
-**Cross-model cost and behaviour.** When `ARS_CROSS_MODEL` is set, do not re-dispatch automatically. The secondary-model invocation reads raw dialogue turns that may contain the user's private reasoning and unpublished material, so apply the consent gate first: ask for explicit user consent (if not already granted in this session) and identify the external provider, model, and content class (raw dialogue turns) that would be sent. The environment variable alone is not consent to upload that material. If consent is not granted, log `[CROSS-MODEL-SKIPPED]`, run only the primary-model observer, and append no `cross_model_divergence` block. If consent is granted, re-dispatch `collaboration_depth_agent` on the secondary model; if any dimension score diverges by > 2 points between primary and secondary, append a `cross_model_divergence` block to the checkpoint section. **Never silently average cross-model scores.** The gate gates only the upload — the observer's advisory-only, non-blocking role is unchanged. See `shared/cross_model_verification.md` for the consent boundary.
+**Cross-model cost and behaviour.** When `ARS_CROSS_MODEL` is set, do not re-dispatch automatically. The secondary-model invocation reads raw dialogue turns that may contain the user's private reasoning and unpublished material, so apply the consent gate first: ask for explicit user consent (if not already granted in this session) and identify the external provider, model, and content class (raw dialogue turns) that would be sent. The environment variable alone is not consent to upload that material. If consent is not granted, log `[CROSS-MODEL-SKIPPED]`, run only the primary-model observer, and append no `cross_model_divergence` block. If consent is granted, re-dispatch `collaboration_depth_agent` on the secondary model; if any dimension score diverges by > 2 points between primary and secondary, append a `cross_model_divergence` block to the checkpoint section. **Never silently average cross-model scores.** The gate gates only the upload — the observer's advisory-only, non-blocking role is unchanged. See `shared/protocols/cross_model_verification.md` for the consent boundary.
 
 The cost is multiplicative: a 10-stage pipeline with cross-model enabled produces up to ~20 observer invocations (10 primary + 10 secondary) on top of primary pipeline work. Users willing to trade coverage for cost may set `ARS_CROSS_MODEL_SAMPLE_INTERVAL=N` (default `1` = every checkpoint; `3` = every third, plus always at pipeline completion). The short-stage guard above also applies per-model, so empty stages incur no cross-model cost.
 
