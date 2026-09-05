@@ -85,14 +85,26 @@ The subfigure passes only when all of these are true:
 
 ## Complete-slide gate
 
-The complete slide passes only when all of these are true:
+Measurable conditions are settled before this gate by
+`scripts/validate_visual_style.py` (SKILL.md Stage 10). A slide that has not
+passed that linter does not reach visual review at all, so do not re-litigate
+safe area, overlap, spacing, type size, contrast, palette conformance,
+connector attachment, or component consistency here — those have already been
+measured, and a prose opinion cannot overturn a measurement.
 
-- density and balance support the narrative;
-- alignment, spacing, and margins are consistent;
-- typography is readable on a projected screen;
-- contrast is sufficient and meaning is not carried by color alone;
-- styling matches the deck and equivalent visuals; and
-- there is no clipping, overlap, overflow, or unintended empty region.
+What this gate judges is what the linter cannot:
+
+- whether the visual states the slide's claim, or merely decorates it;
+- whether the hierarchy directs the eye to what matters first;
+- whether the composition reads at projection distance and at thumbnail size;
+- whether meaning survives without colour; and
+- whether the imagery is specific to this subject rather than generically
+  "technical".
+
+The linter's warnings are handed to this gate as context, not as verdicts: an
+`occupancy`, `equal-card-repetition`, `spacing-variance`, or
+`connector-crossing` warning is a question for the reviewer to answer, and the
+answer is recorded in the review.
 
 The following conditions always fail the gate:
 

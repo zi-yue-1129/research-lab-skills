@@ -717,6 +717,22 @@ Complex Visual Specification's `connections`/`layout`. It assembles the
 integrated SVG and writes the integration manifest (`modules_ref` pointing at
 the Complex Visual Specification, per §5 of the design spec).
 
+**Visual-style gate (deterministic, blocking).** Before any reviewer is
+dispatched for a slide, run the linter over that slide's authored SVG:
+
+```bash
+timeout 120 python3 "$SCRIPTS/validate_visual_style.py" \
+  --svg "$SLIDE_SVG" --tokens "$STYLE_TOKENS_REF" --json
+```
+
+Exit code 1 blocks the slide: the module returns to `revision_required` with the
+findings attached, and Stages 11–12 are not entered. This gate is deterministic
+and measures only what a ruler can settle — safe area, overlap, spacing,
+type floors, contrast, palette conformance, connector attachment and routing,
+component consistency, and slide load. It replaces no human judgement; it
+removes from human judgement the defects that never needed it. Warnings do not
+block, and are passed to the art-direction reviewer as context.
+
 ### 11. Scientific review
 
 Dispatch `scientific_visual_reviewer_agent` per slide (simple or integrated)
