@@ -189,3 +189,17 @@ def test_check_runs_every_geometry_rule(tokens: DesignTokens) -> None:
     assert set(geometry.RULES) == {
         "safe-area", "element-overlap", "node-gap", "node-padding", "off-grid",
     }
+
+
+def test_abutting_tiles_are_not_an_overlap(tokens: DesignTokens) -> None:
+    """A sliver from tiling arithmetic is not a collision.
+
+    `render_table` lays row bands by accumulating float row heights, so band n
+    can end at 209.0 while band n+1 starts at 208.9. Reporting a hard error for
+    a tenth of a unit fires on every table slide and turns the rule into noise,
+    which is how a gate gets switched off. Overlap must be material in both
+    axes before it counts.
+    """
+    scene = _scene(boxes=[_box("b1", 100, 160, 400, 49.0),
+                          _box("b2", 100, 208.9, 400, 49.0)])
+    assert geometry.check_overlap(scene, tokens) == []

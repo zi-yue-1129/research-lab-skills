@@ -10,6 +10,7 @@ from lxml import etree
 
 import generate_slides as gs
 from design_tokens import TokenError
+from fonts import vertical_metrics
 
 _SKILL_DIR = Path(__file__).resolve().parents[2]
 _DEFAULT_TOKENS = _SKILL_DIR / "references" / "tokens" / "default.tokens.yaml"
@@ -670,3 +671,50 @@ def test_metric_card_accent_bar_stays_inside_the_rounded_corner() -> None:
     bar_x, bar_w = bars[0]
     assert float(bar_x) >= float(card_x) + radius
     assert float(bar_x) + float(bar_w) <= float(card_x) + float(card_w) - radius
+
+
+def test_a_chart_note_clears_the_deck_footer() -> None:
+    """The chart note must not land in the band the footer occupies.
+
+    `chart_area` reserved space from the plot down to the safe-area bottom, but
+    the footer already sits in the bottom band of that same safe area, and
+    nothing subtracted it. The note therefore rendered its baseline at 623.8
+    with an ascent of 12, while the footer's box ran from 624 to 639: a
+    two-unit collision on every chart slide that carried a note.
+    """
+    gs.apply_tokens(_DEFAULT_TOKENS)
+    _, right, _, bottom = gs.chart_area()
+    note = gs.chart_note("Median of five runs.", right, bottom)
+    note_y = float(re.search(r'y="([0-9.]+)"', note).group(1))
+    ascent, descent = vertical_metrics(
+        gs.S["font_resolved"], gs.t_size("footnote"),
+        gs.t_weight("footnote"))
+    footer_top = gs.S["h"] - gs.S["safe"]["bottom"] - descent - ascent
+    assert note_y + descent <= footer_top
+
+
+def test_timeline_date_and_detail_lines_do_not_touch() -> None:
+    """Stepping between two type roles needs the two roles' own metrics.
+
+    `render_timeline` advanced from the date to the detail by the footnote's
+    own line advance, 12 * 1.30 = 15.6. The detail is set in `caption` at 16,
+    whose ascent is 15, and the footnote's descent is 3: the step has to be at
+    least 18. Every event on every timeline slide overlapped by 2.4 units.
+    """
+    gs.apply_tokens(_DEFAULT_TOKENS)
+    slide = {
+        "index": 1, "type": "timeline", "title": "Delivery",
+        "events": [{"label": "Spec", "date": "2026-09-01",
+                    "detail": "design agreed"}],
+    }
+    root = etree.fromstring(
+        gs.render_timeline(slide, {"footer": "f"}).encode("utf-8"))
+    ns = {"s": "http://www.w3.org/2000/svg"}
+    date = root.find(".//s:g//s:text[@data-style-role='footnote']", ns)
+    detail = root.find(".//s:text[@data-style-role='caption']", ns)
+    _, date_descent = vertical_metrics(
+        gs.S["font_resolved"], gs.t_size("footnote"), gs.t_weight("footnote"))
+    detail_ascent, _ = vertical_metrics(
+        gs.S["font_resolved"], gs.t_size("caption"), gs.t_weight("caption"))
+    step = float(detail.get("y")) - float(date.get("y"))
+    assert step >= date_descent + detail_ascent

@@ -338,6 +338,49 @@ def chart_note(note: str, right: float, bottom: float) -> str:
 
 
 # Chart drawing area
+def role_advance(previous: str, following: str) -> float:
+    """Return the baseline-to-baseline step between two type roles.
+
+    A role's own line advance, `size * line_height`, is only enough when the
+    next line is set in the same role. Stepping from a 12-unit footnote to a
+    16-unit caption by the footnote's 15.6-unit advance puts the caption's
+    15-unit ascent inside the footnote's 3-unit descent, which the
+    `element-overlap` rule reports as a hard error -- correctly, because the
+    glyphs really do touch.
+
+    Args:
+        previous: Style role of the line above.
+        following: Style role of the line below.
+
+    Returns:
+        The larger of the previous role's own advance and the measured
+        descent-plus-ascent clearance between the two roles.
+    """
+    own = t_size(previous) * t_lh(previous)
+    _, descent = vertical_metrics(
+        S["font_resolved"], t_size(previous), t_weight(previous))
+    ascent, _ = vertical_metrics(
+        S["font_resolved"], t_size(following), t_weight(following))
+    return max(own, descent + ascent)
+
+
+def footer_band_height() -> float:
+    """Return the vertical band the deck footer occupies inside the safe area.
+
+    `frame` places the footer baseline so its descenders end exactly on the
+    safe-area bottom, which means the footer owns the bottom `ascent + descent`
+    units of the safe area. Any layout that reserves space "down to the safe
+    area" is therefore reserving space the footer is already using. Subtract
+    this band instead.
+
+    Returns:
+        The band height in SVG units, for the footnote role at active tokens.
+    """
+    ascent, descent = vertical_metrics(
+        S["font_resolved"], t_size("footnote"), t_weight("footnote"))
+    return ascent + descent
+
+
 def chart_area(widest_y_tick: str = "100%") -> tuple:
     """Compute the plot rectangle from the active tokens.
 
@@ -361,8 +404,10 @@ def chart_area(widest_y_tick: str = "100%") -> tuple:
     right = S["w"] - safe["right"]
     axis_adv = t_size("axis") * t_lh("axis")
     foot_adv = t_size("footnote") * t_lh("footnote")
-    # category labels, then legend row, then note row
-    bottom = S["h"] - safe["bottom"] - (axis_adv + axis_adv + foot_adv + 24)
+    # category labels, then legend row, then note row, all of which have to
+    # sit above the band the deck footer already owns.
+    bottom = (S["h"] - safe["bottom"] - footer_band_height()
+              - (axis_adv + axis_adv + foot_adv + 24))
     return left, right, top, bottom
 
 
@@ -1224,6 +1269,11 @@ def render_timeline(sl: dict, meta: dict) -> str:
     label_adv = t_size("node_label") * t_lh("node_label")
     date_adv = t_size("footnote") * t_lh("footnote")
     detail_adv = t_size("caption") * t_lh("caption")
+    # Steps that cross from one role into another need both roles' metrics,
+    # not just the outgoing role's own line advance.
+    label_to_date = role_advance("node_label", "footnote")
+    label_to_detail = role_advance("node_label", "caption")
+    date_to_detail = role_advance("footnote", "caption")
 
     # Each event owns an equal share of the axis, and its text is wrapped to
     # that share. The former `wrap(label, 18)` / `wrap(detail, 20)` character
@@ -1245,12 +1295,21 @@ def render_timeline(sl: dict, meta: dict) -> str:
         widths += [measured_width(line, "caption") for line in detail_lines]
         if date_str:
             widths.append(measured_width(date_str, "footnote"))
+        if date_str:
+            after_label = label_to_date
+        elif detail_lines:
+            after_label = label_to_detail
+        else:
+            after_label = label_adv
+        after_date = date_to_detail if detail_lines else date_adv
         blocks.append({
             "label_lines": label_lines,
             "date": date_str,
             "detail_lines": detail_lines,
-            "height": (len(label_lines) * label_adv
-                       + (date_adv if date_str else 0.0)
+            "after_label": after_label,
+            "after_date": after_date,
+            "height": ((len(label_lines) - 1) * label_adv + after_label
+                       + (after_date if date_str else 0.0)
                        + len(detail_lines) * detail_adv),
             "width": max(widths) if widths else 0.0,
         })
@@ -1309,7 +1368,8 @@ def render_timeline(sl: dict, meta: dict) -> str:
             block["label_lines"], x, ty, t_size("node_label"), S["accent"],
             "middle", str(t_weight("node_label")), t_lh("node_label"),
             role="node_label"))
-        ty += len(block["label_lines"]) * label_adv
+        ty += ((len(block["label_lines"]) - 1) * label_adv
+               + block["after_label"])
 
         if block["date"]:
             event_parts.append(
@@ -1317,7 +1377,7 @@ def render_timeline(sl: dict, meta: dict) -> str:
                 f'font-size="{t_size("footnote"):g}" '
                 f'data-style-role="footnote" fill="{S["muted"]}" '
                 f'text-anchor="middle">{esc(block["date"])}</text>')
-            ty += date_adv
+            ty += block["after_date"]
 
         if block["detail_lines"]:
             event_parts.append(tlines(

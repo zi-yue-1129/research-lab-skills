@@ -15,6 +15,7 @@ RULES: Tuple[str, ...] = (
 
 _EDGE_TOLERANCE = 0.5
 _GRID_TOLERANCE = 2.0
+_OVERLAP_TOLERANCE = 0.5
 
 
 def _safe_bounds(scene: Scene, tokens: DesignTokens
@@ -67,6 +68,27 @@ def check_safe_area(scene: Scene, tokens: DesignTokens) -> List[Finding]:
     return findings
 
 
+def _material_overlap(a: Box, b: Box) -> bool:
+    """Return whether two boxes overlap by more than tiling noise.
+
+    Renderers place abutting bands by accumulating float heights, so one band
+    can end at 209.0 while the next starts at 208.9. A tenth of a unit is not a
+    collision, and reporting it as a hard error on every table slide is how a
+    gate earns the reputation that gets it switched off. Overlap has to be
+    material on both axes before it counts.
+
+    Args:
+        a: First box.
+        b: Second box.
+
+    Returns:
+        True when the intersection exceeds `_OVERLAP_TOLERANCE` in x and in y.
+    """
+    x_depth = min(a.right, b.right) - max(a.x, b.x)
+    y_depth = min(a.bottom, b.bottom) - max(a.y, b.y)
+    return x_depth > _OVERLAP_TOLERANCE and y_depth > _OVERLAP_TOLERANCE
+
+
 def _same_node(a: Box, b: Box) -> bool:
     """Return whether two boxes belong to the same semantic node.
 
@@ -116,7 +138,7 @@ def check_overlap(scene: Scene, tokens: DesignTokens) -> List[Finding]:
     text_boxes = [(run, run.bbox()) for run in scene.texts]
 
     for a, b in combinations(scene.boxes, 2):
-        if not a.intersects(b):
+        if not _material_overlap(a, b):
             continue
         if a.contains_box(b) or b.contains_box(a) or _same_node(a, b):
             continue
@@ -124,7 +146,7 @@ def check_overlap(scene: Scene, tokens: DesignTokens) -> List[Finding]:
 
     for run, bbox in text_boxes:
         for box in scene.boxes:
-            if not bbox.intersects(box):
+            if not _material_overlap(bbox, box):
                 continue
             if box.contains_box(bbox) or _same_node(bbox, box):
                 continue
@@ -132,7 +154,7 @@ def check_overlap(scene: Scene, tokens: DesignTokens) -> List[Finding]:
                 _overlap_finding(run.element_id, box.element_id, bbox.x, bbox.y))
 
     for (run_a, box_a), (run_b, box_b) in combinations(text_boxes, 2):
-        if box_a.intersects(box_b):
+        if _material_overlap(box_a, box_b):
             findings.append(_overlap_finding(
                 run_a.element_id, run_b.element_id, box_a.x, box_a.y))
     return findings
