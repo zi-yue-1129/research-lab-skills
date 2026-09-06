@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import shutil
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Sequence, Tuple
 
@@ -231,18 +232,17 @@ def _review(role: str, status: str,
     }
 
 
-def _slide_with_three_passing_reviews(
-        project_root: Path, answer_warnings: bool = True) -> str:
-    """Build a slide that clears every check this task did not add.
+def _slide_awaiting_art_direction(project_root: Path) -> str:
+    """Build a slide with a published SVG and every review but art direction.
 
-    Three passing reviews and a published SVG: what a slide looked like before
-    the linter became a gate. What it lacks is a lint result, which is exactly
-    what the tests below are about.
+    Art direction is left out because it answers the lint run, so it has to be
+    recorded after one. Callers that record lint evidence should reach for
+    `_record_art_direction_review` once they have; callers that never record a
+    run can use `_slide_with_three_passing_reviews`, where the ordering cannot
+    matter because the gate stops at the missing evidence.
 
     Args:
         project_root: Project root owning the presentation state.
-        answer_warnings: Whether the art-direction review answers the
-            `occupancy` warning `_lint_clean_with_warnings` raises.
 
     Returns:
         The generated slide identifier.
@@ -262,12 +262,45 @@ def _slide_with_three_passing_reviews(
                         "scientific-reviewer", "scientific", "passed")
     state.record_review(project_root, "slide", slide_id,
                         "render-reviewer", "render_integrity", "passed")
+    return slide_id
+
+
+def _record_art_direction_review(
+        project_root: Path, slide_id: str, answer_warnings: bool = True) -> None:
+    """Record the art-direction pass that answers the run just recorded.
+
+    Args:
+        project_root: Project root owning the presentation state.
+        slide_id: The reviewed slide.
+        answer_warnings: Whether the review answers the `occupancy` warning
+            `_lint_clean_with_warnings` raises.
+    """
     answers = ([{"rule": "occupancy",
                  "answer": "a section divider is sparse on purpose"}]
                if answer_warnings else [])
     state.record_review(project_root, "slide", slide_id,
                         "art-reviewer", "art_direction", "passed",
                         linter_warnings_answered=answers)
+
+
+def _slide_with_three_passing_reviews(
+        project_root: Path, answer_warnings: bool = True) -> str:
+    """Build a slide that clears every check this task did not add.
+
+    Three passing reviews and a published SVG: what a slide looked like before
+    the linter became a gate. What it lacks is a lint result, which is exactly
+    what the tests below are about.
+
+    Args:
+        project_root: Project root owning the presentation state.
+        answer_warnings: Whether the art-direction review answers the
+            `occupancy` warning `_lint_clean_with_warnings` raises.
+
+    Returns:
+        The generated slide identifier.
+    """
+    slide_id = _slide_awaiting_art_direction(project_root)
+    _record_art_direction_review(project_root, slide_id, answer_warnings)
     return slide_id
 
 
@@ -314,8 +347,9 @@ def test_a_slide_cannot_pass_without_a_current_lint_result(
 
 def test_an_art_direction_pass_must_answer_the_warnings(project: Path) -> None:
     """`linter_warnings_answered` is checked against the warnings raised."""
-    slide_id = _slide_with_three_passing_reviews(project, answer_warnings=False)
+    slide_id = _slide_awaiting_art_direction(project)
     _lint_clean_with_warnings(project, slide_id, ("occupancy",))
+    _record_art_direction_review(project, slide_id, answer_warnings=False)
     with pytest.raises(gates.ReviewGateError) as caught:
         gates.assert_slide_passable(project, slide_id)
     reasons = [blocker["reason"] for blocker in caught.value.blockers]
@@ -325,8 +359,9 @@ def test_an_art_direction_pass_must_answer_the_warnings(project: Path) -> None:
 def test_a_slide_with_answered_warnings_and_clean_errors_passes(
         project: Path) -> None:
     """The gate is passable. A gate nothing can satisfy is not a gate."""
-    slide_id = _slide_with_three_passing_reviews(project, answer_warnings=True)
+    slide_id = _slide_awaiting_art_direction(project)
     _lint_clean_with_warnings(project, slide_id, ("occupancy",))
+    _record_art_direction_review(project, slide_id, answer_warnings=True)
     passed = gates.assert_slide_passable(project, slide_id)
     assert passed["slide"]["id"] == slide_id
 
@@ -341,8 +376,9 @@ def test_editing_the_token_file_after_the_run_invalidates_it(
     measurement taken under rules nobody can reconstruct. The gate refuses
     rather than reporting a pass it can no longer account for.
     """
-    slide_id = _slide_with_three_passing_reviews(project)
+    slide_id = _slide_awaiting_art_direction(project)
     _lint_clean_with_warnings(project, slide_id, ())
+    _record_art_direction_review(project, slide_id)
     assert gates.assert_slide_passable(project, slide_id)
 
     tokens_path = project / "specs/tokens.yaml"
@@ -362,8 +398,9 @@ def test_a_slide_is_bound_to_the_bytes_it_linted(project: Path) -> None:
     weaker than an independent declaration -- no writer produces one -- and is
     still enough to refuse evidence that predates the current SVG.
     """
-    slide_id = _slide_with_three_passing_reviews(project, answer_warnings=False)
+    slide_id = _slide_awaiting_art_direction(project)
     _lint_clean_with_warnings(project, slide_id, ())
+    _record_art_direction_review(project, slide_id, answer_warnings=False)
     assert gates.assert_slide_passable(project, slide_id)["slide"]["id"] == slide_id
 
     # Edit the file itself, not the digest recorded for it. Rewriting the
@@ -520,8 +557,9 @@ def test_a_deleted_token_file_is_refused_rather_than_assumed_unchanged(
     confirm the recorded result still means what it said. Re-running the linter
     clears this, so the refusal costs a command rather than the deck.
     """
-    slide_id = _slide_with_three_passing_reviews(project)
+    slide_id = _slide_awaiting_art_direction(project)
     _lint_clean_with_warnings(project, slide_id, ())
+    _record_art_direction_review(project, slide_id)
     assert gates.assert_slide_passable(project, slide_id)
 
     (project / "specs/tokens.yaml").unlink()
@@ -529,3 +567,98 @@ def test_a_deleted_token_file_is_refused_rather_than_assumed_unchanged(
         gates.assert_slide_passable(project, slide_id)
     assert "lint_tokens_unverifiable" in [
         blocker["reason"] for blocker in caught.value.blockers]
+
+
+def _pin_review_clock(monkeypatch: pytest.MonkeyPatch, offset_seconds: int) -> None:
+    """Stamp every later review a fixed number of seconds from now.
+
+    `record_review` writes whole seconds and `record_lint_evidence` writes
+    microseconds, so which second each write lands in is decided by machine
+    load rather than by any caller. Pinning the review clock makes that
+    ordering explicit instead of leaving it to chance.
+
+    Args:
+        monkeypatch: Fixture used to replace the review clock.
+        offset_seconds: Seconds from now to stamp subsequent reviews with.
+    """
+    stamp = (datetime.now(timezone.utc)
+             + timedelta(seconds=offset_seconds)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    monkeypatch.setattr(state, "_utc_now_iso", lambda: stamp)
+
+
+def test_a_review_recorded_a_second_after_the_run_still_answers_it(
+        project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A whole-second review stamp must not read as predating an earlier run.
+
+    The reviewer reads the run and then writes, so any real gap puts the review
+    in a later second than the evidence. Judging that review on its answers is
+    the whole point of the gate; rejecting it as predating the measurement it
+    was shown would make the gate unsatisfiable whenever the two writes happen
+    to straddle a second boundary.
+    """
+    slide_id = _slide_awaiting_art_direction(project)
+    _lint_clean_with_warnings(project, slide_id, ("occupancy",))
+    _pin_review_clock(monkeypatch, 1)
+    _record_art_direction_review(project, slide_id, answer_warnings=False)
+    with pytest.raises(gates.ReviewGateError) as caught:
+        gates.assert_slide_passable(project, slide_id)
+    reasons = [blocker["reason"] for blocker in caught.value.blockers]
+    assert "art_direction:linter_warnings_unanswered" in reasons
+
+
+def test_a_review_recorded_a_second_before_the_run_is_rejected(
+        project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The other side of the same boundary still blocks.
+
+    Pinning the review a second behind the run is what a loaded machine
+    produces by chance when the fixture writes the review first, and it is a
+    review that provably cannot have seen the measurement. The gate must reach
+    `review_predates_lint_run` here and never fall through to the answers.
+    """
+    _pin_review_clock(monkeypatch, -1)
+    slide_id = _slide_awaiting_art_direction(project)
+    _record_art_direction_review(project, slide_id, answer_warnings=False)
+    monkeypatch.undo()
+    _lint_clean_with_warnings(project, slide_id, ("occupancy",))
+    with pytest.raises(gates.ReviewGateError) as caught:
+        gates.assert_slide_passable(project, slide_id)
+    reasons = [blocker["reason"] for blocker in caught.value.blockers]
+    assert "art_direction:review_predates_lint_run" in reasons
+
+
+def test_the_run_order_is_read_from_the_instant_not_the_spelling(
+        project: Path) -> None:
+    """RFC3339 admits several spellings of one instant, and offsets reorder them.
+
+    `record_review` writes `Z` and `record_lint_evidence` writes a numeric
+    offset, so a textual comparison of the two is decided by where `Z`, `.` and
+    `+` fall in the character set rather than by when either write happened.
+    The evidence contract accepts any timezone-aware stamp, so a record
+    carrying a non-UTC offset reads as older than a run it actually followed.
+    """
+    slide_id = _slide_awaiting_art_direction(project)
+    _lint_clean_with_warnings(project, slide_id, ("occupancy",))
+    evidence = lint_evidence.current_lint_evidence(
+        project, "slide", slide_id,
+        hashlib.sha256((project / _SVG_RELATIVE).read_bytes()).hexdigest(),
+        DesignTokens.load(project / "specs/tokens.yaml").digest)
+    # A precondition, not the assertion under test: the run this test compares
+    # against has to exist before its timestamp can be read, and the lookup is
+    # Optional. The real check is the last line.
+    assert evidence is not None
+    recorded_at = datetime.fromisoformat(str(evidence["ts"]).replace("Z", "+00:00"))
+
+    # Ten minutes after the run, written in a zone five hours behind UTC: the
+    # instant is later, the text sorts earlier.
+    later = (recorded_at + timedelta(minutes=10)).astimezone(
+        timezone(timedelta(hours=-5)))
+    review = dict(_review("art_direction", "passed",
+                          [{"rule": "occupancy", "answer": "sparse by design"}]))
+    review["ts"] = later.isoformat()
+    review["subject_id"] = slide_id
+    assert review["ts"] < str(evidence["ts"]), (
+        "this test is only meaningful while the spellings sort the wrong way")
+
+    blockers = gates.review_result_blockers(
+        project, "slide", slide_id, review, None)
+    assert {"reason": "art_direction:review_predates_lint_run"} not in blockers
