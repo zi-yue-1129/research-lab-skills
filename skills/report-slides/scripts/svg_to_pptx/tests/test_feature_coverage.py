@@ -299,3 +299,39 @@ def test_without_a_template_the_skill_canvas_is_used(tmp_path: Path) -> None:
     _slide(tmp_path, '<rect x="10" y="10" width="200" height="80" fill="#123456"/>')
     deck = Presentation(str(_export(tmp_path)))
     assert deck.slide_width > deck.slide_height
+
+
+def test_a_template_with_a_different_aspect_is_reported(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Slides are painted from a fixed canvas, so a mismatched page warns.
+
+    Found by exporting a real deck rather than by reading the code: a 4:3
+    template silently mapped 16:9 artwork onto a page it was not composed for.
+    Nothing errored; the deck just came out subtly wrong, which is the failure
+    mode hardest to catch in review.
+    """
+    template = _house_template(tmp_path)  # python-pptx's default is 4:3
+    _slide(tmp_path, '<rect x="10" y="10" width="200" height="80" fill="#123456"/>')
+    _export(tmp_path, template=str(template))
+
+    output = capsys.readouterr().out
+    assert "1.333:1" in output and "1.778:1" in output
+    assert "not composed for" in output
+
+
+def test_a_matching_template_aspect_is_silent(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A correct template must not produce a warning to learn to ignore."""
+    from pptx.util import Emu
+
+    template = Presentation()
+    template.slide_width, template.slide_height = Emu(12192000), Emu(6858000)
+    path = tmp_path / "wide.potx"
+    template.save(str(path))
+
+    _slide(tmp_path, '<rect x="10" y="10" width="200" height="80" fill="#123456"/>')
+    _export(tmp_path, template=str(path))
+
+    assert "not composed for" not in capsys.readouterr().out

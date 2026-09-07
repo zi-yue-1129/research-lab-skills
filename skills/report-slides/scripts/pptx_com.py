@@ -61,10 +61,12 @@ RENDERER_NAME = "Microsoft PowerPoint (COM)"
 #: `pdf-to-png`. Recorded verbatim in `renderer.conversion_format`.
 CONVERSION_FORMAT = "direct-png"
 
-#: Default export size. 1920x1080 is 16:9 at a resolution where 12pt body text
-#: is legible to model vision without the files becoming unwieldy.
-DEFAULT_WIDTH = 1920
-DEFAULT_HEIGHT = 1080
+#: Default long edge of an exported PNG. 1920 renders 12pt body text legibly
+#: for model vision without the files becoming unwieldy. The other dimension is
+#: derived from the deck's own aspect ratio rather than assumed: forcing a 4:3
+#: deck into a 16:9 frame stretches it, and a gate whose whole purpose is to
+#: inspect what the reader will see must not be handed a distorted picture.
+DEFAULT_LONG_EDGE = 1920
 
 #: `Presentation.SaveAs` format code for PDF (ppSaveAsPDF).
 _PP_SAVE_AS_PDF = 32
@@ -202,8 +204,8 @@ def render(
     pptx: Path,
     out_dir: Path,
     *,
-    width: int = DEFAULT_WIDTH,
-    height: int = DEFAULT_HEIGHT,
+    width: Optional[int] = None,
+    height: Optional[int] = None,
     prefix: str = "slide",
     pdf: bool = True,
 ) -> Dict[str, Any]:
@@ -213,8 +215,11 @@ def render(
         pptx: The exported deck to convert. Convert the actual deck, never the
             source SVG -- that distinction is the whole point of the gate.
         out_dir: Directory for the PNGs; created if absent.
-        width: Export width in pixels.
-        height: Export height in pixels.
+        width: Export width in pixels. Omit to derive it from the deck's own
+            aspect ratio, which is what keeps the render undistorted.
+        height: Export height in pixels. Omit to derive it the same way. Giving
+            one and not the other derives the missing side from the aspect, so
+            a caller can cap a single dimension without skewing the result.
         prefix: PNG basename stem; files are `<prefix>-01.png`, zero-padded to
             two digits so a 10+ slide deck still sorts lexicographically.
         pdf: Also save a PDF beside the PNGs. On by default because the review
@@ -236,6 +241,7 @@ def render(
     with _session(deck) as (app, presentation):
         version = str(app.Version)
         slide_count = int(presentation.Slides.Count)
+        width, height = _export_size(presentation, width, height)
         for index in range(1, slide_count + 1):
             png = destination / f"{prefix}-{index:02d}.png"
             presentation.Slides(index).Export(str(png), "PNG", width, height)
@@ -257,6 +263,36 @@ def render(
         "conversion_artifacts": conversion_artifacts,
         "rendered_png_paths": png_paths,
     }
+
+
+def _export_size(
+    presentation: Any, width: Optional[int], height: Optional[int]
+) -> Tuple[int, int]:
+    """Choose an export size that preserves the deck's aspect ratio.
+
+    Args:
+        presentation: The open presentation, whose page setup states the real
+            slide dimensions in points.
+        width: Caller's width, or None to derive it.
+        height: Caller's height, or None to derive it.
+
+    Returns:
+        The `(width, height)` to export at. Both given are honoured verbatim --
+        a caller asking for an exact size gets it, distortion included, because
+        that is sometimes what a comparison needs.
+    """
+    if width is not None and height is not None:
+        return width, height
+
+    page = presentation.PageSetup
+    aspect = float(page.SlideWidth) / float(page.SlideHeight)
+    if width is not None:
+        return width, max(1, round(width / aspect))
+    if height is not None:
+        return max(1, round(height * aspect)), height
+    if aspect >= 1.0:
+        return DEFAULT_LONG_EDGE, max(1, round(DEFAULT_LONG_EDGE / aspect))
+    return max(1, round(DEFAULT_LONG_EDGE * aspect)), DEFAULT_LONG_EDGE
 
 
 def layout(pptx: Path) -> Dict[str, Any]:
@@ -384,8 +420,12 @@ def _build_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--pptx", type=Path, help="deck to render or measure")
     parser.add_argument("--out", type=Path, help="output directory for --render")
-    parser.add_argument("--width", type=int, default=DEFAULT_WIDTH, help="export width in pixels")
-    parser.add_argument("--height", type=int, default=DEFAULT_HEIGHT, help="export height in pixels")
+    parser.add_argument(
+        "--width", type=int, default=None,
+        help="export width in pixels (default: derived from the deck's aspect)")
+    parser.add_argument(
+        "--height", type=int, default=None,
+        help="export height in pixels (default: derived from the deck's aspect)")
     parser.add_argument("--prefix", default="slide", help="PNG basename stem (default: slide)")
     parser.add_argument(
         "--no-pdf",
