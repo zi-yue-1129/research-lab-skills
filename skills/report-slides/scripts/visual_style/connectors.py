@@ -214,6 +214,26 @@ def _endpoints(conn: Connector) -> Tuple[Tuple[str, float, float], ...]:
     return (("start", conn.x1, conn.y1), ("end", conn.x2, conn.y2))
 
 
+def _attachment_endpoints(conn: Connector) -> Tuple[Tuple[str, float, float], ...]:
+    """Return only the endpoints that are meant to attach to something.
+
+    A routed connector is parsed into one segment per leg, so an elbow's
+    interior corners arrive as segment endpoints. They touch nothing by
+    construction -- that is what routing around an obstacle means -- and
+    `diagram-patterns.md` explicitly asks for connectors to be routed around
+    unrelated groups. Checking them for attachment made that instruction
+    impossible to follow.
+
+    Args:
+        conn: The connector segment.
+
+    Returns:
+        The subset of `_endpoints` that terminates the whole routed path.
+    """
+    terminal = {"start": conn.terminal_start, "end": conn.terminal_end}
+    return tuple(e for e in _endpoints(conn) if terminal[e[0]])
+
+
 def check_dangling(scene: Scene, tokens: DesignTokens) -> List[Finding]:
     """Report connector endpoints that attach to nothing.
 
@@ -229,7 +249,7 @@ def check_dangling(scene: Scene, tokens: DesignTokens) -> List[Finding]:
     findings: List[Finding] = []
     for conn in scene.connectors:
         declared = {"start": conn.from_node, "end": conn.to_node}
-        for label, px, py in _endpoints(conn):
+        for label, px, py in _attachment_endpoints(conn):
             node = declared[label]
             if node is not None and node not in bounds:
                 findings.append(Finding(
@@ -269,7 +289,7 @@ def check_port_drift(scene: Scene, tokens: DesignTokens) -> List[Finding]:
     findings: List[Finding] = []
     for conn in scene.connectors:
         declared = {"start": conn.from_node, "end": conn.to_node}
-        for label, px, py in _endpoints(conn):
+        for label, px, py in _attachment_endpoints(conn):
             node = declared[label]
             if node is None or node not in bounds:
                 # An absent or unresolvable node is check_dangling's finding.

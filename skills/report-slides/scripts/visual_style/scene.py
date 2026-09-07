@@ -264,6 +264,11 @@ class Connector:
         node_id: The enclosing group's `data-node-id`, when inside one.
         from_node: The node id declared in `data-from`, when present.
         to_node: The node id declared in `data-to`, when present.
+        terminal_start: Whether this segment's start is where the whole routed
+            connector begins. False for the interior corners of an elbow, which
+            touch nothing by construction and are not attachment points.
+        terminal_end: Whether this segment's end is where the routed connector
+            finishes.
     """
 
     element_id: str
@@ -279,6 +284,8 @@ class Connector:
     from_node: Optional[str] = None
     to_node: Optional[str] = None
     style_role: Optional[str] = None
+    terminal_start: bool = True
+    terminal_end: bool = True
 
 
 @dataclass(frozen=True)
@@ -714,7 +721,9 @@ def parse_scene(svg_path: Union[str, Path], font_family: str) -> Scene:
                             child.get("data-from") if position == 0 else None,
                             (child.get("data-to")
                              if position == len(segments) - 1 else None),
-                            role))
+                            role,
+                            position == 0,
+                            position == len(segments) - 1))
             else:
                 walk(child, child_node, child_role, local, index)
 
