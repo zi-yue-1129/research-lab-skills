@@ -17,15 +17,42 @@ import pptx_com
 from validate_pptx_layout import DEFAULT_TOLERANCE_PT, findings_for, main, validate
 
 
-def _shape(name: str, height: float, bound: float, *, clipped: bool) -> Dict[str, Any]:
-    """Build one measured shape as `pptx_com.layout` would report it."""
+def _shape(
+    name: str,
+    height: float,
+    bound: float,
+    *,
+    clipped: bool,
+    overflow_x: float = -10.0,
+    bounded: bool = True,
+) -> Dict[str, Any]:
+    """Build one measured shape as `pptx_com.layout` would report it.
+
+    Args:
+        name: Shape name.
+        height: The shape's height in points.
+        bound: The height the laid-out text occupies.
+        clipped: Whether the text is cut off rather than growing the shape.
+            Expressed through `autosize`, which is what the gate actually
+            reads: autosize grows a shape to fit, so its absence is what makes
+            vertical overflow a clip.
+        overflow_x: Points the text ends past the shape's right edge; negative
+            means it finishes inside.
+        bounded: Whether the shape draws a fill or outline, so an overflow is
+            something a reader can see.
+    """
     return {
         "name": name,
         "height": height,
+        "width": 200.0,
         "text_bound_height": bound,
+        "text_bound_width": 180.0,
         "text_overflow_pt": round(bound - height, 2),
-        "overflows_box": bound > height,
-        "clipped": clipped,
+        "text_overflow_x_pt": overflow_x,
+        "autosize": 0 if clipped else 1,
+        "overflows_box": bound > height or overflow_x > 0,
+        "clipped": clipped or overflow_x > 0,
+        "has_visible_boundary": bounded,
     }
 
 
@@ -176,3 +203,53 @@ def test_gate_catches_a_real_clip_that_the_svg_linter_cannot(tmp_path: Path) -> 
     assert result["status"] == "failed"
     assert result["findings"][0]["rule"] == "pptx-clipped-text"
     assert result["findings"][0]["overflow_pt"] > 0
+
+
+# --- horizontal overflow --------------------------------------------------
+
+
+def test_text_escaping_the_right_edge_is_an_error() -> None:
+    """Autosize grows height and never width, so this can never come back.
+
+    Measuring only the vertical axis found 3 of 9 real overflows on an actual
+    architecture slide; for a diagram, where node boxes have a fixed width and
+    their labels outgrow them, horizontal is the dominant failure.
+    """
+    findings = findings_for(
+        _report(_shape("Node", 60.0, 20.0, clipped=False, overflow_x=8.0)),
+        DEFAULT_TOLERANCE_PT,
+    )
+    assert len(findings) == 1
+    assert findings[0]["rule"] == "pptx-clipped-text"
+    assert findings[0]["severity"] == "error"
+    assert findings[0]["axis"] == "horizontal"
+    assert "past the shape's right edge" in findings[0]["message"]
+
+
+def test_a_shape_without_a_visible_boundary_is_not_flagged() -> None:
+    """Text past a bare text box's nominal width is how non-wrapping text works.
+
+    Reporting it would bury the real findings under noise nobody can act on --
+    there is no box on screen for the reader to see the words leave.
+    """
+    assert findings_for(
+        _report(
+            _shape("Caption", 60.0, 20.0, clipped=False, overflow_x=80.0, bounded=False)
+        ),
+        DEFAULT_TOLERANCE_PT,
+    ) == []
+
+
+def test_both_axes_are_reported_separately() -> None:
+    """The fixes differ: shorter text or a wider box, versus fewer lines."""
+    findings = findings_for(
+        _report(_shape("Node", 20.0, 60.0, clipped=False, overflow_x=8.0)),
+        DEFAULT_TOLERANCE_PT,
+    )
+    assert {f["axis"] for f in findings} == {"horizontal", "vertical"}
+
+
+def test_horizontal_overflow_respects_the_tolerance() -> None:
+    """A hairline is sub-pixel at projection size, not a defect."""
+    report = _report(_shape("Node", 60.0, 20.0, clipped=False, overflow_x=0.4))
+    assert findings_for(report, DEFAULT_TOLERANCE_PT) == []

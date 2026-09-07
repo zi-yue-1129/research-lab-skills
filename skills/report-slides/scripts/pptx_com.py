@@ -302,12 +302,14 @@ def layout(pptx: Path) -> Dict[str, Any]:
     sizes in the design tokens so an overflow is directly comparable to the
     type scale that caused it.
 
-    `text_bound_height` is the height the laid-out text occupies, which is the
-    fact `python-pptx` cannot supply. Text exceeding its shape is reported two
-    ways, because the two failures are different: `clipped` means the text is
-    cut off (a fixed-size box, `msoAutoSizeNone`), while `overflows_box` also
-    covers an auto-sizing box that stays legible but silently grows past its
-    declared bounds and can collide with whatever sits below it.
+    `text_bound_width` and `text_bound_height` are the extents the laid-out
+    text occupies, the facts `python-pptx` cannot supply. Both axes are
+    reported, because they fail differently and because height alone misses
+    most of it: on a real architecture slide, measuring only height found 3 of
+    9 genuine overflows. `clipped` means the words leave the box the reader
+    sees -- always true horizontally, since autosize grows height and never
+    width. `overflows_box` also covers an auto-sizing box that stays legible
+    but grows past its declared bounds into whatever sits below.
 
     Note: `Shapes` does not recurse into groups, so a grouped child is measured
     as part of its group's bounding box rather than individually.
@@ -337,6 +339,24 @@ def layout(pptx: Path) -> Dict[str, Any]:
     }
 
 
+def _has_visible_boundary(shape: Any) -> bool:
+    """Report whether a shape draws a fill or an outline.
+
+    Args:
+        shape: A live PowerPoint `Shape`.
+
+    Returns:
+        True when either is visible. A shape whose visibility cannot be read is
+        treated as bounded, so an unreadable case errs toward reporting rather
+        than toward silence.
+    """
+    try:
+        # msoTrue is -1; anything non-zero counts as visible.
+        return bool(shape.Fill.Visible) or bool(shape.Line.Visible)
+    except Exception:  # pragma: no cover - host-dependent
+        return True
+
+
 def _measure_shape(shape: Any) -> Dict[str, Any]:
     """Measure one laid-out shape.
 
@@ -350,6 +370,11 @@ def _measure_shape(shape: Any) -> Dict[str, Any]:
     """
     measured: Dict[str, Any] = {
         "name": str(shape.Name),
+        # Whether the reader can see a boundary for the text to escape from.
+        # A bare text box has none, so text extending past its nominal width is
+        # simply how non-wrapping text behaves -- not a defect, and reporting it
+        # would train people to ignore the gate.
+        "has_visible_boundary": _has_visible_boundary(shape),
         "left": float(shape.Left),
         "top": float(shape.Top),
         "width": float(shape.Width),
@@ -364,8 +389,23 @@ def _measure_shape(shape: Any) -> Dict[str, Any]:
             return measured
         text_range = frame.TextRange
         bound_height = float(text_range.BoundHeight)
+        bound_width = float(text_range.BoundWidth)
         autosize = int(frame.AutoSize)
         overflow = bound_height - measured["height"]
+        # Width matters at least as much as height, and for a diagram it
+        # matters more: node boxes have a fixed width and their labels are the
+        # thing that outgrows them. Measuring only the vertical axis reported 3
+        # of 9 real overflows on a real architecture slide.
+        #
+        # Compare *edges*, not widths. A text frame insets its content from the
+        # left, so the text starts right of the shape and a width comparison
+        # under-reports by that inset -- measured on a real slide, a label whose
+        # words visibly escaped its box by 8pt was reported as fitting with
+        # 6.7pt to spare. Where the text actually ends is the only thing a
+        # reader sees.
+        overflow_x = (
+            float(text_range.BoundLeft) + bound_width
+        ) - (measured["left"] + measured["width"])
         measured.update(
             {
                 "has_text": True,
@@ -376,9 +416,20 @@ def _measure_shape(shape: Any) -> Dict[str, Any]:
                 "text_bound_height": bound_height,
                 "autosize": autosize,
                 "text_overflow_pt": round(overflow, 2),
-                "overflows_box": overflow > _OVERFLOW_TOLERANCE_PT,
+                "text_overflow_x_pt": round(overflow_x, 2),
+                "overflows_box": (
+                    overflow > _OVERFLOW_TOLERANCE_PT
+                    or overflow_x > _OVERFLOW_TOLERANCE_PT
+                ),
+                # Autosize grows a shape's *height* to fit; it never widens it.
+                # Horizontal overflow is therefore a clip whatever the autosize
+                # mode says -- the words run outside the box the reader sees.
                 "clipped": (
-                    overflow > _OVERFLOW_TOLERANCE_PT and autosize == _MSO_AUTOSIZE_NONE
+                    overflow_x > _OVERFLOW_TOLERANCE_PT
+                    or (
+                        overflow > _OVERFLOW_TOLERANCE_PT
+                        and autosize == _MSO_AUTOSIZE_NONE
+                    )
                 ),
             }
         )

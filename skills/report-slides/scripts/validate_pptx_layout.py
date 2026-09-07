@@ -63,26 +63,78 @@ def findings_for(layout_report: Dict[str, Any], tolerance_pt: float) -> List[Dic
     for slide in layout_report.get("slides", []):
         number = slide.get("slide")
         for shape in slide.get("shapes", []):
-            overflow = shape.get("text_overflow_pt")
-            if overflow is None or overflow <= tolerance_pt:
-                continue
-            clipped = bool(shape.get("clipped"))
-            findings.append(
-                {
-                    "rule": "pptx-clipped-text" if clipped else "pptx-overflowing-text",
-                    "severity": "error" if clipped else "warning",
-                    "message": (
-                        f"slide {number} {shape.get('name')!r}: text occupies "
-                        f"{shape.get('text_bound_height'):.1f}pt in a "
-                        f"{shape.get('height'):.1f}pt shape, "
-                        f"{overflow:.1f}pt over"
-                        + ("" if clipped else "; the shape grows to fit, so it may overlap below")
-                    ),
-                    "element_id": shape.get("name"),
-                    "slide": number,
-                    "overflow_pt": overflow,
-                }
-            )
+            findings.extend(_shape_findings(number, shape, tolerance_pt))
+    return findings
+
+
+def _shape_findings(
+    number: Any, shape: Dict[str, Any], tolerance_pt: float
+) -> List[Dict[str, Any]]:
+    """Report one shape's overflow on each axis that exceeds tolerance.
+
+    Both axes are reported separately rather than collapsed, because the fix
+    differs: a label too wide needs shorter text or a wider box, while one too
+    tall needs fewer lines or more height.
+
+    Args:
+        number: Slide number the shape sits on.
+        shape: One measured shape from `pptx_com.layout`.
+        tolerance_pt: Overflow, in points, to tolerate before reporting.
+
+    Returns:
+        Zero, one, or two findings.
+    """
+    findings: List[Dict[str, Any]] = []
+    name = shape.get("name")
+
+    horizontal = shape.get("text_overflow_x_pt")
+    # Only a shape the reader can see a boundary on can be seen to overflow it.
+    # Text running past a bare text box's nominal width is how non-wrapping
+    # text behaves, and flagging it would bury the real findings.
+    if (
+        horizontal is not None
+        and horizontal > tolerance_pt
+        and shape.get("has_visible_boundary", True)
+    ):
+        # Always an error: autosize grows a shape's height, never its width, so
+        # there is no mode under which the words come back inside the box.
+        findings.append({
+            "rule": "pptx-clipped-text",
+            "severity": "error",
+            "axis": "horizontal",
+            # Stated as edges, because that is what is measured: a text frame
+            # insets its content, so a label narrower than its shape can still
+            # end past the shape's right edge.
+            "message": (
+                f"slide {number} {name!r}: the text ends {horizontal:.1f}pt "
+                f"past the shape's right edge "
+                f"({shape.get('text_bound_width'):.1f}pt of text inset inside a "
+                f"{shape.get('width'):.1f}pt shape); the words run outside the box"
+            ),
+            "element_id": name,
+            "slide": number,
+            "overflow_pt": horizontal,
+        })
+
+    vertical = shape.get("text_overflow_pt")
+    if vertical is not None and vertical > tolerance_pt:
+        grows = not shape.get("clipped") or horizontal is None or horizontal <= tolerance_pt
+        autosizes = shape.get("autosize") not in (None, 0)
+        findings.append({
+            "rule": "pptx-overflowing-text" if autosizes else "pptx-clipped-text",
+            "severity": "warning" if autosizes else "error",
+            "axis": "vertical",
+            "message": (
+                f"slide {number} {name!r}: text occupies "
+                f"{shape.get('text_bound_height'):.1f}pt in a "
+                f"{shape.get('height'):.1f}pt shape, {vertical:.1f}pt over"
+                + ("; the shape grows to fit, so it may overlap below"
+                   if autosizes else "; the text is cut off")
+            ),
+            "element_id": name,
+            "slide": number,
+            "overflow_pt": vertical,
+        })
     return findings
 
 
