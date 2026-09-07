@@ -93,6 +93,20 @@ otherwise be argued from the SVG source; a shape reported `clipped` is cut off,
 while one merely reported `overflows_box` stays legible but grows past its
 declared bounds and may collide with what sits below it.
 
+`scripts/validate_pptx_layout.py` is the gate built on that measurement:
+
+```powershell
+python scripts/validate_pptx_layout.py --pptx <deck.pptx> --json
+```
+
+It emits style-linter-shaped findings — `pptx-clipped-text` as an error,
+`pptx-overflowing-text` as a warning — each naming the measured and expected
+heights so it is falsifiable without rerunning the gate. Fold them into
+`statuses.pptx_render.findings`. This is a *measurement*, so unlike the prose
+judgements in the gates below it is not open to reviewer opinion; but it is
+also narrow, covering only text extent, and it never substitutes for the
+model-vision inspection of the rendered pixels.
+
 Record the renderer's actual name, version, and conversion format, the PDF
 path when one was produced, and every final PNG path — never the example
 values above. If an equivalent office renderer is used instead, record its

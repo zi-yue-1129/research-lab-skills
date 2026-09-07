@@ -729,12 +729,22 @@ def convert_file(slides_dir: str, out_path: str, verbose: bool = False) -> None:
     if not svg_files:
         raise ValueError(f"No slide*.svg files found in {slides_dir}")
 
+    from .speaker_notes import apply_speaker_notes, read_speaker_notes
+
+    narrated = 0
     for svg_path in svg_files:
         conv = SvgConverter(str(svg_path), verbose=verbose)
-        conv.convert(prs, layout)
+        slide = conv.convert(prs, layout)
+        if apply_speaker_notes(
+            slide, read_speaker_notes(svg_path, conv.root)
+        ):
+            narrated += 1
         if verbose:
             print(f"  + {svg_path.name}")
 
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     prs.save(out_path)
-    print(f"\n{len(svg_files)} slide(s) → {out_path}")
+    summary = f"\n{len(svg_files)} slide(s) → {out_path}"
+    if narrated:
+        summary += f" ({narrated} with speaker notes)"
+    print(summary)
