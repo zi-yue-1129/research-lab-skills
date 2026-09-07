@@ -3,192 +3,192 @@
   <rect x="0" y="0" width="2400" height="1350" fill="#ffffff"/>
   <text x="64" y="96" font-size="32" font-weight="700" fill="#1e3a5f">Transformer encoder — full architecture</text>
   <text x="64" y="126" font-size="16" fill="#64748b">Input pipeline, the repeated stack, both sub-blocks opened up, and the training path</text>
-  <rect x="64" y="144" width="744" height="176" rx="8" fill="none" stroke="#e2e8f0" stroke-width="1.5" stroke-dasharray="8 4"/>
-  <text x="80" y="170" font-size="16" font-weight="600" fill="#64748b">1. Input</text>
+  <rect x="64" y="144" width="848" height="224" rx="8" fill="none" stroke="#e2e8f0" stroke-width="1.5" stroke-dasharray="8 4"/>
+  <text x="80" y="170" font-size="18.2" font-weight="600" fill="#64748b">1. Input</text>
   <g data-pptx-role="group" data-node-id="in-tok">
-    <rect x="88" y="208" width="160" height="72" rx="8" fill="#ffffff" stroke="#64748b" stroke-width="1.5"/>
-    <text x="104" y="238" font-size="18" font-weight="600" fill="#374151">Token ids</text>
-    <text x="104" y="264" font-size="16" fill="#64748b">(B, L)</text>
+    <rect x="96" y="224" width="176" height="96" rx="8" fill="#ffffff" stroke="#64748b" stroke-width="1.5"/>
+    <text x="114.2" y="258.2" font-size="20.5" font-weight="600" fill="#374151">Token ids</text>
+    <text x="114.2" y="292.2" font-size="18.2" fill="#64748b">(B, L)</text>
   </g>
   <g data-pptx-role="group" data-node-id="in-emb">
-    <rect x="272" y="200" width="264" height="96" rx="8" fill="#f8fafc" stroke="#475569" stroke-width="1.5"/>
-    <text x="288" y="230" font-size="18" font-weight="600" fill="#374151">Embedding</text>
-    <text x="288" y="254" font-size="16" font-weight="400" fill="#64748b">vocab 32k, weight-tied</text>
-    <text x="288" y="280" font-size="16" fill="#64748b">(B, L, d)</text>
+    <rect x="304" y="208" width="288" height="128" rx="8" fill="#f8fafc" stroke="#475569" stroke-width="1.5"/>
+    <text x="322.2" y="242.2" font-size="20.5" font-weight="600" fill="#374151">Embedding</text>
+    <text x="322.2" y="274.2" font-size="18.2" font-weight="400" fill="#64748b">vocab 32k, weight-tied</text>
+    <text x="322.2" y="308.2" font-size="18.2" fill="#64748b">(B, L, d)</text>
   </g>
   <g data-pptx-role="group" data-node-id="in-pos">
-    <rect x="560" y="200" width="224" height="96" rx="8" fill="#f8fafc" stroke="#475569" stroke-width="1.5"/>
-    <text x="576" y="230" font-size="18" font-weight="600" fill="#374151">Rotary position</text>
-    <text x="576" y="254" font-size="16" font-weight="400" fill="#64748b">applied to Q and K</text>
-    <text x="576" y="280" font-size="16" fill="#64748b">(B, L, d)</text>
+    <rect x="624" y="208" width="256" height="128" rx="8" fill="#f8fafc" stroke="#475569" stroke-width="1.5"/>
+    <text x="642.2" y="242.2" font-size="20.5" font-weight="600" fill="#374151">Rotary position</text>
+    <text x="642.2" y="274.2" font-size="18.2" font-weight="400" fill="#64748b">applied to Q and K</text>
+    <text x="642.2" y="308.2" font-size="18.2" fill="#64748b">(B, L, d)</text>
   </g>
-  <rect x="832" y="144" width="624" height="152" rx="8" fill="none" stroke="#e2e8f0" stroke-width="1.5" stroke-dasharray="8 4"/>
-  <text x="848" y="170" font-size="16" font-weight="600" fill="#64748b">2. Encoder stack  (N = 24)</text>
+  <rect x="944" y="144" width="712" height="192" rx="8" fill="none" stroke="#e2e8f0" stroke-width="1.5" stroke-dasharray="8 4"/>
+  <text x="960" y="170" font-size="18.2" font-weight="600" fill="#64748b">2. Encoder stack  (N = 24)</text>
   <g data-pptx-role="group" data-node-id="stack-b1">
-    <rect x="856" y="200" width="136" height="72" rx="8" fill="#f8fafc" stroke="#1e3a5f" stroke-width="1.5"/>
-    <text x="872" y="230" font-size="18" font-weight="600" fill="#374151">Block 1</text>
-    <text x="872" y="256" font-size="16" fill="#64748b">(B, L, d)</text>
+    <rect x="976" y="208" width="152" height="96" rx="8" fill="#f8fafc" stroke="#1e3a5f" stroke-width="1.5"/>
+    <text x="994.2" y="242.2" font-size="20.5" font-weight="600" fill="#374151">Block 1</text>
+    <text x="994.2" y="276.2" font-size="18.2" fill="#64748b">(B, L, d)</text>
   </g>
   <g data-pptx-role="group" data-node-id="stack-b2">
-    <rect x="1016" y="200" width="136" height="72" rx="8" fill="#f8fafc" stroke="#475569" stroke-width="1.5"/>
-    <text x="1032" y="230" font-size="18" font-weight="600" fill="#374151">Block 2</text>
-    <text x="1032" y="256" font-size="16" fill="#64748b">(B, L, d)</text>
+    <rect x="1160" y="208" width="152" height="96" rx="8" fill="#f8fafc" stroke="#475569" stroke-width="1.5"/>
+    <text x="1178.2" y="242.2" font-size="20.5" font-weight="600" fill="#374151">Block 2</text>
+    <text x="1178.2" y="276.2" font-size="18.2" fill="#64748b">(B, L, d)</text>
   </g>
   <g data-pptx-role="group" data-node-id="stack-rep">
-    <rect x="1176" y="200" width="88" height="64" fill="#ffffff" stroke="none"/>
-    <text x="1220" y="241" text-anchor="middle" font-size="18" font-weight="700" fill="#64748b">• • •</text>
+    <rect x="1344" y="216" width="96" height="72" fill="#ffffff" stroke="none"/>
+    <text x="1392" y="262.2" text-anchor="middle" font-size="20.5" font-weight="700" fill="#64748b">• • •</text>
   </g>
   <g data-pptx-role="group" data-node-id="stack-bn">
-    <rect x="1288" y="200" width="144" height="72" rx="8" fill="#f8fafc" stroke="#475569" stroke-width="1.5"/>
-    <text x="1304" y="230" font-size="18" font-weight="600" fill="#374151">Block N</text>
-    <text x="1304" y="256" font-size="16" fill="#64748b">(B, L, d)</text>
+    <rect x="1472" y="208" width="152" height="96" rx="8" fill="#f8fafc" stroke="#475569" stroke-width="1.5"/>
+    <text x="1490.2" y="242.2" font-size="20.5" font-weight="600" fill="#374151">Block N</text>
+    <text x="1490.2" y="276.2" font-size="18.2" fill="#64748b">(B, L, d)</text>
   </g>
-  <rect x="1480" y="144" width="760" height="176" rx="8" fill="none" stroke="#e2e8f0" stroke-width="1.5" stroke-dasharray="8 4"/>
-  <text x="1496" y="170" font-size="16" font-weight="600" fill="#64748b">3. Head</text>
+  <rect x="64" y="400" width="864" height="224" rx="8" fill="none" stroke="#e2e8f0" stroke-width="1.5" stroke-dasharray="8 4"/>
+  <text x="80" y="426" font-size="18.2" font-weight="600" fill="#64748b">3. Head</text>
   <g data-pptx-role="group" data-node-id="head-pool">
-    <rect x="1504" y="200" width="256" height="96" rx="8" fill="#f8fafc" stroke="#475569" stroke-width="1.5"/>
-    <text x="1520" y="230" font-size="18" font-weight="600" fill="#374151">Mean pool</text>
-    <text x="1520" y="254" font-size="16" font-weight="400" fill="#64748b">masked over padding</text>
-    <text x="1520" y="280" font-size="16" fill="#64748b">(B, d)</text>
+    <rect x="96" y="464" width="280" height="128" rx="8" fill="#f8fafc" stroke="#475569" stroke-width="1.5"/>
+    <text x="114.2" y="498.2" font-size="20.5" font-weight="600" fill="#374151">Mean pool</text>
+    <text x="114.2" y="530.2" font-size="18.2" font-weight="400" fill="#64748b">masked over padding</text>
+    <text x="114.2" y="564.2" font-size="18.2" fill="#64748b">(B, d)</text>
   </g>
   <g data-pptx-role="group" data-node-id="head-proj">
-    <rect x="1784" y="200" width="176" height="96" rx="8" fill="#f8fafc" stroke="#475569" stroke-width="1.5"/>
-    <text x="1800" y="230" font-size="18" font-weight="600" fill="#374151">Task head</text>
-    <text x="1800" y="254" font-size="16" font-weight="400" fill="#64748b">Linear d to C</text>
-    <text x="1800" y="280" font-size="16" fill="#64748b">(B, C)</text>
+    <rect x="408" y="464" width="192" height="128" rx="8" fill="#f8fafc" stroke="#475569" stroke-width="1.5"/>
+    <text x="426.2" y="498.2" font-size="20.5" font-weight="600" fill="#374151">Task head</text>
+    <text x="426.2" y="530.2" font-size="18.2" font-weight="400" fill="#64748b">Linear d to C</text>
+    <text x="426.2" y="564.2" font-size="18.2" fill="#64748b">(B, C)</text>
   </g>
   <g data-pptx-role="group" data-node-id="head-loss">
-    <rect x="1984" y="200" width="232" height="96" rx="8" fill="#ffffff" stroke="#b45309" stroke-width="1.5"/>
-    <text x="2000" y="230" font-size="18" font-weight="600" fill="#374151">Cross-entropy</text>
-    <text x="2000" y="254" font-size="16" font-weight="400" fill="#64748b">label smoothing 0.1</text>
-    <text x="2000" y="280" font-size="16" fill="#64748b">scalar</text>
+    <rect x="632" y="464" width="264" height="128" rx="8" fill="#ffffff" stroke="#b45309" stroke-width="1.5"/>
+    <text x="650.2" y="498.2" font-size="20.5" font-weight="600" fill="#374151">Cross-entropy</text>
+    <text x="650.2" y="530.2" font-size="18.2" font-weight="400" fill="#64748b">label smoothing 0.1</text>
+    <text x="650.2" y="564.2" font-size="18.2" fill="#64748b">scalar</text>
   </g>
-  <rect x="64" y="344" width="1192" height="224" rx="8" fill="none" stroke="#e2e8f0" stroke-width="1.5" stroke-dasharray="8 4"/>
-  <text x="80" y="370" font-size="16" font-weight="600" fill="#64748b">4. Self-attention sub-block  (pre-norm residual)</text>
-  <rect x="88" y="400" width="1144" height="144" rx="8" fill="none" stroke="#64748b" stroke-width="1.5" stroke-dasharray="4 3"/>
+  <rect x="960" y="400" width="1368" height="288" rx="8" fill="none" stroke="#e2e8f0" stroke-width="1.5" stroke-dasharray="8 4"/>
+  <text x="976" y="426" font-size="18.2" font-weight="600" fill="#64748b">4. Self-attention sub-block  (pre-norm residual)</text>
+  <rect x="992" y="464" width="1304" height="192" rx="8" fill="none" stroke="#64748b" stroke-width="1.5" stroke-dasharray="4 3"/>
   <g data-pptx-role="group" data-node-id="attn-g-ln1">
-    <rect x="112" y="432" width="176" height="72" rx="8" fill="#f8fafc" stroke="#475569" stroke-width="1.5"/>
-    <text x="128" y="462" font-size="18" font-weight="600" fill="#374151">LayerNorm</text>
-    <text x="128" y="488" font-size="16" fill="#64748b">(B, L, d)</text>
+    <rect x="1024" y="512" width="192" height="96" rx="8" fill="#f8fafc" stroke="#475569" stroke-width="1.5"/>
+    <text x="1042.2" y="546.2" font-size="20.5" font-weight="600" fill="#374151">LayerNorm</text>
+    <text x="1042.2" y="580.2" font-size="18.2" fill="#64748b">(B, L, d)</text>
   </g>
   <g data-pptx-role="group" data-node-id="attn-g-qkv">
-    <rect x="312" y="424" width="224" height="96" rx="8" fill="#f8fafc" stroke="#475569" stroke-width="1.5"/>
-    <text x="328" y="454" font-size="18" font-weight="600" fill="#374151">QKV projection</text>
-    <text x="328" y="478" font-size="16" font-weight="400" fill="#64748b">3 x Linear d to d</text>
-    <text x="328" y="504" font-size="16" fill="#64748b">(B, H, L, d/H)</text>
+    <rect x="1248" y="496" width="248" height="128" rx="8" fill="#f8fafc" stroke="#475569" stroke-width="1.5"/>
+    <text x="1266.2" y="530.2" font-size="20.5" font-weight="600" fill="#374151">QKV projection</text>
+    <text x="1266.2" y="562.2" font-size="18.2" font-weight="400" fill="#64748b">3 x Linear d to d</text>
+    <text x="1266.2" y="596.2" font-size="18.2" fill="#64748b">(B, H, L, d/H)</text>
   </g>
   <g data-pptx-role="group" data-node-id="attn-g-sdp">
-    <rect x="560" y="424" width="288" height="96" rx="8" fill="#f8fafc" stroke="#1e3a5f" stroke-width="1.5"/>
-    <text x="576" y="454" font-size="18" font-weight="600" fill="#374151">Scaled dot-product</text>
-    <text x="576" y="478" font-size="16" font-weight="400" fill="#64748b">causal mask, dropout 0.1</text>
-    <text x="576" y="504" font-size="16" fill="#64748b">(B, H, L, L)</text>
+    <rect x="1528" y="496" width="320" height="128" rx="8" fill="#f8fafc" stroke="#1e3a5f" stroke-width="1.5"/>
+    <text x="1546.2" y="530.2" font-size="20.5" font-weight="600" fill="#374151">Scaled dot-product</text>
+    <text x="1546.2" y="562.2" font-size="18.2" font-weight="400" fill="#64748b">causal mask, dropout 0.1</text>
+    <text x="1546.2" y="596.2" font-size="18.2" fill="#64748b">(B, H, L, L)</text>
   </g>
   <g data-pptx-role="group" data-node-id="attn-g-out">
-    <rect x="872" y="432" width="248" height="72" rx="8" fill="#f8fafc" stroke="#475569" stroke-width="1.5"/>
-    <text x="888" y="462" font-size="18" font-weight="600" fill="#374151">Output projection</text>
-    <text x="888" y="488" font-size="16" fill="#64748b">(B, L, d)</text>
+    <rect x="1880" y="512" width="280" height="96" rx="8" fill="#f8fafc" stroke="#475569" stroke-width="1.5"/>
+    <text x="1898.2" y="546.2" font-size="20.5" font-weight="600" fill="#374151">Output projection</text>
+    <text x="1898.2" y="580.2" font-size="18.2" fill="#64748b">(B, L, d)</text>
   </g>
   <g data-pptx-role="group" data-node-id="attn-g-add1">
-    <circle cx="1176" cy="472" r="32" fill="#ffffff" stroke="#475569" stroke-width="1.5"/>
-    <text x="1176" y="479" text-anchor="middle" font-size="18" font-weight="700" fill="#475569">+</text>
+    <circle cx="2228" cy="556" r="36" fill="#ffffff" stroke="#475569" stroke-width="1.5"/>
+    <text x="2228" y="564.2" text-anchor="middle" font-size="20.5" font-weight="700" fill="#475569">+</text>
   </g>
-  <rect x="1280" y="344" width="840" height="224" rx="8" fill="none" stroke="#e2e8f0" stroke-width="1.5" stroke-dasharray="8 4"/>
-  <text x="1296" y="370" font-size="16" font-weight="600" fill="#64748b">5. Feed-forward sub-block  (pre-norm residual)</text>
-  <rect x="1304" y="400" width="792" height="144" rx="8" fill="none" stroke="#64748b" stroke-width="1.5" stroke-dasharray="4 3"/>
+  <rect x="64" y="720" width="976" height="288" rx="8" fill="none" stroke="#e2e8f0" stroke-width="1.5" stroke-dasharray="8 4"/>
+  <text x="80" y="746" font-size="18.2" font-weight="600" fill="#64748b">5. Feed-forward sub-block  (pre-norm residual)</text>
+  <rect x="96" y="784" width="912" height="192" rx="8" fill="none" stroke="#64748b" stroke-width="1.5" stroke-dasharray="4 3"/>
   <g data-pptx-role="group" data-node-id="ffn-g-ln2">
-    <rect x="1328" y="432" width="176" height="72" rx="8" fill="#f8fafc" stroke="#475569" stroke-width="1.5"/>
-    <text x="1344" y="462" font-size="18" font-weight="600" fill="#374151">LayerNorm</text>
-    <text x="1344" y="488" font-size="16" fill="#64748b">(B, L, d)</text>
+    <rect x="128" y="832" width="192" height="96" rx="8" fill="#f8fafc" stroke="#475569" stroke-width="1.5"/>
+    <text x="146.2" y="866.2" font-size="20.5" font-weight="600" fill="#374151">LayerNorm</text>
+    <text x="146.2" y="900.2" font-size="18.2" fill="#64748b">(B, L, d)</text>
   </g>
   <g data-pptx-role="group" data-node-id="ffn-g-up">
-    <rect x="1528" y="424" width="224" height="96" rx="8" fill="#f8fafc" stroke="#475569" stroke-width="1.5"/>
-    <text x="1544" y="454" font-size="18" font-weight="600" fill="#374151">Linear d to 4d</text>
-    <text x="1544" y="478" font-size="16" font-weight="400" fill="#64748b">GELU, dropout 0.1</text>
-    <text x="1544" y="504" font-size="16" fill="#64748b">(B, L, 4d)</text>
+    <rect x="352" y="816" width="256" height="128" rx="8" fill="#f8fafc" stroke="#475569" stroke-width="1.5"/>
+    <text x="370.2" y="850.2" font-size="20.5" font-weight="600" fill="#374151">Linear d to 4d</text>
+    <text x="370.2" y="882.2" font-size="18.2" font-weight="400" fill="#64748b">GELU, dropout 0.1</text>
+    <text x="370.2" y="916.2" font-size="18.2" fill="#64748b">(B, L, 4d)</text>
   </g>
   <g data-pptx-role="group" data-node-id="ffn-g-dn">
-    <rect x="1776" y="432" width="208" height="72" rx="8" fill="#f8fafc" stroke="#475569" stroke-width="1.5"/>
-    <text x="1792" y="462" font-size="18" font-weight="600" fill="#374151">Linear 4d to d</text>
-    <text x="1792" y="488" font-size="16" fill="#64748b">(B, L, d)</text>
+    <rect x="640" y="832" width="232" height="96" rx="8" fill="#f8fafc" stroke="#475569" stroke-width="1.5"/>
+    <text x="658.2" y="866.2" font-size="20.5" font-weight="600" fill="#374151">Linear 4d to d</text>
+    <text x="658.2" y="900.2" font-size="18.2" fill="#64748b">(B, L, d)</text>
   </g>
   <g data-pptx-role="group" data-node-id="ffn-g-add2">
-    <circle cx="2040" cy="472" r="32" fill="#ffffff" stroke="#475569" stroke-width="1.5"/>
-    <text x="2040" y="479" text-anchor="middle" font-size="18" font-weight="700" fill="#475569">+</text>
+    <circle cx="940" cy="876" r="36" fill="#ffffff" stroke="#475569" stroke-width="1.5"/>
+    <text x="940" y="884.2" text-anchor="middle" font-size="20.5" font-weight="700" fill="#475569">+</text>
   </g>
-  <rect x="64" y="592" width="992" height="176" rx="8" fill="none" stroke="#e2e8f0" stroke-width="1.5" stroke-dasharray="8 4"/>
-  <text x="80" y="618" font-size="16" font-weight="600" fill="#64748b">6. Training</text>
+  <rect x="1072" y="720" width="1120" height="224" rx="8" fill="none" stroke="#e2e8f0" stroke-width="1.5" stroke-dasharray="8 4"/>
+  <text x="1088" y="746" font-size="18.2" font-weight="600" fill="#64748b">6. Training</text>
   <g data-pptx-role="group" data-node-id="train-fwd">
-    <rect x="88" y="648" width="208" height="96" rx="8" fill="#f8fafc" stroke="#475569" stroke-width="1.5"/>
-    <text x="104" y="678" font-size="18" font-weight="600" fill="#374151">Forward pass</text>
-    <text x="104" y="702" font-size="16" font-weight="400" fill="#64748b">bf16 autocast</text>
-    <text x="104" y="728" font-size="16" fill="#64748b">(B, L, d)</text>
+    <rect x="1104" y="784" width="224" height="128" rx="8" fill="#f8fafc" stroke="#475569" stroke-width="1.5"/>
+    <text x="1122.2" y="818.2" font-size="20.5" font-weight="600" fill="#374151">Forward pass</text>
+    <text x="1122.2" y="850.2" font-size="18.2" font-weight="400" fill="#64748b">bf16 autocast</text>
+    <text x="1122.2" y="884.2" font-size="18.2" fill="#64748b">(B, L, d)</text>
   </g>
   <g data-pptx-role="group" data-node-id="train-bwd">
-    <rect x="320" y="648" width="168" height="96" rx="8" fill="#ffffff" stroke="#b45309" stroke-width="1.5"/>
-    <text x="336" y="678" font-size="18" font-weight="600" fill="#374151">Backward</text>
-    <text x="336" y="702" font-size="16" font-weight="400" fill="#64748b">grad clip 1.0</text>
-    <text x="336" y="728" font-size="16" fill="#64748b">grads</text>
+    <rect x="1360" y="784" width="184" height="128" rx="8" fill="#ffffff" stroke="#b45309" stroke-width="1.5"/>
+    <text x="1378.2" y="818.2" font-size="20.5" font-weight="600" fill="#374151">Backward</text>
+    <text x="1378.2" y="850.2" font-size="18.2" font-weight="400" fill="#64748b">grad clip 1.0</text>
+    <text x="1378.2" y="884.2" font-size="18.2" fill="#64748b">grads</text>
   </g>
   <g data-pptx-role="group" data-node-id="train-opt">
-    <rect x="512" y="648" width="256" height="96" rx="8" fill="#ffffff" stroke="#b45309" stroke-width="1.5"/>
-    <text x="528" y="678" font-size="18" font-weight="600" fill="#374151">AdamW</text>
-    <text x="528" y="702" font-size="16" font-weight="400" fill="#64748b">beta 0.9 / 0.95, wd 0.1</text>
-    <text x="528" y="728" font-size="16" fill="#64748b">params</text>
+    <rect x="1576" y="784" width="288" height="128" rx="8" fill="#ffffff" stroke="#b45309" stroke-width="1.5"/>
+    <text x="1594.2" y="818.2" font-size="20.5" font-weight="600" fill="#374151">AdamW</text>
+    <text x="1594.2" y="850.2" font-size="18.2" font-weight="400" fill="#64748b">beta 0.9 / 0.95, wd 0.1</text>
+    <text x="1594.2" y="884.2" font-size="18.2" fill="#64748b">params</text>
   </g>
   <g data-pptx-role="group" data-node-id="train-sched">
-    <rect x="792" y="648" width="240" height="96" rx="8" fill="#ffffff" stroke="#b45309" stroke-width="1.5"/>
-    <text x="808" y="678" font-size="18" font-weight="600" fill="#374151">Cosine schedule</text>
-    <text x="808" y="702" font-size="16" font-weight="400" fill="#64748b">2k warmup steps</text>
-    <text x="808" y="728" font-size="16" fill="#64748b">lr</text>
+    <rect x="1896" y="784" width="264" height="128" rx="8" fill="#ffffff" stroke="#b45309" stroke-width="1.5"/>
+    <text x="1914.2" y="818.2" font-size="20.5" font-weight="600" fill="#374151">Cosine schedule</text>
+    <text x="1914.2" y="850.2" font-size="18.2" font-weight="400" fill="#64748b">2k warmup steps</text>
+    <text x="1914.2" y="884.2" font-size="18.2" fill="#64748b">lr</text>
   </g>
-  <rect x="1080" y="592" width="1048" height="176" rx="8" fill="none" stroke="#e2e8f0" stroke-width="1.5" stroke-dasharray="8 4"/>
-  <text x="1096" y="618" font-size="16" font-weight="600" fill="#64748b">7. Inference</text>
+  <rect x="64" y="1040" width="1200" height="224" rx="8" fill="none" stroke="#e2e8f0" stroke-width="1.5" stroke-dasharray="8 4"/>
+  <text x="80" y="1066" font-size="18.2" font-weight="600" fill="#64748b">7. Inference</text>
   <g data-pptx-role="group" data-node-id="infer-cache">
-    <rect x="1104" y="648" width="224" height="96" rx="8" fill="#f8fafc" stroke="#475569" stroke-width="1.5"/>
-    <text x="1120" y="678" font-size="18" font-weight="600" fill="#374151">KV cache</text>
-    <text x="1120" y="702" font-size="16" font-weight="400" fill="#64748b">per layer, per head</text>
-    <text x="1120" y="728" font-size="16" fill="#64748b">(B, H, L, d/H)</text>
+    <rect x="96" y="1104" width="256" height="128" rx="8" fill="#f8fafc" stroke="#475569" stroke-width="1.5"/>
+    <text x="114.2" y="1138.2" font-size="20.5" font-weight="600" fill="#374151">KV cache</text>
+    <text x="114.2" y="1170.2" font-size="18.2" font-weight="400" fill="#64748b">per layer, per head</text>
+    <text x="114.2" y="1204.2" font-size="18.2" fill="#64748b">(B, H, L, d/H)</text>
   </g>
   <g data-pptx-role="group" data-node-id="infer-step">
-    <rect x="1352" y="648" width="240" height="96" rx="8" fill="#f8fafc" stroke="#1e3a5f" stroke-width="1.5"/>
-    <text x="1368" y="678" font-size="18" font-weight="600" fill="#374151">Incremental step</text>
-    <text x="1368" y="702" font-size="16" font-weight="400" fill="#64748b">one token at a time</text>
-    <text x="1368" y="728" font-size="16" fill="#64748b">(B, 1, d)</text>
+    <rect x="384" y="1104" width="264" height="128" rx="8" fill="#f8fafc" stroke="#1e3a5f" stroke-width="1.5"/>
+    <text x="402.2" y="1138.2" font-size="20.5" font-weight="600" fill="#374151">Incremental step</text>
+    <text x="402.2" y="1170.2" font-size="18.2" font-weight="400" fill="#64748b">one token at a time</text>
+    <text x="402.2" y="1204.2" font-size="18.2" fill="#64748b">(B, 1, d)</text>
   </g>
   <g data-pptx-role="group" data-node-id="infer-samp">
-    <rect x="1616" y="648" width="224" height="96" rx="8" fill="#f8fafc" stroke="#475569" stroke-width="1.5"/>
-    <text x="1632" y="678" font-size="18" font-weight="600" fill="#374151">Sampling</text>
-    <text x="1632" y="702" font-size="16" font-weight="400" fill="#64748b">top-p 0.9, temp 0.8</text>
-    <text x="1632" y="728" font-size="16" fill="#64748b">(B, 1)</text>
+    <rect x="680" y="1104" width="256" height="128" rx="8" fill="#f8fafc" stroke="#475569" stroke-width="1.5"/>
+    <text x="698.2" y="1138.2" font-size="20.5" font-weight="600" fill="#374151">Sampling</text>
+    <text x="698.2" y="1170.2" font-size="18.2" font-weight="400" fill="#64748b">top-p 0.9, temp 0.8</text>
+    <text x="698.2" y="1204.2" font-size="18.2" fill="#64748b">(B, 1)</text>
   </g>
   <g data-pptx-role="group" data-node-id="infer-out">
-    <rect x="1864" y="656" width="240" height="72" rx="8" fill="#ffffff" stroke="#64748b" stroke-width="1.5"/>
-    <text x="1880" y="686" font-size="18" font-weight="600" fill="#374151">Generated token</text>
-    <text x="1880" y="712" font-size="16" fill="#64748b">(B, 1)</text>
+    <rect x="968" y="1120" width="264" height="96" rx="8" fill="#ffffff" stroke="#64748b" stroke-width="1.5"/>
+    <text x="986.2" y="1154.2" font-size="20.5" font-weight="600" fill="#374151">Generated token</text>
+    <text x="986.2" y="1188.2" font-size="18.2" fill="#64748b">(B, 1)</text>
   </g>
   <defs><marker id="arrow-line" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/></marker><marker id="arrow-aux" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#b45309"/></marker></defs>
-  <polyline points="296,696 320,696" fill="none" stroke="#475569" stroke-width="2" data-from="train-fwd" data-to="train-bwd" marker-end="url(#arrow-line)"/>
-  <polyline points="488,696 512,696" fill="none" stroke="#475569" stroke-width="2" data-from="train-bwd" data-to="train-opt" marker-end="url(#arrow-line)"/>
-  <polyline points="768,696 792,696" fill="none" stroke="#475569" stroke-width="2" data-from="train-opt" data-to="train-sched" marker-end="url(#arrow-line)"/>
-  <polyline points="1328,696 1352,696" fill="none" stroke="#475569" stroke-width="2" data-from="infer-cache" data-to="infer-step" marker-end="url(#arrow-line)"/>
-  <polyline points="1592,696 1616,696" fill="none" stroke="#475569" stroke-width="2" data-from="infer-step" data-to="infer-samp" marker-end="url(#arrow-line)"/>
-  <polyline points="1840,696 1848,696 1848,692 1864,692" fill="none" stroke="#475569" stroke-width="2" data-from="infer-samp" data-to="infer-out" marker-end="url(#arrow-line)"/>
-  <polyline points="248,244 256,244 256,248 272,248" fill="none" stroke="#475569" stroke-width="2" data-from="in-tok" data-to="in-emb" marker-end="url(#arrow-line)"/>
-  <polyline points="536,248 560,248" fill="none" stroke="#475569" stroke-width="2" data-from="in-emb" data-to="in-pos" marker-end="url(#arrow-line)"/>
-  <polyline points="784,248 816,248 816,236 856,236" fill="none" stroke="#475569" stroke-width="2" data-from="in-pos" data-to="stack-b1" marker-end="url(#arrow-line)"/>
-  <polyline points="992,236 1016,236" fill="none" stroke="#475569" stroke-width="2" data-from="stack-b1" data-to="stack-b2" marker-end="url(#arrow-line)"/>
-  <polyline points="1432,236 1464,236 1464,248 1504,248" fill="none" stroke="#475569" stroke-width="2" data-from="stack-bn" data-to="head-pool" marker-end="url(#arrow-line)"/>
-  <polyline points="1760,248 1784,248" fill="none" stroke="#475569" stroke-width="2" data-from="head-pool" data-to="head-proj" marker-end="url(#arrow-line)"/>
-  <polyline points="1960,248 1984,248" fill="none" stroke="#475569" stroke-width="2" data-from="head-proj" data-to="head-loss" marker-end="url(#arrow-line)"/>
-  <polyline points="288,468 296,468 296,472 312,472" fill="none" stroke="#475569" stroke-width="2" data-from="attn-g-ln1" data-to="attn-g-qkv" marker-end="url(#arrow-line)"/>
-  <polyline points="536,472 560,472" fill="none" stroke="#475569" stroke-width="2" data-from="attn-g-qkv" data-to="attn-g-sdp" marker-end="url(#arrow-line)"/>
-  <polyline points="848,472 856,472 856,468 872,468" fill="none" stroke="#475569" stroke-width="2" data-from="attn-g-sdp" data-to="attn-g-out" marker-end="url(#arrow-line)"/>
-  <polyline points="1120,468 1128,468 1128,472 1144,472" fill="none" stroke="#475569" stroke-width="2" data-from="attn-g-out" data-to="attn-g-add1" marker-end="url(#arrow-line)"/>
-  <polyline points="1504,468 1512,468 1512,472 1528,472" fill="none" stroke="#475569" stroke-width="2" data-from="ffn-g-ln2" data-to="ffn-g-up" marker-end="url(#arrow-line)"/>
-  <polyline points="1752,472 1760,472 1760,468 1776,468" fill="none" stroke="#475569" stroke-width="2" data-from="ffn-g-up" data-to="ffn-g-dn" marker-end="url(#arrow-line)"/>
-  <polyline points="1984,468 1992,468 1992,472 2008,472" fill="none" stroke="#475569" stroke-width="2" data-from="ffn-g-dn" data-to="ffn-g-add2" marker-end="url(#arrow-line)"/>
-  <polyline points="200,432 200,412 1176,412 1176,440" fill="none" stroke="#475569" stroke-width="2" data-from="attn-g-ln1" data-to="attn-g-add1" marker-end="url(#arrow-line)"/>
-  <polyline points="1416,432 1416,412 2040,412 2040,440" fill="none" stroke="#475569" stroke-width="2" data-from="ffn-g-ln2" data-to="ffn-g-add2" marker-end="url(#arrow-line)"/>
-  <polyline points="2100,296 2100,540 704,540 704,520" fill="none" stroke="#b45309" stroke-width="2" stroke-dasharray="8 4" data-from="head-loss" data-to="attn-g-sdp" marker-end="url(#arrow-aux)"/>
+  <polyline points="1328,848 1360,848" fill="none" stroke="#475569" stroke-width="2" data-from="train-fwd" data-to="train-bwd" marker-end="url(#arrow-line)"/>
+  <polyline points="1544,848 1576,848" fill="none" stroke="#475569" stroke-width="2" data-from="train-bwd" data-to="train-opt" marker-end="url(#arrow-line)"/>
+  <polyline points="1864,848 1896,848" fill="none" stroke="#475569" stroke-width="2" data-from="train-opt" data-to="train-sched" marker-end="url(#arrow-line)"/>
+  <polyline points="352,1168 384,1168" fill="none" stroke="#475569" stroke-width="2" data-from="infer-cache" data-to="infer-step" marker-end="url(#arrow-line)"/>
+  <polyline points="648,1168 680,1168" fill="none" stroke="#475569" stroke-width="2" data-from="infer-step" data-to="infer-samp" marker-end="url(#arrow-line)"/>
+  <polyline points="936,1168 968,1168" fill="none" stroke="#475569" stroke-width="2" data-from="infer-samp" data-to="infer-out" marker-end="url(#arrow-line)"/>
+  <polyline points="272,272 304,272" fill="none" stroke="#475569" stroke-width="2" data-from="in-tok" data-to="in-emb" marker-end="url(#arrow-line)"/>
+  <polyline points="592,272 624,272" fill="none" stroke="#475569" stroke-width="2" data-from="in-emb" data-to="in-pos" marker-end="url(#arrow-line)"/>
+  <polyline points="880,272 928,272 928,256 976,256" fill="none" stroke="#475569" stroke-width="2" data-from="in-pos" data-to="stack-b1" marker-end="url(#arrow-line)"/>
+  <polyline points="1128,256 1160,256" fill="none" stroke="#475569" stroke-width="2" data-from="stack-b1" data-to="stack-b2" marker-end="url(#arrow-line)"/>
+  <polyline points="1548,304 1548,384 236,384 236,464" fill="none" stroke="#475569" stroke-width="2" data-from="stack-bn" data-to="head-pool" marker-end="url(#arrow-line)"/>
+  <polyline points="376,528 408,528" fill="none" stroke="#475569" stroke-width="2" data-from="head-pool" data-to="head-proj" marker-end="url(#arrow-line)"/>
+  <polyline points="600,528 632,528" fill="none" stroke="#475569" stroke-width="2" data-from="head-proj" data-to="head-loss" marker-end="url(#arrow-line)"/>
+  <polyline points="1216,560 1248,560" fill="none" stroke="#475569" stroke-width="2" data-from="attn-g-ln1" data-to="attn-g-qkv" marker-end="url(#arrow-line)"/>
+  <polyline points="1496,560 1528,560" fill="none" stroke="#475569" stroke-width="2" data-from="attn-g-qkv" data-to="attn-g-sdp" marker-end="url(#arrow-line)"/>
+  <polyline points="1848,560 1880,560" fill="none" stroke="#475569" stroke-width="2" data-from="attn-g-sdp" data-to="attn-g-out" marker-end="url(#arrow-line)"/>
+  <polyline points="2160,560 2176,560 2176,556 2192,556" fill="none" stroke="#475569" stroke-width="2" data-from="attn-g-out" data-to="attn-g-add1" marker-end="url(#arrow-line)"/>
+  <polyline points="320,880 352,880" fill="none" stroke="#475569" stroke-width="2" data-from="ffn-g-ln2" data-to="ffn-g-up" marker-end="url(#arrow-line)"/>
+  <polyline points="608,880 640,880" fill="none" stroke="#475569" stroke-width="2" data-from="ffn-g-up" data-to="ffn-g-dn" marker-end="url(#arrow-line)"/>
+  <polyline points="872,880 888,880 888,876 904,876" fill="none" stroke="#475569" stroke-width="2" data-from="ffn-g-dn" data-to="ffn-g-add2" marker-end="url(#arrow-line)"/>
+  <polyline points="1120,512 1120,476 2228,476 2228,520" fill="none" stroke="#475569" stroke-width="2" data-from="attn-g-ln1" data-to="attn-g-add1" marker-end="url(#arrow-line)"/>
+  <polyline points="224,832 224,796 940,796 940,840" fill="none" stroke="#475569" stroke-width="2" data-from="ffn-g-ln2" data-to="ffn-g-add2" marker-end="url(#arrow-line)"/>
+  <polyline points="764,592 764,644 1688,644 1688,624" fill="none" stroke="#b45309" stroke-width="2" stroke-dasharray="8 4" data-from="head-loss" data-to="attn-g-sdp" marker-end="url(#arrow-aux)"/>
   <text x="64" y="1298" font-size="16" fill="#64748b">Amber: active only during training. Arcs are residual identities. B batch, L sequence length, d model width, H heads.</text>
 </svg>

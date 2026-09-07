@@ -63,6 +63,31 @@ _PPTX_TEXT_INSET = 18
 #: between these metrics and PowerPoint's own layout of the same string.
 _RENDER_SAFETY = 1.04
 
+#: Bounds on the fill search. Two and a half times the token sizes is already
+#: poster scale for a figure canvas, and eight bisection steps settle the factor
+#: to about one percent -- finer than the layout grid can express anyway.
+_MAX_FILL = 2.5
+_FILL_STEPS = 8
+
+
+
+def _trim(value: float) -> float:
+    """Round a scaled size and drop a meaningless fractional part.
+
+    A scale factor turns every size into a float, which would otherwise write
+    `font-size="18.0"` and `x="88.0"` throughout the SVG. Sizes that land on a
+    whole number are returned as integers so the emitted source stays as
+    readable as a hand-written one, and so an unscaled composition produces
+    exactly the file it produced before scaling existed.
+
+    Args:
+        value: The scaled size.
+
+    Returns:
+        An int when the rounded value is whole, otherwise a one-decimal float.
+    """
+    rounded = round(value, 1)
+    return int(rounded) if rounded == int(rounded) else rounded
 
 
 def _snap(value: float, grid: int, *, up: bool = True) -> int:
@@ -199,36 +224,64 @@ class Diagram:
         self.canvas_h: int = tokens["canvas"]["height"]
         self.safe = tokens["canvas"]["safe_area"]
         self.colors: Dict[str, str] = tokens["color"]["roles"]
-        self.node_pad = tokens["spacing"]["node_padding"]
-        self.gap: int = _snap(tokens["spacing"]["node_gap_min"], self.grid)
+        self._base_pad = dict(tokens["spacing"]["node_padding"])
+        self._base_gap = int(tokens["spacing"]["node_gap_min"])
         self.family = fonts.resolve_font_stack(tokens["typography"]["family"]["sans"])
         self.label_role = tokens["typography"]["roles"]["node_label"]
         self.caption_role = tokens["typography"]["roles"]["caption"]
         self.render_scale = self._render_scale()
+        self.sections: List[Container] = []
+        #: Sections grouped by slide, then by band, filled during layout.
+        self.slides: List[List[List[Container]]] = []
+        #: The scale each slide is drawn at, one per slide, filled during
+        #: layout. Per slide rather than per deck so a crowded page does not
+        #: hold a sparse one down to its own size.
+        self.slide_fill: List[float] = []
+        self.connections: List[Dict[str, Any]] = []
+        self.notes: List[Dict[str, Any]] = []
+
+        #: How much the composition is enlarged to fill the canvas. Sparse
+        #: content would otherwise sit in the top corner of a figure with the
+        #: rest blank; the token sizes are floors, not fixed values, so growing
+        #: past them is allowed and using the space is the better answer.
+        self.fill = 1.0
+        self._derive_metrics()
+
+    def _derive_metrics(self) -> None:
+        """Recompute every size-derived quantity from the current fill factor.
+
+        Called once per layout pass, so a pass can be redone at a different
+        scale without the composition being rebuilt.
+        """
+        self.label_size = _trim(self.label_role["size"] * self.fill)
+        self.caption_size = _trim(self.caption_role["size"] * self.fill)
+        # Padding is an inset inside a shape rather than a position on the
+        # canvas, so it is scaled but deliberately not snapped: snapping it
+        # would round the token values up at fill 1.0 and change every existing
+        # composition's geometry for nothing.
+        self.node_pad = {
+            axis: _trim(self._base_pad[axis] * self.fill) for axis in ("x", "y")
+        }
+        self.gap = _snap(self._base_gap * self.fill, self.grid)
         # Line advance and annotation room come from the type roles rather
         # than from constants: a denser token set with a smaller scale would
         # otherwise be drawn with the leading of a presentation slide, and the
         # boxes would be padded out with air the smaller type does not need.
         self.line_step = _snap(
-            self.label_role["size"] * self.label_role["line_height"], self.grid
+            self.label_size * self.label_role["line_height"], self.grid
         )
         self.shape_step = _snap(
-            self.caption_role["size"] * self.caption_role["line_height"], self.grid
+            self.caption_size * self.caption_role["line_height"], self.grid
         )
         # Large enough that the glyph clears the token insets on every side.
         self.op_size = _snap(
             max(
-                self.label_role["size"] + 2 * self.node_pad["x"],
-                self.label_role["size"] + 2 * self.node_pad["y"],
+                self.label_size + 2 * self.node_pad["x"],
+                self.label_size + 2 * self.node_pad["y"],
             )
             + self.grid,
             self.grid,
         )
-        self.sections: List[Container] = []
-        #: Sections grouped by slide, then by band, filled during layout.
-        self.slides: List[List[List[Container]]] = []
-        self.connections: List[Dict[str, Any]] = []
-        self.notes: List[Dict[str, Any]] = []
 
     def _render_scale(self) -> float:
         """How much wider text renders in the deck than on this canvas.
@@ -416,7 +469,8 @@ class Diagram:
         Returns:
             Advance width in canvas units.
         """
-        return fonts.text_width(text, self.family, role["size"], role["weight"])
+        size = self.label_size if role is self.label_role else self.caption_size
+        return fonts.text_width(text, self.family, size, role["weight"])
 
     def _measure(self, item: Item, max_width: Optional[int] = None) -> Tuple[int, int]:
         """Compute an item's size, wrapping a row that will not fit.
@@ -565,32 +619,146 @@ class Diagram:
             cy += row_h + self.gap
 
     def layout(self) -> None:
-        """Measure every section and assign each to a slide and a band.
+        """Measure, place, and enlarge each page to fill the canvas.
+
+        A first pass at the token sizes decides how many pages the composition
+        needs and which sections land on each. Every page is then fitted on its
+        own: the largest scale at which its bands still fit is kept, so a page
+        holding two sections grows to fill the sheet while a dense page beside
+        it in the same deck is left at the token sizes.
+
+        Fitting per page rather than per deck is what makes this useful. One
+        crowded page would otherwise hold every other page down to its own
+        scale, which is how a two-section slide ends up as a small diagram
+        marooned in the middle of an empty one.
+
+        The token sizes are floors rather than fixed values, so growing past
+        them is allowed and the scale never drops below 1: text must not fall
+        under the sizes that make it legible, whatever the shape of the page.
+
+        Raises:
+            ValueError: When a single section is taller than a whole canvas
+                even at the token sizes, which no scaling or paging recovers.
+        """
+        self.fill = 1.0
+        self._derive_metrics()
+        self._layout_pass()
+        self.slide_fill = [
+            self._fit_slide(index) for index in range(len(self.slides))
+        ]
+        self._apply_slide(0)
+
+    def _fit_slide(self, index: int) -> float:
+        """Find the largest scale one page still fits at.
+
+        Bisection rather than a computed ratio: enlarging the type rewraps
+        rows, so the height does not follow the scale in any form worth
+        solving, and the only reliable test of a factor is to lay the page out
+        at it.
+
+        Args:
+            index: Which page.
+
+        Returns:
+            The scale factor, never below 1.
+        """
+        best, low, high = 1.0, 1.0, _MAX_FILL
+        for _ in range(_FILL_STEPS):
+            trial = (low + high) / 2
+            if self._slide_fits(index, trial):
+                best, low = trial, trial
+            else:
+                high = trial
+        return best
+
+    def _slide_fits(self, index: int, fill: float) -> bool:
+        """Report whether one page's sections still hold one page at a scale.
+
+        The page's sections are repacked rather than held in the bands they
+        started in: a wider box may no longer sit beside its neighbour, and
+        dropping it to a band of its own is a better answer than refusing to
+        grow at all.
+
+        Args:
+            index: Which page.
+            fill: The scale to test.
+
+        Returns:
+            True when the page's sections still fit on one page.
+        """
+        sections = [s for band in self.slides[index] for s in band]
+        self.fill = fill
+        self._derive_metrics()
+        try:
+            self._measure_sections(sections)
+        except ValueError:
+            return False
+        return len(self._pack(sections)) == 1
+
+    def _measure_sections(self, sections: Sequence[Container]) -> None:
+        """Re-measure sections at the current scale.
+
+        Args:
+            sections: The sections to measure.
+
+        Raises:
+            ValueError: When one of them alone exceeds a whole canvas.
+        """
+        usable = self.canvas_w - self.safe["left"] - self.safe["right"]
+        available = self._available_height()
+        for section in sections:
+            self._measure(section, usable)
+            if section.height > available:
+                raise ValueError(
+                    f"section {section.id!r} does not fit a canvas at this scale"
+                )
+
+    def _apply_slide(self, index: int) -> None:
+        """Put the diagram into the state one page is drawn from.
+
+        Sizes are held on the sections themselves, so a page is rendered by
+        re-measuring, repacking and re-placing it at its own scale immediately
+        before it is emitted.
+
+        Args:
+            index: Which page.
+        """
+        if not self.slides:
+            return
+        sections = [s for band in self.slides[index] for s in band]
+        self.fill = self.slide_fill[index] if self.slide_fill else 1.0
+        self._derive_metrics()
+        self._measure_sections(sections)
+        packed = self._pack(sections)
+        self.slides[index] = packed[0]
+        self._position_slide(index)
+
+    def _content_top(self) -> int:
+        """Top of the area sections may occupy, below the title block."""
+        return _snap(self.safe["top"] + 92, self.grid)
+
+    def _available_height(self) -> int:
+        """Height sections may occupy, between the title block and the foot."""
+        bottom = self.canvas_h - self.safe["bottom"] - (24 if self.footnote else 0)
+        return bottom - self._content_top()
+
+    def _layout_pass(self) -> None:
+        """Measure every section and assign each to a page and a band.
 
         A section is measured against the usable width, so an over-long row
         wraps rather than overflowing. Sections then fill bands greedily in
-        declaration order, and **bands that no longer fit the canvas continue
-        onto the next slide** -- because this is a deck generator, and an
-        architecture too detailed for one page is a normal outcome for real
-        research rather than an error to hand back.
-
-        An explicit `band` still pins a section to a band on the first slide,
-        for the cases where the author does want to control the packing.
+        declaration order, and bands that no longer fit continue onto the next
+        page -- this is a deck generator, and an architecture too detailed for
+        one page is a normal outcome rather than an error to hand back.
 
         Raises:
-            ValueError: Only when a single section is itself taller than a whole
-                canvas, which no packing or paging can recover.
+            ValueError: When one section alone exceeds a whole canvas.
         """
         usable = self.canvas_w - self.safe["left"] - self.safe["right"]
         for section in self.sections:
             self._measure(section, usable)
 
-        content_top = _snap(self.safe["top"] + 92, self.grid)
-        content_bottom = self.canvas_h - self.safe["bottom"] - (
-            24 if self.footnote else 0
-        )
-        available = content_bottom - content_top
-
+        available = self._available_height()
         for section in self.sections:
             if section.height > available:
                 raise ValueError(
@@ -599,40 +767,79 @@ class Diagram:
                     "split it into two sections"
                 )
 
-        self.slides = [[]]
+        self.slides = self._pack(self.sections)
+        self._position()
+
+    def _pack(self, sections: Sequence[Container]) -> List[List[List[Container]]]:
+        """Group already-measured sections into bands, and bands into pages.
+
+        Args:
+            sections: The sections to pack, taken in declaration order except
+                where one pins itself to a band.
+
+        Returns:
+            Pages, each a list of bands, each band a list of sections.
+        """
+        usable = self.canvas_w - self.safe["left"] - self.safe["right"]
+        available = self._available_height()
+        pages: List[List[List[Container]]] = [[]]
         band: List[Container] = []
         used_height = 0
         for section in sorted(
-            self.sections, key=lambda s: (s.band is None, s.band or 0)
+            sections, key=lambda s: (s.band is None, s.band or 0)
         ):
             row_w = sum(s.width for s in band) + self.gap * len(band)
-            fits_band = band and row_w + section.width <= usable
-            if fits_band:
+            if band and row_w + section.width <= usable:
                 band.append(section)
                 continue
-            # Close the current band and start a new one, paging when the slide
-            # has no room left for it.
             if band:
                 used_height += max(s.height for s in band) + self.gap
             if used_height + section.height > available:
-                self.slides.append([])
+                pages.append([])
                 used_height = 0
             band = [section]
-            self.slides[-1].append(band)
-
-        self._position()
+            pages[-1].append(band)
+        return pages
 
     def _position(self) -> None:
-        """Place every section from its slide and band assignment."""
-        top_start = _snap(self.safe["top"] + 92, self.grid)
-        for bands in self.slides:
-            top = top_start
-            for band in bands:
-                x = self.safe["left"]
-                for section in band:
-                    self._place(section, x, top)
-                    x += section.width + self.gap
-                top += max(s.height for s in band) + self.gap
+        """Place every page's sections at the current scale."""
+        for index in range(len(self.slides)):
+            self._position_slide(index)
+
+    def _position_slide(self, index: int) -> None:
+        """Place one page's sections from its band assignment.
+
+        Whatever space the scaling could not take -- because the fill factor is
+        capped, or because one more step would have spilled a band -- is split
+        evenly around the composition rather than left as a margin below and to
+        the right of it. The offset is the same for every band, so sections
+        that lined up with each other still do.
+
+        Args:
+            index: Which page.
+        """
+        bands = self.slides[index]
+        if not bands:
+            return
+        usable_w = self.canvas_w - self.safe["left"] - self.safe["right"]
+        widest = max(
+            sum(s.width for s in band) + self.gap * (len(band) - 1)
+            for band in bands
+        )
+        stacked = sum(
+            max(s.height for s in band) for band in bands
+        ) + self.gap * (len(bands) - 1)
+        dx = _snap(max(0, usable_w - widest) / 2, self.grid, up=False)
+        dy = _snap(
+            max(0, self._available_height() - stacked) / 2, self.grid, up=False
+        )
+        top = self._content_top() + dy
+        for band in bands:
+            x = self.safe["left"] + dx
+            for section in band:
+                self._place(section, x, top)
+                x += section.width + self.gap
+            top += max(s.height for s in band) + self.gap
 
     # --- emission -------------------------------------------------------
 
@@ -658,8 +865,17 @@ class Diagram:
                 self.grid * 2,
                 int(self.t["spacing"]["connector_clearance_min"]) + self.grid,
             )
-            lane = (min(sp[1], tp[1]) - reach if conn["route"] == "over"
-                    else max(sp[1], tp[1]) + reach)
+            # Clear of everything the arc flies over, not just of its two ends.
+            # A row's tallest node usually sits between them -- the attention
+            # block's scaled-dot-product box, say -- and a lane measured from
+            # the endpoints alone cuts straight through it.
+            blocked = self._nodes_under(s, t)
+            if conn["route"] == "over":
+                edge = min([sp[1], tp[1]] + [n.y for n in blocked])
+                lane = edge - reach
+            else:
+                edge = max([sp[1], tp[1]] + [n.bottom for n in blocked])
+                lane = edge + reach
             conn["lane"] = lane
             return [sp, (sp[0], lane), (tp[0], lane), tp]
 
@@ -687,6 +903,7 @@ class Diagram:
         Returns:
             The complete document for that slide.
         """
+        self._apply_slide(index)
         c = self.colors
         stack = self.t["typography"]["family"]["sans"]
         title_role = self.t["typography"]["roles"]["slide_title"]
@@ -714,7 +931,7 @@ class Diagram:
         for note in self.notes:
             out.append(
                 f'  <text x="{note["x"]}" y="{note["y"]}" '
-                f'font-size="{self.caption_role["size"]}" '
+                f'font-size="{self.caption_size}" '
                 f'fill="{c[note["color"]]}">{note["text"]}</text>'
             )
         if self.footnote:
@@ -763,7 +980,7 @@ class Diagram:
         if box.title:
             out.append(
                 f'  <text x="{box.x + 16}" y="{box.y + 26}" '
-                f'font-size="{self.caption_role["size"]}" font-weight="600" '
+                f'font-size="{self.caption_size}" font-weight="600" '
                 f'fill="{c["muted"]}">{box.title}</text>'
             )
         for child in box.children:
@@ -792,8 +1009,8 @@ class Diagram:
                 f'  <g data-pptx-role="group" data-node-id="{n.id}">',
                 f'    <rect x="{n.x}" y="{n.y}" width="{n.width}" '
                 f'height="{n.height}" fill="{c["bg"]}" stroke="none"/>',
-                f'    <text x="{n.mid_x}" y="{n.mid_y + self.label_role["size"] // 2}" '
-                f'text-anchor="middle" font-size="{self.label_role["size"]}" '
+                f'    <text x="{n.mid_x}" y="{n.mid_y + _trim(self.label_size / 2)}" '
+                f'text-anchor="middle" font-size="{self.label_size}" '
                 f'font-weight="700" fill="{c["muted"]}">• • •</text>',
                 "  </g>",
             ]
@@ -802,15 +1019,15 @@ class Diagram:
                 f'  <g data-pptx-role="group" data-node-id="{n.id}">',
                 f'    <circle cx="{n.mid_x}" cy="{n.mid_y}" r="{n.width // 2}" '
                 f'fill="{c["bg"]}" stroke="{c["line"]}" stroke-width="1.5"/>',
-                f'    <text x="{n.mid_x}" y="{n.mid_y + self.label_role["size"] // 2 - 2}" text-anchor="middle" '
-                f'font-size="{self.label_role["size"]}" font-weight="700" fill="{c["line"]}">'
+                f'    <text x="{n.mid_x}" y="{n.mid_y + _trim(self.label_size / 2) - 2}" text-anchor="middle" '
+                f'font-size="{self.label_size}" font-weight="700" fill="{c["line"]}">'
                 f"{n.glyph}</text>",
                 "  </g>",
             ]
 
         kind = KINDS[n.kind]
         surface = self.t["surfaces"]["node"]
-        first = n.y + self.node_pad["y"] + self.label_role["size"]
+        first = n.y + self.node_pad["y"] + self.label_size
         tx = n.x + self.node_pad["x"]
         out = [
             f'  <g data-pptx-role="group" data-node-id="{n.id}">',
@@ -820,7 +1037,7 @@ class Diagram:
         ]
         for i, line in enumerate(n.lines):
             weight = self.label_role["weight"] if i == 0 else 400
-            size = self.label_role["size"] if i == 0 else self.caption_role["size"]
+            size = self.label_size if i == 0 else self.caption_size
             fill = c["body"] if i == 0 else c["muted"]
             out.append(
                 f'    <text x="{tx}" y="{first + i * self.line_step}" '
@@ -829,11 +1046,55 @@ class Diagram:
         if n.shape:
             out.append(
                 f'    <text x="{tx}" y="{first + len(n.lines) * self.line_step + 2}" '
-                f'font-size="{self.caption_role["size"]}" fill="{c["muted"]}">'
+                f'font-size="{self.caption_size}" fill="{c["muted"]}">'
                 f"{n.shape}</text>"
             )
         out.append("  </g>")
         return out
+
+    def _leaf_nodes(self) -> List[Node]:
+        """Every placed node, containers flattened away.
+
+        Returns:
+            The nodes, in declaration order.
+        """
+        found: List[Node] = []
+
+        def walk(item: Item) -> None:
+            if isinstance(item, Node):
+                found.append(item)
+                return
+            for child in item.children:
+                walk(child)
+
+        for section in self.sections:
+            walk(section)
+        return found
+
+    def _nodes_under(self, source: Node, target: Node) -> List[Node]:
+        """Nodes an arc between two ends would pass over or under.
+
+        Only the arc's own section is considered: an arc is a within-section
+        residual or skip path, and a node two sections away is not something it
+        can collide with once the sections are laid out on separate bands.
+
+        Args:
+            source: The arc's source node.
+            target: The arc's target node.
+
+        Returns:
+            The intervening nodes, which may be empty.
+        """
+        section = self._section_of(source)
+        left, right = min(source.x, target.x), max(source.right, target.right)
+        top, bottom = min(source.y, target.y), max(source.bottom, target.bottom)
+        return [
+            n for n in self._leaf_nodes()
+            if n is not source and n is not target
+            and self._section_of(n) == section
+            and n.right > left and n.x < right
+            and n.bottom > top and n.y < bottom
+        ]
 
     def _section_of(self, node: Node) -> str:
         """Return the id of the top-level section a node belongs to.
@@ -899,12 +1160,12 @@ class Diagram:
                     # label at the path's extreme instead put a band-crossing
                     # connector's caption up inside the band above it.
                     my = (conn["lane"] - self.grid if conn["route"] == "over"
-                          else conn["lane"] + self.caption_role["size"])
+                          else conn["lane"] + self.caption_size)
                 else:
-                    my = min(p[1] for p in pts) - self.caption_role["size"]
+                    my = min(p[1] for p in pts) - self.caption_size
                 out.append(
                     f'  <text x="{mx}" y="{my}" text-anchor="middle" '
-                    f'font-size="{self.caption_role["size"]}" '
+                    f'font-size="{self.caption_size}" '
                     f'fill="{c["muted"]}">{conn["label"]}</text>'
                 )
         return out

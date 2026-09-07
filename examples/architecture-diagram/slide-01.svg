@@ -3,53 +3,53 @@
   <rect x="0" y="0" width="1200" height="675" fill="#ffffff"/>
   <text x="48" y="84" font-size="32" font-weight="700" fill="#1e3a5f">Transformer encoder stack  (1 of 2)</text>
   <text x="48" y="114" font-size="16" fill="#64748b">Token stream to pooled representation, with one block opened up</text>
-  <rect x="48" y="128" width="944" height="272" rx="8" fill="none" stroke="#e2e8f0" stroke-width="1.5" stroke-dasharray="8 4"/>
-  <text x="64" y="154" font-size="16" font-weight="600" fill="#64748b">1. Forward path  (encoder stack, N=24)</text>
+  <rect x="48" y="192" width="1096" height="352" rx="8" fill="none" stroke="#e2e8f0" stroke-width="1.5" stroke-dasharray="8 4"/>
+  <text x="64" y="218" font-size="21.2" font-weight="600" fill="#64748b">1. Forward path  (encoder stack, N=24)</text>
   <g data-pptx-role="group" data-node-id="stack-tok">
-    <rect x="72" y="192" width="160" height="72" rx="8" fill="#ffffff" stroke="#64748b" stroke-width="1.5"/>
-    <text x="88" y="222" font-size="18" font-weight="600" fill="#374151">Token ids</text>
-    <text x="88" y="248" font-size="16" fill="#64748b">(B, L)</text>
+    <rect x="80" y="272" width="208" height="96" rx="8" fill="#ffffff" stroke="#64748b" stroke-width="1.5"/>
+    <text x="101.2" y="311.79999999999995" font-size="23.9" font-weight="600" fill="#374151">Token ids</text>
+    <text x="101.2" y="345.79999999999995" font-size="21.2" fill="#64748b">(B, L)</text>
   </g>
   <g data-pptx-role="group" data-node-id="stack-emb">
-    <rect x="256" y="184" width="192" height="96" rx="8" fill="#f8fafc" stroke="#475569" stroke-width="1.5"/>
-    <text x="272" y="214" font-size="18" font-weight="600" fill="#374151">Embedding</text>
-    <text x="272" y="238" font-size="16" font-weight="400" fill="#64748b">vocab 32k, tied</text>
-    <text x="272" y="264" font-size="16" fill="#64748b">(B, L, d)</text>
+    <rect x="320" y="256" width="256" height="128" rx="8" fill="#f8fafc" stroke="#475569" stroke-width="1.5"/>
+    <text x="341.2" y="295.79999999999995" font-size="23.9" font-weight="600" fill="#374151">Embedding</text>
+    <text x="341.2" y="327.79999999999995" font-size="21.2" font-weight="400" fill="#64748b">vocab 32k, tied</text>
+    <text x="341.2" y="361.79999999999995" font-size="21.2" fill="#64748b">(B, L, d)</text>
   </g>
   <g data-pptx-role="group" data-node-id="stack-pos">
-    <rect x="472" y="192" width="224" height="72" rx="8" fill="#f8fafc" stroke="#475569" stroke-width="1.5"/>
-    <text x="488" y="222" font-size="18" font-weight="600" fill="#374151">Rotary position</text>
-    <text x="488" y="248" font-size="16" fill="#64748b">(B, L, d)</text>
+    <rect x="608" y="272" width="296" height="96" rx="8" fill="#f8fafc" stroke="#475569" stroke-width="1.5"/>
+    <text x="629.2" y="311.79999999999995" font-size="23.9" font-weight="600" fill="#374151">Rotary position</text>
+    <text x="629.2" y="345.79999999999995" font-size="21.2" fill="#64748b">(B, L, d)</text>
   </g>
   <g data-pptx-role="group" data-node-id="stack-b1">
-    <rect x="720" y="192" width="136" height="72" rx="8" fill="#f8fafc" stroke="#1e3a5f" stroke-width="1.5"/>
-    <text x="736" y="222" font-size="18" font-weight="600" fill="#374151">Block 1</text>
-    <text x="736" y="248" font-size="16" fill="#64748b">(B, L, d)</text>
+    <rect x="936" y="272" width="176" height="96" rx="8" fill="#f8fafc" stroke="#1e3a5f" stroke-width="1.5"/>
+    <text x="957.2" y="311.79999999999995" font-size="23.9" font-weight="600" fill="#374151">Block 1</text>
+    <text x="957.2" y="345.79999999999995" font-size="21.2" fill="#64748b">(B, L, d)</text>
   </g>
   <g data-pptx-role="group" data-node-id="stack-rep">
-    <rect x="880" y="200" width="88" height="64" fill="#ffffff" stroke="none"/>
-    <text x="924" y="241" text-anchor="middle" font-size="18" font-weight="700" fill="#64748b">• • •</text>
+    <rect x="144" y="424" width="112" height="80" fill="#ffffff" stroke="none"/>
+    <text x="200" y="475.9" text-anchor="middle" font-size="23.9" font-weight="700" fill="#64748b">• • •</text>
   </g>
   <g data-pptx-role="group" data-node-id="stack-bn">
-    <rect x="232" y="304" width="144" height="72" rx="8" fill="#f8fafc" stroke="#475569" stroke-width="1.5"/>
-    <text x="248" y="334" font-size="18" font-weight="600" fill="#374151">Block N</text>
-    <text x="248" y="360" font-size="16" fill="#64748b">(B, L, d)</text>
+    <rect x="288" y="416" width="184" height="96" rx="8" fill="#f8fafc" stroke="#475569" stroke-width="1.5"/>
+    <text x="309.2" y="455.79999999999995" font-size="23.9" font-weight="600" fill="#374151">Block N</text>
+    <text x="309.2" y="489.79999999999995" font-size="21.2" fill="#64748b">(B, L, d)</text>
   </g>
   <g data-pptx-role="group" data-node-id="stack-pool">
-    <rect x="400" y="304" width="168" height="72" rx="8" fill="#f8fafc" stroke="#475569" stroke-width="1.5"/>
-    <text x="416" y="334" font-size="18" font-weight="600" fill="#374151">Mean pool</text>
-    <text x="416" y="360" font-size="16" fill="#64748b">(B, d)</text>
+    <rect x="504" y="416" width="224" height="96" rx="8" fill="#f8fafc" stroke="#475569" stroke-width="1.5"/>
+    <text x="525.2" y="455.79999999999995" font-size="23.9" font-weight="600" fill="#374151">Mean pool</text>
+    <text x="525.2" y="489.79999999999995" font-size="21.2" fill="#64748b">(B, d)</text>
   </g>
   <g data-pptx-role="group" data-node-id="stack-loss">
-    <rect x="592" y="304" width="216" height="72" rx="8" fill="#ffffff" stroke="#b45309" stroke-width="1.5"/>
-    <text x="608" y="334" font-size="18" font-weight="600" fill="#374151">Cross-entropy</text>
-    <text x="608" y="360" font-size="16" fill="#64748b">scalar</text>
+    <rect x="760" y="416" width="280" height="96" rx="8" fill="#ffffff" stroke="#b45309" stroke-width="1.5"/>
+    <text x="781.2" y="455.79999999999995" font-size="23.9" font-weight="600" fill="#374151">Cross-entropy</text>
+    <text x="781.2" y="489.79999999999995" font-size="21.2" fill="#64748b">scalar</text>
   </g>
   <defs><marker id="arrow-line" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/></marker><marker id="arrow-aux" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#b45309"/></marker></defs>
-  <polyline points="232,228 240,228 240,232 256,232" fill="none" stroke="#475569" stroke-width="2" data-from="stack-tok" data-to="stack-emb" marker-end="url(#arrow-line)"/>
-  <polyline points="448,232 456,232 456,228 472,228" fill="none" stroke="#475569" stroke-width="2" data-from="stack-emb" data-to="stack-pos" marker-end="url(#arrow-line)"/>
-  <polyline points="696,228 720,228" fill="none" stroke="#475569" stroke-width="2" data-from="stack-pos" data-to="stack-b1" marker-end="url(#arrow-line)"/>
-  <polyline points="376,340 400,340" fill="none" stroke="#475569" stroke-width="2" data-from="stack-bn" data-to="stack-pool" marker-end="url(#arrow-line)"/>
-  <polyline points="568,340 592,340" fill="none" stroke="#475569" stroke-width="2" data-from="stack-pool" data-to="stack-loss" marker-end="url(#arrow-line)"/>
+  <polyline points="288,320 320,320" fill="none" stroke="#475569" stroke-width="2" data-from="stack-tok" data-to="stack-emb" marker-end="url(#arrow-line)"/>
+  <polyline points="576,320 608,320" fill="none" stroke="#475569" stroke-width="2" data-from="stack-emb" data-to="stack-pos" marker-end="url(#arrow-line)"/>
+  <polyline points="904,320 936,320" fill="none" stroke="#475569" stroke-width="2" data-from="stack-pos" data-to="stack-b1" marker-end="url(#arrow-line)"/>
+  <polyline points="472,464 504,464" fill="none" stroke="#475569" stroke-width="2" data-from="stack-bn" data-to="stack-pool" marker-end="url(#arrow-line)"/>
+  <polyline points="728,464 760,464" fill="none" stroke="#475569" stroke-width="2" data-from="stack-pool" data-to="stack-loss" marker-end="url(#arrow-line)"/>
   <text x="48" y="635" font-size="16" fill="#64748b">Amber: the training-only gradient path. Arcs are residual identities. L sequence length, d model width, H heads.</text>
 </svg>
