@@ -1050,6 +1050,43 @@ python -m svg_to_pptx `
     --out    "$SLIDES_DIR\reports\YYYY-MM-DD_<name>\deck.pptx"
 ```
 
+**Hyperlinks.** Wrap anything clickable in SVG's own `<a href="...">`. A wrapped
+`<text>` links its words (so a citation underlines as a link); any other wrapped
+shape becomes a click target. Only `http`, `https` and `mailto` are exported —
+a deck gets forwarded, so a `file:` or `javascript:` target is dropped while the
+shape itself still exports.
+
+**Embedded audio and video.** Mark the placeholder rect that states the player's
+geometry:
+
+```xml
+<rect x="120" y="80" width="640" height="360"
+      data-pptx-role="media"
+      data-pptx-src="interview.mp4"
+      data-pptx-poster="interview-frame.png"/>
+```
+
+The file is embedded, not linked, so the deck stays one forwardable file — which
+also means a large clip belongs behind an `<a>` instead. Supply
+`data-pptx-poster`: without it PowerPoint shows a grey rectangle that reads as a
+missing image both to a reviewer and to the visual gate. Sources must sit beside
+the slide, same as any other sidecar.
+
+**House template, master and theme.** Pass a `.pptx`/`.potx` and the deck
+inherits its master, layouts, theme and page size:
+
+```bash
+python -m svg_to_pptx --slides <dir> --out deck.pptx --deck-id <id> \
+    --template brand/house.potx --layout Blank
+```
+
+The template's own example slides are dropped, so they cannot open the deck.
+`--layout` defaults to a blank layout, because each slide is painted whole from
+SVG and any placeholder would sit behind the artwork as an empty prompt; naming
+a layout that does not exist fails and lists the ones that do, rather than
+quietly building on the wrong master. Without `--template` the deck carries
+python-pptx's default theme.
+
 **Speaker notes.** `slide_architect_agent` is asked to identify speaker notes
 as one of a slide's content elements; the export carries them. Write them to a
 sibling `<stem>.notes.md` beside the slide (`slide-03.svg` →
