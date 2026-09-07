@@ -38,6 +38,11 @@ class NativeObjectMarkerError(ValueError):
     by _dispatch_children's broad per-child exception guard."""
 
 
+#: Canvas width a declared `font-size` is calibrated against. A wider canvas
+#: scales down from here so the same token set reads the same on both.
+REFERENCE_CANVAS_W = 1200.0
+
+
 @dataclass
 class CoordSystem:
     svg_w: float
@@ -48,6 +53,24 @@ class CoordSystem:
 
     def y(self, v: float) -> int:
         return round(float(v) / self.svg_h * PPTX_H)
+
+    def font_scale(self) -> float:
+        """Factor turning an SVG font-size into the point size to emit.
+
+        A `font-size` is passed through as points, so text on a wider canvas
+        would arrive proportionally too large: 18 units on a 2400-unit figure
+        would render at 18pt, twice the apparent size of the same declaration
+        on a 1200-unit slide.
+
+        Scaling against the 1200-unit reference keeps a given declared size
+        looking the same whatever canvas carries it, and is exactly 1.0 for the
+        1200-unit canvas every existing deck uses -- so nothing already
+        authored changes.
+
+        Returns:
+            The multiplier, 1.0 for a slide-sized canvas.
+        """
+        return REFERENCE_CANVAS_W / self.svg_w if self.svg_w else 1.0
 
     @classmethod
     def from_viewbox(cls, viewbox: str) -> "CoordSystem":

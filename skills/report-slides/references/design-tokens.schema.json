@@ -9,14 +9,18 @@
   "properties": {
     "schema_version": {"const": 1},
     "name": {"type": "string", "minLength": 1},
+    "kind": {
+      "enum": ["slide", "figure"],
+      "description": "What the tokens describe. 'slide' (the default when absent) is read across a room and keeps the 1200x675 canvas. 'figure' is read on a page or a screen at arm's length and may use a larger canvas; the type and spacing floors are unchanged, so the same absolute minimums apply and the extra canvas is what buys density."
+    },
     "description": {"type": "string"},
     "canvas": {
       "type": "object",
       "additionalProperties": false,
       "required": ["width", "height", "safe_area", "grid"],
       "properties": {
-        "width": {"const": 1200},
-        "height": {"const": 675},
+        "width": {"type": "integer", "enum": [1200, 1600, 2000, 2400]},
+        "height": {"type": "integer", "enum": [675, 900, 1125, 1350]},
         "grid": {"type": "integer", "minimum": 4, "maximum": 16},
         "safe_area": {
           "type": "object",
@@ -164,6 +168,41 @@
       }
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "not": {"properties": {"kind": {"const": "figure"}}, "required": ["kind"]}
+      },
+      "then": {
+        "properties": {
+          "canvas": {
+            "properties": {
+              "width": {"const": 1200},
+              "height": {"const": 675}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"kind": {"const": "figure"}}, "required": ["kind"]
+      },
+      "then": {
+        "description": "A figure canvas keeps 16:9 so it drops into a deck unchanged.",
+        "properties": {
+          "canvas": {
+            "oneOf": [
+              {"properties": {"width": {"const": 1200}, "height": {"const": 675}}},
+              {"properties": {"width": {"const": 1600}, "height": {"const": 900}}},
+              {"properties": {"width": {"const": 2000}, "height": {"const": 1125}}},
+              {"properties": {"width": {"const": 2400}, "height": {"const": 1350}}}
+            ]
+          }
+        }
+      }
+    }
+  ],
   "$defs": {
     "hex": {"type": "string", "pattern": "^#[0-9a-fA-F]{6}$"},
     "typeRoleBase": {

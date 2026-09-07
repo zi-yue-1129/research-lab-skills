@@ -214,6 +214,26 @@ def _endpoints(conn: Connector) -> Tuple[Tuple[str, float, float], ...]:
     return (("start", conn.x1, conn.y1), ("end", conn.x2, conn.y2))
 
 
+def _attachment_endpoints(conn: Connector) -> Tuple[Tuple[str, float, float], ...]:
+    """Return only the endpoints that are meant to attach to something.
+
+    A routed connector is parsed into one segment per leg, so an elbow's
+    interior corners arrive as segment endpoints. They touch nothing by
+    construction -- that is what routing around an obstacle means -- and
+    `diagram-patterns.md` explicitly asks for connectors to be routed around
+    unrelated groups. Checking them for attachment made that instruction
+    impossible to follow.
+
+    Args:
+        conn: The connector segment.
+
+    Returns:
+        The subset of `_endpoints` that terminates the whole routed path.
+    """
+    terminal = {"start": conn.terminal_start, "end": conn.terminal_end}
+    return tuple(e for e in _endpoints(conn) if terminal[e[0]])
+
+
 def check_dangling(scene: Scene, tokens: DesignTokens) -> List[Finding]:
     """Report connector endpoints that attach to nothing.
 
@@ -229,7 +249,7 @@ def check_dangling(scene: Scene, tokens: DesignTokens) -> List[Finding]:
     findings: List[Finding] = []
     for conn in scene.connectors:
         declared = {"start": conn.from_node, "end": conn.to_node}
-        for label, px, py in _endpoints(conn):
+        for label, px, py in _attachment_endpoints(conn):
             node = declared[label]
             if node is not None and node not in bounds:
                 findings.append(Finding(
@@ -269,7 +289,7 @@ def check_port_drift(scene: Scene, tokens: DesignTokens) -> List[Finding]:
     findings: List[Finding] = []
     for conn in scene.connectors:
         declared = {"start": conn.from_node, "end": conn.to_node}
-        for label, px, py in _endpoints(conn):
+        for label, px, py in _attachment_endpoints(conn):
             node = declared[label]
             if node is None or node not in bounds:
                 # An absent or unresolvable node is check_dangling's finding.
@@ -293,6 +313,12 @@ def _unrelated_nodes(conn: Connector, bounds: Dict[str, Box]) -> Dict[str, Box]:
     case an undeclared but correctly attached connector would be reported as
     violating the clearance of the very node it terminates on.
 
+    Declarations are read from the whole routed path, not the individual
+    segment. A routed connector is parsed into one segment per leg and only the
+    first and last carry the segment-level ids, so an interior leg would
+    otherwise count its own source and target as unrelated -- and report a
+    clearance violation against the very nodes it runs between.
+
     Args:
         conn: The connector.
         bounds: Node bounding boxes.
@@ -300,7 +326,7 @@ def _unrelated_nodes(conn: Connector, bounds: Dict[str, Box]) -> Dict[str, Box]:
     Returns:
         The subset of `bounds` the connector neither declares nor touches.
     """
-    declared = {conn.from_node, conn.to_node}
+    declared = {conn.from_node, conn.to_node, conn.path_from, conn.path_to}
     unrelated: Dict[str, Box] = {}
     for node_id, box in bounds.items():
         if node_id in declared:

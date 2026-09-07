@@ -6,6 +6,7 @@ __pycache__/
 !tests/fixtures/report-slides-pptx-visual-review/**/*.pptx
 *.png
 !examples/report-slides/visual-authoring/**/*.png
+!examples/architecture-diagram/*.png
 !tests/fixtures/report-slides-pptx-visual-review/**/*.png
 node_modules/
 .worktrees/
