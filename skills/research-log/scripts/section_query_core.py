@@ -181,7 +181,7 @@ def scan_journal(log_dir: Path) -> ScanResult:
         digest.update(b"\0")
         digest.update(content_bytes)
         try:
-            text = content_bytes.decode("utf-8")
+            text = _decode_normalized(content_bytes)
         except UnicodeDecodeError as error:
             raise JournalReadError(
                 "invalid_utf8", path, f"Could not decode {path} as UTF-8."
@@ -190,6 +190,34 @@ def scan_journal(log_dir: Path) -> ScanResult:
         all_sections.extend(sections)
         all_warnings.extend(warnings)
     return ScanResult(tuple(all_sections), tuple(all_warnings), digest.hexdigest())
+
+
+def _decode_normalized(content_bytes: bytes) -> str:
+    """Decode a log's bytes to text with newlines normalized to `\n`.
+
+    The bytes are read raw because the scan digest is computed over them --
+    content identity must not depend on how a platform writes line endings.
+    The *text* used for parsing must, though: a log authored on Windows
+    carries CRLF, and counting those carriage returns inflated `body_chars`,
+    leaked a stray `\r` into every `preview`, and so skewed the fetch-budget
+    decision derived from those counts. Reading the file as text would have
+    normalized them, but would also have cost the exact bytes the digest needs.
+
+    A lone `\r` (classic Mac endings) is folded too, matching Python's own
+    universal-newline behaviour, so a mixed-ending file cannot yield a section
+    body whose length depends on which editor last touched it.
+
+    Args:
+        content_bytes: Raw file contents.
+
+    Returns:
+        The decoded text with `\r\n` and lone `\r` reduced to `\n`.
+
+    Raises:
+        UnicodeDecodeError: If the bytes are not valid UTF-8.
+    """
+    text = content_bytes.decode("utf-8")
+    return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
 def discover_types(scan: ScanResult) -> tuple[TypeSummary, ...]:

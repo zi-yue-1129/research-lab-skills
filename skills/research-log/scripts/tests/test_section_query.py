@@ -283,6 +283,14 @@ def test_invalid_utf8_returns_json_error(tmp_path: Path) -> None:
     }
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason=(
+        "makes a file unreadable with chmod(0); on Windows that only sets the "
+        "read-only attribute and leaves the file readable, so the source-read "
+        "failure this asserts on cannot be provoked"
+    ),
+)
 def test_source_read_failure_returns_json_error(tmp_path: Path) -> None:
     """Translate source read failures without a traceback or stderr output."""
     log_dir = tmp_path / "research_log"

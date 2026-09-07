@@ -1,0 +1,63 @@
+# Line-ending policy.
+#
+# Without this file, what lands in a working tree depends on each contributor's
+# `core.autocrlf`: the same commit checks out as LF for one person and CRLF for
+# another, so tooling, diffs and editor behaviour differ per machine for no
+# reason visible in the repository. Declaring the policy here makes checkout
+# deterministic regardless of local git configuration.
+#
+# It also closes a real hazard rather than a hypothetical one: nothing today
+# prevents a CRLF file being *committed*, and a shell script or hook stored with
+# CRLF fails on Linux CI while looking fine to whoever added it. The index is
+# currently all-LF (verified with `git ls-files --eol`); this keeps it that way.
+#
+# Note what this does not do. The CRLF that appears in test fixtures comes from
+# `Path.write_text`, which translates newlines to the host's convention at write
+# time -- those files are created by Python during a run, never checked out, so
+# no attribute here affects them. That is fixed in the code that reads them.
+
+# Normalize every text file on commit and check it out with LF. Git detects
+# which files are text; the explicit rules below override it where detection
+# would be wrong or where a platform genuinely wants CRLF.
+* text=auto eol=lf
+
+# Formats whose tooling assumes LF, stated explicitly so detection cannot
+# change its mind about an unusual file.
+*.jq      text eol=lf
+*.json    text eol=lf
+*.jsonl   text eol=lf
+*.md      text eol=lf
+*.py      text eol=lf
+*.sh      text eol=lf
+*.svg     text eol=lf
+*.tex     text eol=lf
+*.toml    text eol=lf
+*.txt     text eol=lf
+*.yaml    text eol=lf
+*.yml     text eol=lf
+*.js      text eol=lf
+*.html    text eol=lf
+
+# Windows shells. PowerShell reads LF fine, but a `.ps1` is edited far more
+# often in Windows editors than anywhere else, and cmd's batch interpreter
+# requires CRLF outright -- keeping both as CRLF avoids a class of surprise
+# that has no upside.
+*.ps1     text eol=crlf
+*.bat     text eol=crlf
+*.cmd     text eol=crlf
+
+# Binary. Normalizing any of these would corrupt them.
+*.pdf     binary
+*.png     binary
+*.pptx    binary
+*.docx    binary
+*.xlsx    binary
+*.jpg     binary
+*.jpeg    binary
+*.gif     binary
+*.ico     binary
+*.woff    binary
+*.woff2   binary
+*.ttf     binary
+*.otf     binary
+*.zip     binary
