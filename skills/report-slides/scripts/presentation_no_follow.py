@@ -9,7 +9,6 @@ operation so later pathname swaps cannot redirect leaf access.
 from __future__ import annotations
 
 import errno
-import fcntl
 import os
 import stat
 import time
@@ -17,6 +16,8 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+
+import presentation_file_lock
 
 
 class NoFollowPathError(RuntimeError):
@@ -119,7 +120,7 @@ def temporary_path(path: Path) -> Path:
 
 def release_sidecar(descriptor: int) -> None:
     """Release and close one locked sidecar descriptor."""
-    fcntl.flock(descriptor, fcntl.LOCK_UN)
+    presentation_file_lock.release(descriptor)
     os.close(descriptor)
 
 
@@ -433,7 +434,7 @@ def acquire_sidecar(anchored: AnchoredPath, timeout_seconds: int) -> int:
         deadline = time.monotonic() + timeout_seconds
         while True:
             try:
-                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                presentation_file_lock.acquire_exclusive(descriptor)
                 return descriptor
             except OSError as exc:
                 if exc.errno not in (errno.EACCES, errno.EAGAIN):

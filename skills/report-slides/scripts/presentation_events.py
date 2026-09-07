@@ -10,7 +10,6 @@ the offending shard instead of silently dropping history.
 from __future__ import annotations
 
 import errno
-import fcntl
 import json
 import os
 import re
@@ -19,6 +18,8 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+
+import presentation_file_lock
 from typing import AbstractSet, Any, Iterator, Sequence
 
 import yaml
@@ -100,7 +101,7 @@ def _locked_file(project_root: Path, path: Path) -> Iterator[None]:
             deadline = time.monotonic() + LOCK_TIMEOUT_SECONDS
             while True:
                 try:
-                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    presentation_file_lock.acquire_exclusive(descriptor)
                     break
                 except OSError as exc:
                     if exc.errno not in (errno.EACCES, errno.EAGAIN):
@@ -115,7 +116,7 @@ def _locked_file(project_root: Path, path: Path) -> Iterator[None]:
             _ensure_research_gitignore(project_root)
             yield
         finally:
-            fcntl.flock(descriptor, fcntl.LOCK_UN)
+            presentation_file_lock.release(descriptor)
             os.close(descriptor)
 
 

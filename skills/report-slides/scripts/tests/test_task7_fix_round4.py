@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import fcntl
 import os
 import threading
 from pathlib import Path
 from typing import Any
 
 import pytest
+
+import presentation_file_lock
 import yaml
 
 from presentation_events import events_shard_path, load_events
@@ -83,10 +84,10 @@ def test_failed_new_plan_keeps_one_sidecar_inode_for_a_blocked_waiter(
             try:
                 waiter_inode.append(os.fstat(descriptor).st_ino)
                 waiter_opened.set()
-                fcntl.flock(descriptor, fcntl.LOCK_EX)
+                presentation_file_lock.acquire_exclusive(descriptor)
                 waiter_acquired.set()
                 release_waiter.wait(5)
-                fcntl.flock(descriptor, fcntl.LOCK_UN)
+                presentation_file_lock.release(descriptor)
             finally:
                 os.close(descriptor)
 

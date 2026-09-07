@@ -11,7 +11,6 @@ remain held, so unrelated low-level writers cannot be lost during rollback.
 from __future__ import annotations
 import base64
 import errno
-import fcntl
 import json
 import os
 import re
@@ -21,6 +20,8 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
+
+import presentation_file_lock
 from typing import Any, Iterator, Mapping, Sequence
 
 import yaml
@@ -154,7 +155,7 @@ def _acquire_sidecar(path: Path) -> int:
     try:
         while True:
             try:
-                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                presentation_file_lock.acquire_exclusive(descriptor)
                 return descriptor
             except OSError as exc:
                 if exc.errno not in (errno.EACCES, errno.EAGAIN):

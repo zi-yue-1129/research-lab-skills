@@ -571,18 +571,22 @@ def test_state_write_rechecks_journal_after_lock_acquisition(
     sidecar.touch()
     before = target.read_bytes()
     deck_id = next(iter(load_decks(project)))
-    original_flock = presentation_state.fcntl.flock
+    original_acquire = presentation_state.presentation_file_lock.acquire_exclusive
     injected = False
 
-    def flock_with_pending_journal(descriptor: int, operation: int) -> None:
-        """Publish a valid journal immediately before the first exclusive flock."""
+    def acquire_with_pending_journal(descriptor: int) -> None:
+        """Publish a valid journal immediately before the first lock acquisition."""
         nonlocal injected
-        if operation & presentation_state.fcntl.LOCK_EX and not injected:
+        if not injected:
             _write_journal(project, [_journal_entry(".research/presentations/state/decks.yaml")])
             injected = True
-        original_flock(descriptor, operation)
+        original_acquire(descriptor)
 
-    monkeypatch.setattr(presentation_state.fcntl, "flock", flock_with_pending_journal)
+    monkeypatch.setattr(
+        presentation_state.presentation_file_lock,
+        "acquire_exclusive",
+        acquire_with_pending_journal,
+    )
     with pytest.raises(TransactionRecoveryRequiredError, match="recovery required"):
         set_deck_status(project, deck_id, "content_review")
 
@@ -596,18 +600,22 @@ def test_event_append_rechecks_journal_after_lock_acquisition(
     """A journal appearing during lock acquisition blocks event mutation."""
     project, target, sidecar = _prepare_event_write_target(tmp_path)
     sidecar.touch()
-    original_flock = presentation_events.fcntl.flock
+    original_acquire = presentation_events.presentation_file_lock.acquire_exclusive
     injected = False
 
-    def flock_with_pending_journal(descriptor: int, operation: int) -> None:
-        """Publish a valid journal immediately before the first exclusive flock."""
+    def acquire_with_pending_journal(descriptor: int) -> None:
+        """Publish a valid journal immediately before the first lock acquisition."""
         nonlocal injected
-        if operation & presentation_events.fcntl.LOCK_EX and not injected:
+        if not injected:
             _write_journal(project, [_journal_entry(".research/presentations/events/" + target.name)])
             injected = True
-        original_flock(descriptor, operation)
+        original_acquire(descriptor)
 
-    monkeypatch.setattr(presentation_events.fcntl, "flock", flock_with_pending_journal)
+    monkeypatch.setattr(
+        presentation_events.presentation_file_lock,
+        "acquire_exclusive",
+        acquire_with_pending_journal,
+    )
     with pytest.raises(TransactionRecoveryRequiredError, match="recovery required"):
         append_event(project, {"event": "guarded", "id": "guarded"})
 
