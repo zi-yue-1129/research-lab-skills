@@ -63,11 +63,6 @@ _PPTX_TEXT_INSET = 18
 #: between these metrics and PowerPoint's own layout of the same string.
 _RENDER_SAFETY = 1.04
 
-#: Ellipsis width as a multiple of the label size, so it tracks the token
-#: scale. An operator's diameter is not a free multiple -- it is derived from
-#: the padding its glyph needs, since a circle holding text is a node like any
-#: other and `node-padding` is measured on it.
-_ELLIPSIS_SCALE = 3.0
 
 
 def _snap(value: float, grid: int, *, up: bool = True) -> int:
@@ -157,13 +152,16 @@ class Container:
         children: Nodes and nested containers, in flow order.
         band: Which horizontal strip of the slide this sits in. Meaningful only
             on a top-level section.
+        rows: How the children were wrapped at measurement time, so placement
+            follows the same breaks rather than recomputing them.
     """
 
     id: str
     title: str
     flow: str = "column"
     children: List[Union[Node, "Container"]] = field(default_factory=list)
-    band: int = 0
+    band: Optional[int] = None
+    rows: List[List[Union[Node, "Container"]]] = field(default_factory=list)
     x: int = 0
     y: int = 0
     width: int = 0
@@ -226,8 +224,9 @@ class Diagram:
             + self.grid,
             self.grid,
         )
-        self.ellipsis_w = _snap(self.label_role["size"] * _ELLIPSIS_SCALE, self.grid)
         self.sections: List[Container] = []
+        #: Sections grouped by slide, then by band, filled during layout.
+        self.slides: List[List[List[Container]]] = []
         self.connections: List[Dict[str, Any]] = []
         self.notes: List[Dict[str, Any]] = []
 
@@ -254,16 +253,18 @@ class Diagram:
     # --- authoring ------------------------------------------------------
 
     def section(
-        self, ident: str, title: str, *, band: int = 0, flow: str = "column"
+        self, ident: str, title: str, *, band: Optional[int] = None,
+        flow: str = "column"
     ) -> Container:
         """Add a top-level titled container.
 
         Args:
             ident: Stable identifier.
             title: Caption.
-            band: Horizontal strip of the slide. Sections sharing a band are
-                laid left to right; bands stack top to bottom, which is how a
-                wide sequence gets its own full-width row beneath the columns.
+            band: Horizontal strip to pin this section to. Leave it None -- the
+                usual case -- and sections fill bands automatically in
+                declaration order, so the author states what the figure
+                contains and not where it packs.
             flow: `column` or `row`.
 
         Returns:
@@ -411,15 +412,21 @@ class Diagram:
         """
         return fonts.text_width(text, self.family, role["size"], role["weight"])
 
-    def _measure(self, item: Item) -> Tuple[int, int]:
-        """Compute an item's intrinsic size, recursing into containers.
+    def _measure(self, item: Item, max_width: Optional[int] = None) -> Tuple[int, int]:
+        """Compute an item's size, wrapping a row that will not fit.
 
-        Sizes are derived bottom-up: a node from its text, a container from the
-        children it holds. Nothing is guessed at any level, which is what keeps
-        a deeply nested composition from drifting.
+        Sizes are derived bottom-up: a node from its text, a container from its
+        children. Nothing is guessed at any level.
+
+        A row wider than the space it has is **wrapped into several rows**
+        rather than reported as an error. Composing this by hand meant a dozen
+        rounds of "48 units too wide" followed by trimming a label, which is
+        work the tool can do and the author should not have to: the author is
+        describing an architecture, not packing boxes.
 
         Args:
             item: A node or container.
+            max_width: Width available to it, or None for unconstrained.
 
         Returns:
             Its `(width, height)`.
@@ -427,17 +434,56 @@ class Diagram:
         if isinstance(item, Node):
             return self._measure_node(item)
 
-        sizes = [self._measure(child) for child in item.children]
         title_room = 32 if item.title else 0
+        inner_limit = None if max_width is None else max_width - self.gap * 2
+        sizes = [self._measure(child, inner_limit) for child in item.children]
+
         if item.flow == "row":
-            inner_w = sum(w for w, _ in sizes) + self.gap * (len(sizes) - 1)
-            inner_h = max(h for _, h in sizes)
+            item.rows = self._wrap(item.children, sizes, inner_limit)
+            widths = [
+                sum(c.width for c in row) + self.gap * (len(row) - 1)
+                for row in item.rows
+            ]
+            heights = [max(c.height for c in row) for row in item.rows]
+            inner_w = max(widths)
+            inner_h = sum(heights) + self.gap * (len(heights) - 1)
         else:
+            item.rows = [[child] for child in item.children]
             inner_w = max(w for w, _ in sizes)
             inner_h = sum(h for _, h in sizes) + self.gap * (len(sizes) - 1)
+
         item.width = _snap(inner_w + self.gap * 2, self.grid)
         item.height = _snap(inner_h + self.gap * 2 + title_room, self.grid)
         return item.width, item.height
+
+    def _wrap(
+        self, children: Sequence[Item], sizes: Sequence[Tuple[int, int]],
+        limit: Optional[int],
+    ) -> List[List[Item]]:
+        """Break a row into as many rows as its width demands.
+
+        Args:
+            children: The row's children, in flow order.
+            sizes: Their measured sizes, positionally matched.
+            limit: Width available, or None to keep one row.
+
+        Returns:
+            The children grouped into rows, order preserved so the reading
+            sequence survives the wrap.
+        """
+        if limit is None:
+            return [list(children)]
+        rows: List[List[Item]] = [[]]
+        used = 0
+        for child, (width, _) in zip(children, sizes):
+            addition = width if not rows[-1] else width + self.gap
+            if rows[-1] and used + addition > limit:
+                rows.append([child])
+                used = width
+            else:
+                rows[-1].append(child)
+                used += addition
+        return rows
 
     def _measure_node(self, node: Node) -> Tuple[int, int]:
         """Size one node from the text it must hold.
@@ -452,7 +498,15 @@ class Diagram:
             node.width = node.height = self.op_size
             return node.width, node.height
         if node.role == "ellipsis":
-            node.width, node.height = self.ellipsis_w, self.op_size
+            # Sized from its glyph plus the token insets, for the same reason an
+            # operator circle is: it is a shape holding text, so `node-padding`
+            # is measured on it.
+            glyph = self._text_width("• • •", self.label_role)
+            node.width = _snap(
+                glyph * self.render_scale + 2 * self.node_pad["x"] + _PPTX_TEXT_INSET,
+                self.grid,
+            )
+            node.height = self.op_size
             return node.width, node.height
 
         label_widths = [self._text_width(node.lines[0], self.label_role)] if node.lines else [0.0]
@@ -475,11 +529,11 @@ class Diagram:
     # --- placement ------------------------------------------------------
 
     def _place(self, item: Item, x: int, y: int) -> None:
-        """Assign absolute positions, recursing into containers.
+        """Assign absolute positions, following the wrap chosen at measurement.
 
-        Children are centred on the container's cross axis, so a row of blocks
-        of differing heights shares one centre line rather than sitting on a
-        ragged top edge.
+        Children are centred on the cross axis of the row they landed in, so a
+        row of differing heights shares one centre line rather than sitting on
+        a ragged top edge.
 
         Args:
             item: The node or container to place.
@@ -491,53 +545,88 @@ class Diagram:
             return
 
         title_room = 32 if item.title else 0
-        cx = x + self.gap
         cy = y + self.gap + title_room
         span_w = item.width - self.gap * 2
-        span_h = item.height - self.gap * 2 - title_room
 
-        for child in item.children:
-            if item.flow == "row":
-                offset = max(0, _snap((span_h - child.height) / 2, self.grid, up=False))
+        for row in item.rows:
+            row_h = max(child.height for child in row)
+            row_w = sum(child.width for child in row) + self.gap * (len(row) - 1)
+            cx = x + self.gap + max(0, _snap((span_w - row_w) / 2, self.grid, up=False))
+            for child in row:
+                offset = max(0, _snap((row_h - child.height) / 2, self.grid, up=False))
                 self._place(child, cx, cy + offset)
                 cx += child.width + self.gap
-            else:
-                offset = max(0, _snap((span_w - child.width) / 2, self.grid, up=False))
-                self._place(child, cx + offset, cy)
-                cy += child.height + self.gap
+            cy += row_h + self.gap
 
     def layout(self) -> None:
-        """Measure and place every section, snapped to the grid.
+        """Measure every section and assign each to a slide and a band.
+
+        A section is measured against the usable width, so an over-long row
+        wraps rather than overflowing. Sections then fill bands greedily in
+        declaration order, and **bands that no longer fit the canvas continue
+        onto the next slide** -- because this is a deck generator, and an
+        architecture too detailed for one page is a normal outcome for real
+        research rather than an error to hand back.
+
+        An explicit `band` still pins a section to a band on the first slide,
+        for the cases where the author does want to control the packing.
 
         Raises:
-            ValueError: If the composition cannot fit the safe area, naming the
-                overshoot in units rather than silently running off the slide.
+            ValueError: Only when a single section is itself taller than a whole
+                canvas, which no packing or paging can recover.
         """
+        usable = self.canvas_w - self.safe["left"] - self.safe["right"]
         for section in self.sections:
-            self._measure(section)
+            self._measure(section, usable)
 
-        top = _snap(self.safe["top"] + 92, self.grid)
-        for band in sorted({s.band for s in self.sections}):
-            row = [s for s in self.sections if s.band == band]
-            x = self.safe["left"]
-            for section in row:
-                self._place(section, x, top)
-                x += section.width + self.gap
-            widest = x - self.gap
-            if widest > self.canvas_w - self.safe["right"]:
+        content_top = _snap(self.safe["top"] + 92, self.grid)
+        content_bottom = self.canvas_h - self.safe["bottom"] - (
+            24 if self.footnote else 0
+        )
+        available = content_bottom - content_top
+
+        for section in self.sections:
+            if section.height > available:
                 raise ValueError(
-                    f"band {band} is {widest - (self.canvas_w - self.safe['right'])} "
-                    "units wider than the safe area; use fewer sections, shorter "
-                    "labels, or move a section to another band"
+                    f"section {section.id!r} is {section.height - available} units "
+                    "taller than a whole canvas on its own; shorten its labels or "
+                    "split it into two sections"
                 )
-            top += max(s.height for s in row) + self.gap
 
-        limit = self.canvas_h - self.safe["bottom"] - (24 if self.footnote else 0)
-        if top - self.gap > limit:
-            raise ValueError(
-                f"the bands are {top - self.gap - limit} units taller than the "
-                "safe area; use fewer bands or fewer rows per section"
-            )
+        self.slides = [[]]
+        band: List[Container] = []
+        used_height = 0
+        for section in sorted(
+            self.sections, key=lambda s: (s.band is None, s.band or 0)
+        ):
+            row_w = sum(s.width for s in band) + self.gap * len(band)
+            fits_band = band and row_w + section.width <= usable
+            if fits_band:
+                band.append(section)
+                continue
+            # Close the current band and start a new one, paging when the slide
+            # has no room left for it.
+            if band:
+                used_height += max(s.height for s in band) + self.gap
+            if used_height + section.height > available:
+                self.slides.append([])
+                used_height = 0
+            band = [section]
+            self.slides[-1].append(band)
+
+        self._position()
+
+    def _position(self) -> None:
+        """Place every section from its slide and band assignment."""
+        top_start = _snap(self.safe["top"] + 92, self.grid)
+        for bands in self.slides:
+            top = top_start
+            for band in bands:
+                x = self.safe["left"]
+                for section in band:
+                    self._place(section, x, top)
+                    x += section.width + self.gap
+                top += max(s.height for s in band) + self.gap
 
     # --- emission -------------------------------------------------------
 
@@ -555,7 +644,14 @@ class Diagram:
         if conn["route"] in ("over", "under"):
             side = "top" if conn["route"] == "over" else "bottom"
             sp, tp = s.port(side), t.port(side)
-            reach = self.gap + self.grid * 2
+            # Just clear of the nodes, not clear of everything: a taller lane
+            # bought nothing and cost enough height to split the figure across
+            # an extra slide. `connector_clearance_min` is the floor it has to
+            # beat, and a container's title sits above this.
+            reach = max(
+                self.grid * 2,
+                int(self.t["spacing"]["connector_clearance_min"]) + self.grid,
+            )
             lane = (min(sp[1], tp[1]) - reach if conn["route"] == "over"
                     else max(sp[1], tp[1]) + reach)
             conn["lane"] = lane
@@ -575,13 +671,16 @@ class Diagram:
         mid = _snap((sp[1] + tp[1]) / 2, self.grid, up=False)
         return [sp, (sp[0], mid), (tp[0], mid), tp]
 
-    def to_svg(self) -> str:
-        """Render the composed diagram as SVG.
+    def to_svg(self, index: int = 0) -> str:
+        """Render one slide of the composed diagram as SVG.
+
+        Args:
+            index: Which slide, zero-based. Call `layout` first, or use
+                `write`, which handles paging for you.
 
         Returns:
-            The complete document.
+            The complete document for that slide.
         """
-        self.layout()
         c = self.colors
         stack = self.t["typography"]["family"]["sans"]
         title_role = self.t["typography"]["roles"]["slide_title"]
@@ -593,7 +692,7 @@ class Diagram:
             f'fill="{c["bg"]}"/>',
             f'  <text x="{self.safe["left"]}" y="{self.safe["top"] + 48}" '
             f'font-size="{title_role["size"]}" font-weight="{title_role["weight"]}" '
-            f'fill="{c["primary"]}">{self.title}</text>',
+            f'fill="{c["primary"]}">{self._slide_title(index)}</text>',
         ]
         if self.subtitle:
             out.append(
@@ -601,9 +700,11 @@ class Diagram:
                 f'font-size="{self.caption_role["size"]}" fill="{c["muted"]}">'
                 f"{self.subtitle}</text>"
             )
-        for section in self.sections:
-            out.extend(self._container_svg(section, depth=0))
-        out.extend(self._connectors_svg())
+        on_slide = {s.id for band in self.slides[index] for s in band}
+        for band in self.slides[index]:
+            for section in band:
+                out.extend(self._container_svg(section, depth=0))
+        out.extend(self._connectors_svg(on_slide))
         for note in self.notes:
             out.append(
                 f'  <text x="{note["x"]}" y="{note["y"]}" '
@@ -619,6 +720,19 @@ class Diagram:
             )
         out.append("</svg>")
         return "\n".join(out) + "\n"
+
+    def _slide_title(self, index: int) -> str:
+        """Title for one slide, numbered only when the figure needed paging.
+
+        Args:
+            index: Zero-based slide index.
+
+        Returns:
+            The title, suffixed with "(2 of 3)" and so on when relevant.
+        """
+        if len(self.slides) == 1:
+            return self.title
+        return f"{self.title}  ({index + 1} of {len(self.slides)})"
 
     def _container_svg(self, box: Container, *, depth: int) -> List[str]:
         """Emit a container and everything inside it.
@@ -664,10 +778,18 @@ class Diagram:
         """
         c = self.colors
         if n.role == "ellipsis":
+            # The glyph needs a shape of its own. A bare `<text>` inside a
+            # section was adopted by that section's boundary rect on export and
+            # arrived as a second line of its title -- present in the file,
+            # invisible where it belonged.
             return [
-                f'  <text x="{n.mid_x}" y="{n.mid_y + self.label_role["size"] // 2}" text-anchor="middle" '
-                f'font-size="{self.label_role["size"]}" font-weight="700" fill="{c["muted"]}">'
-                "• • •</text>"
+                f'  <g data-pptx-role="group" data-node-id="{n.id}">',
+                f'    <rect x="{n.x}" y="{n.y}" width="{n.width}" '
+                f'height="{n.height}" fill="{c["bg"]}" stroke="none"/>',
+                f'    <text x="{n.mid_x}" y="{n.mid_y + self.label_role["size"] // 2}" '
+                f'text-anchor="middle" font-size="{self.label_role["size"]}" '
+                f'font-weight="700" fill="{c["muted"]}">• • •</text>',
+                "  </g>",
             ]
         if n.role == "operator":
             return [
@@ -707,8 +829,27 @@ class Diagram:
         out.append("  </g>")
         return out
 
-    def _connectors_svg(self) -> List[str]:
-        """Emit every connector plus the shared arrowhead markers.
+    def _section_of(self, node: Node) -> str:
+        """Return the id of the top-level section a node belongs to.
+
+        Args:
+            node: Any placed node.
+
+        Returns:
+            The section id, taken from the node id's first segment.
+        """
+        return node.id.split("-", 1)[0]
+
+    def _connectors_svg(self, on_slide: Optional[set] = None) -> List[str]:
+        """Emit the connectors whose two ends share this slide.
+
+        A connector spanning a page break is omitted rather than drawn to a
+        node that is not there. `spanning_connections` lists them, so the
+        author can caption the join instead of silently losing it.
+
+        Args:
+            on_slide: Section ids present on the slide being rendered, or None
+                to draw everything.
 
         Returns:
             SVG lines.
@@ -726,6 +867,10 @@ class Diagram:
         )
         out = [f"  <defs>{markers}</defs>"]
         for conn in self.connections:
+            if on_slide is not None and not {
+                self._section_of(conn["source"]), self._section_of(conn["target"])
+            } <= on_slide:
+                continue
             pts = self._route(conn)
             stroke = c["warn"] if conn["kind"] == "aux" else c["line"]
             dash = dashes.get(conn["style"], "")
@@ -758,15 +903,46 @@ class Diagram:
                 )
         return out
 
-    def write(self, path: Path) -> Path:
-        """Write the diagram to disk.
-
-        Args:
-            path: Destination `.svg`.
+    def spanning_connections(self) -> List[Tuple[str, str]]:
+        """Connections whose ends landed on different slides.
 
         Returns:
-            The path written.
+            `(source id, target id)` pairs that could not be drawn, so a caller
+            can caption them rather than lose them silently.
         """
+        where = {
+            section.id: index
+            for index, bands in enumerate(self.slides)
+            for band in bands
+            for section in band
+        }
+        spanning = []
+        for conn in self.connections:
+            a = where.get(self._section_of(conn["source"]))
+            b = where.get(self._section_of(conn["target"]))
+            if a is not None and b is not None and a != b:
+                spanning.append((conn["source"].id, conn["target"].id))
+        return spanning
+
+    def write(self, path: Path) -> List[Path]:
+        """Write the diagram, paging onto extra slides when it does not fit.
+
+        Args:
+            path: Destination for the first slide. Later slides take the same
+                stem with an incrementing number, matching the `slide*.svg`
+                names the converter looks for.
+
+        Returns:
+            Every path written, in order.
+        """
+        self.layout()
         path = Path(path)
-        path.write_text(self.to_svg(), encoding="utf-8")
-        return path
+        written = []
+        for index in range(len(self.slides)):
+            target = (
+                path if index == 0
+                else path.with_name(f"slide-{index + 1:02d}{path.suffix}")
+            )
+            target.write_text(self.to_svg(index), encoding="utf-8")
+            written.append(target)
+        return written

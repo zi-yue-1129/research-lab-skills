@@ -2,7 +2,8 @@
 
 這個目錄展示 `report-slides` 技能的 `diagram_builder`：用**資料**描述一張技術架構圖，尺寸與座標由工具從實際文字量測推導，再由兩道閘門驗證。
 
-![Transformer encoder stack](preview-01.png)
+![第一張](preview-01.png)
+![第二張](preview-02.png)
 
 ## 自己跑一次
 
@@ -27,7 +28,7 @@ d.connect(ln1, add1, route="over")     # 殘差 identity，繞過它跨越的區
 - **框的寬度由標籤的實測寬度決定**，所以框不可能容不下標籤
 - 位置對齊 token 的格線，顏色只能來自 `color.roles`
 - 連接線綁在節點的**連接埠**上，所以懸空的線畫不出來
-- 放不下時工具會**報錯並說出超出幾個單位**，而不是默默畫出畫布
+- **放不下時工具會自己解決**：一列太長就自動換行、一個帶塞滿就自動開下一個帶、一張投影片放不下就**自動排到下一張**
 
 ## 這張圖示範了什麼
 
@@ -73,8 +74,29 @@ python3 -c "from svg_to_pptx.converter import convert_file; \
 
 每個節點會變成一個原生圓角矩形、標籤內嵌——在 PowerPoint 裡雙擊即可改字，拖曳時標籤跟著走。
 
+## 你自己的架構，多複雜都可以描述
+
+這是重點：**你不需要先把版面算好**。描述你的模型，工具負責排。
+
+上面這張示範圖第一次寫出來時，一張投影片放不下——工具沒有把問題丟回來，而是自動排成兩張，並回報那條跨頁無法繪製的連線：
+
+```
+wrote examples/architecture-diagram/slide-01.svg
+wrote examples/architecture-diagram/slide-02.svg
+note: stack-loss -> attn-g-sdp spans a page break and was not drawn
+```
+
+只有當**單一區段本身就超過一整張畫布**時它才會停下來，而且會說清楚該怎麼辦：
+
+```
+ValueError: section 'blk' is 49 units taller than a whole canvas on its own;
+shorten its labels or split it into two sections
+```
+
+那次的處理方式就寫在 `build_diagram.py` 裡：照它說的把一個區段拆成兩個，分頁隨即自然解決。
+
 ## 密度的上限
 
-這張圖用的是預設 token 集，它為**投影片**校準：`node_label` 18、`caption` 16，都已經在 schema 的下限；畫布固定在 1200×675。論文裡那種整頁、更密的架構圖需要更小的字級或更大的畫布，兩者目前都被 schema 擋住（`design-tokens.schema.json` 的 `typeRole18` 與 `canvas.width: const 1200`）。
+預設 token 集為**投影片**校準：`node_label` 18、`caption` 16，都已經在 schema 的下限；畫布固定在 1200×675。所以單一畫布能承載的量有天花板——超過的部分會分頁，而不是縮小到看不清楚。
 
-換句話說，密度的天花板是這個技能刻意的設計選擇，不是 `diagram_builder` 的限制。要突破就得改 schema，那是另一個決定。
+如果你要的是論文裡那種整頁、不分頁的高密度圖，需要更小的字級或更大的畫布，兩者目前都被 `design-tokens.schema.json` 擋住（`typeRole18`、`canvas.width: const 1200`）。那是這個技能刻意的設計選擇，不是 `diagram_builder` 的限制。

@@ -71,34 +71,39 @@ def compose() -> Diagram:
 
     # Band 0 -- the pipeline, read left to right.
     stack = d.section("stack", "1. Forward path  (encoder stack, N=24)",
-                      band=0, flow="row")
-    emb = d.node(stack, "emb", ["Embedding"], shape="(B,L) to (B,L,d)",
-                 kind="data")
-    b1 = d.node(stack, "b1", ["Block 1"], shape="(B,L,d)", kind="accent")
+                      flow="row")
+    tok = d.node(stack, "tok", ["Token ids"], shape="(B, L)", kind="data")
+    emb = d.node(stack, "emb", ["Embedding", "vocab 32k, tied"], shape="(B, L, d)")
+    pos = d.node(stack, "pos", ["Rotary position"], shape="(B, L, d)")
+    b1 = d.node(stack, "b1", ["Block 1"], shape="(B, L, d)", kind="accent")
     d.ellipsis(stack, "rep")
-    bn = d.node(stack, "bn", ["Block N"], shape="(B,L,d)")
+    bn = d.node(stack, "bn", ["Block N"], shape="(B, L, d)")
 
     pool = d.node(stack, "pool", ["Mean pool"], shape="(B, d)")
     loss = d.node(stack, "loss", ["Cross-entropy"], shape="scalar", kind="aux")
 
     # Band 1 -- one block opened up. Nested groups are what let a figure show
     # internals without becoming a second figure.
-    detail = d.section("blk", "2. Inside one block  (pre-norm residual)", band=1,
-                       flow="row")
-
-    attn = d.group(detail, "attn", "Self-attention", flow="row")
-    ln1 = d.node(attn, "ln1", ["LayerNorm"], shape="(B,L,d)")
-    sdp = d.node(attn, "sdp", ["Attention", "H heads"],
-                 shape="(B,H,L,L)", kind="accent")
+    # The builder refused one section holding both sub-blocks -- taller than a
+    # canvas on its own -- and said to split it. Two sections is the fix, and
+    # paging then places them wherever they fit.
+    attn_sec = d.section("attn", "2. Self-attention  (pre-norm residual)",
+                         flow="row")
+    attn = d.group(attn_sec, "g", "", flow="row")
+    ln1 = d.node(attn, "ln1", ["LayerNorm"], shape="(B, L, d)")
+    sdp = d.node(attn, "sdp", ["Scaled dot-product", "H heads, causal mask"],
+                 shape="(B, H, L, L)", kind="accent")
     add1 = d.op(attn, "add1", "+")
 
-    ffn = d.group(detail, "ffn", "Feed-forward", flow="row")
-    ln2 = d.node(ffn, "ln2", ["LayerNorm"], shape="(B,L,d)")
-    up = d.node(ffn, "up", ["Linear 4d"], shape="(B,L,4d)")
+    ffn_sec = d.section("ffn", "3. Feed-forward  (pre-norm residual)", flow="row")
+    ffn = d.group(ffn_sec, "g", "", flow="row")
+    ln2 = d.node(ffn, "ln2", ["LayerNorm"], shape="(B, L, d)")
+    up = d.node(ffn, "up", ["Linear d to 4d", "GELU, dropout 0.1"],
+                shape="(B, L, 4d)")
     add2 = d.op(ffn, "add2", "+")
 
     for source, target in (
-        (emb, b1), (bn, pool), (pool, loss),
+        (tok, emb), (emb, pos), (pos, b1), (bn, pool), (pool, loss),
         (ln1, sdp), (sdp, add1), (ln2, up), (up, add2),
     ):
         d.connect(source, target)
@@ -113,4 +118,7 @@ def compose() -> Diagram:
 
 if __name__ == "__main__":
     diagram = compose()
-    print("wrote", diagram.write(Path(__file__).parent / "slide-01.svg"))
+    for written in diagram.write(Path(__file__).parent / "slide-01.svg"):
+        print("wrote", written)
+    for source, target in diagram.spanning_connections():
+        print(f"note: {source} -> {target} spans a page break and was not drawn")
