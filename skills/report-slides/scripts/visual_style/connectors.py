@@ -313,6 +313,12 @@ def _unrelated_nodes(conn: Connector, bounds: Dict[str, Box]) -> Dict[str, Box]:
     case an undeclared but correctly attached connector would be reported as
     violating the clearance of the very node it terminates on.
 
+    Declarations are read from the whole routed path, not the individual
+    segment. A routed connector is parsed into one segment per leg and only the
+    first and last carry the segment-level ids, so an interior leg would
+    otherwise count its own source and target as unrelated -- and report a
+    clearance violation against the very nodes it runs between.
+
     Args:
         conn: The connector.
         bounds: Node bounding boxes.
@@ -320,7 +326,7 @@ def _unrelated_nodes(conn: Connector, bounds: Dict[str, Box]) -> Dict[str, Box]:
     Returns:
         The subset of `bounds` the connector neither declares nor touches.
     """
-    declared = {conn.from_node, conn.to_node}
+    declared = {conn.from_node, conn.to_node, conn.path_from, conn.path_to}
     unrelated: Dict[str, Box] = {}
     for node_id, box in bounds.items():
         if node_id in declared:

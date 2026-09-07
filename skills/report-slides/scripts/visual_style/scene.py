@@ -269,6 +269,11 @@ class Connector:
             touch nothing by construction and are not attachment points.
         terminal_end: Whether this segment's end is where the routed connector
             finishes.
+        path_from: The whole routed path's `data-from`, carried on every
+            segment. `from_node` is the segment's own declaration and stays
+            unset on interior legs, because port-drift is judged per segment;
+            relatedness is judged for the path, so it needs this.
+        path_to: The whole routed path's `data-to`, likewise.
     """
 
     element_id: str
@@ -286,6 +291,8 @@ class Connector:
     style_role: Optional[str] = None
     terminal_start: bool = True
     terminal_end: bool = True
+    path_from: Optional[str] = None
+    path_to: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -723,7 +730,9 @@ def parse_scene(svg_path: Union[str, Path], font_family: str) -> Scene:
                              if position == len(segments) - 1 else None),
                             role,
                             position == 0,
-                            position == len(segments) - 1))
+                            position == len(segments) - 1,
+                            child.get("data-from"),
+                            child.get("data-to")))
             else:
                 walk(child, child_node, child_role, local, index)
 

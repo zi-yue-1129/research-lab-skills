@@ -341,6 +341,8 @@ The [`examples/`](examples/) directory contains a complete worked scenario — a
 
 **Progress slides** ([`examples/report-slides/`](examples/report-slides/)) — a 7-slide weekly lab-meeting presentation generated from those journal entries. Slides cover: title, problem/approach, timeline (with `amended` badges), grouped bar chart, model comparison table (with DIF fairness markers), metric cards, and conclusion + next steps. All slides are SVG source files convertible to an editable `deck.pptx` — see [`examples/report-slides/README.md`](examples/report-slides/README.md) for the generation command.
 
+**Architecture figure** ([`examples/architecture-diagram/`](examples/architecture-diagram/)) — a transformer encoder stack with one block opened up, composed from data rather than coordinates. Boxes are sized from the measured width of their own labels, positions snap to the token grid, and the builder refuses a composition that would run off the canvas instead of drawing it. Run `python3 examples/architecture-diagram/build_diagram.py` to regenerate it.
+
 ---
 
 ## File Structure

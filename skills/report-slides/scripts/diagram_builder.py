@@ -1,44 +1,41 @@
 #!/usr/bin/env python3
 """diagram_builder.py -- compose dense technical architecture diagrams.
 
-Hand-authoring an architecture diagram at the density a paper or design review
-expects -- nested boundaries, tensor shapes under every block, multi-line
-operator descriptions, elbow-routed connectors, repeated-block ellipsis -- means
-computing a few hundred coordinates by hand. Doing that produced two rounds of
-defects in practice, both of the same kind: a box guessed slightly too narrow
-for the label it holds, caught only after export by measuring the rendered deck.
+Hand-authoring a diagram at the density a paper or design review expects means
+computing a few hundred coordinates. Doing that twice produced the same defect
+both times: a box guessed slightly too narrow for the label it holds, invisible
+until the deck was exported and measured.
 
-The fix is not more care. It is to stop guessing: this module sizes every box
-from the *measured* width of the text it contains, using the same font metrics
-the style linter checks against. A node cannot be too small for its label,
-because its size is derived from the label.
+This module removes the guessing. Every box is sized from the *measured* width
+of the text it contains, so a node cannot be too small for its label -- its size
+is derived from the label. Coordinates snap to `canvas.grid`, colours come from
+`color.roles`, surfaces from `surfaces.*`, and connectors bind to named ports on
+real nodes, so off-grid placement, palette drift and dangling connectors are
+unrepresentable rather than merely discouraged.
 
-Everything else follows the same principle. Coordinates snap to `canvas.grid`,
-so nothing lands off-grid. Colours come from `color.roles` and surfaces from
-`surfaces.*`, so no palette drift is possible. Connectors attach to named ports
-on real nodes, so none can dangle. The token file is the single source of
-truth, exactly as `references/diagram-patterns.md` requires.
+Structure is recursive, which is what carries the density: a **band** is a
+horizontal strip of the slide, a **section** is a titled dashed container inside
+a band, and a section holds either nodes or further titled groups, flowing in a
+row or a column. Nesting a group inside a section is how a diagram shows the
+internals of one block without leaving the page it belongs to.
 
-What this does not do is decide composition. Which blocks exist, how they group,
-and which column and row each occupies stay with the author -- that is the part
-that carries meaning, and automating it would produce diagrams that are correct
-and say nothing.
+Beyond plain nodes there are three primitives that dense diagrams need and
+generic ones do not: an **operator** (a small circle carrying an arithmetic
+glyph, for residual adds and gates), an **ellipsis** (for a repeated block whose
+copies are not worth drawing), and **over/under** routing (a connector that arcs
+clear of the blocks between its ends rather than through them).
 
-Usage sketch:
-
-    d = Diagram(tokens, title="...", subtitle="...")
-    enc = d.boundary("encoder", "1. Encoding", column=0)
-    x = enc.node("x", ["Input frames"], shape="(B, T, 3, H, W)", kind="data")
-    e = enc.node("e", ["Encoder", "Conv × 4, stride 2"], shape="(B, T, 512)")
-    d.connect(x, e)
-    d.write("slide-01.svg")
+What this does not do is decide composition. Which blocks exist, how they nest,
+and which band they occupy stay with the author -- that is the part carrying
+meaning, and automating it would produce diagrams that are correct and say
+nothing.
 """
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import fonts
 
@@ -46,7 +43,8 @@ import fonts
 #: diagram states what a block *is* rather than picking a colour: `data` for
 #: tensors and files, `module` for learned or executable components, `accent`
 #: for the component a section is about, and `aux` for anything active only in
-#: one regime (training-only branches, optional paths), which a legend explains.
+#: one regime -- a training-only branch, an optional path -- which a legend
+#: then explains once.
 KINDS: Dict[str, Dict[str, str]] = {
     "data": {"surface": "bg", "border": "muted"},
     "module": {"surface": "card", "border": "line"},
@@ -54,22 +52,22 @@ KINDS: Dict[str, Dict[str, str]] = {
     "aux": {"surface": "bg", "border": "warn"},
 }
 
-#: Extra height per label line beyond the first, and the vertical room a shape
-#: annotation needs under the label.
-_LINE_STEP = 22
-_SHAPE_STEP = 20
-
-#: Width PowerPoint reserves inside a shape's text frame, in canvas units.
-#: Its default inset is 0.1in on each side -- 14.4pt over a 960pt slide mapped
-#: onto a 1200-unit canvas. Reserving it here is why a node sized from measured
-#: text still holds that text once exported; a guessed safety factor did not,
-#: and the rendered-deck gate reported five labels finishing outside their
-#: boxes by 2 to 13pt.
+#: Width PowerPoint reserves inside a shape's text frame, in canvas units. Its
+#: default inset is 0.1in each side -- 14.4pt over a 960pt slide mapped onto a
+#: 1200-unit canvas. Reserving it is why a node sized from measured text still
+#: holds that text once exported; without it the rendered-deck gate reported
+#: labels finishing outside their boxes by 2 to 13pt.
 _PPTX_TEXT_INSET = 18
 
-#: Safety margin on top of the derived render scale, for the small differences
+#: Safety margin over the derived render scale, for the small differences
 #: between these metrics and PowerPoint's own layout of the same string.
 _RENDER_SAFETY = 1.04
+
+#: Ellipsis width as a multiple of the label size, so it tracks the token
+#: scale. An operator's diameter is not a free multiple -- it is derived from
+#: the padding its glyph needs, since a circle holding text is a node like any
+#: other and `node-padding` is measured on it.
+_ELLIPSIS_SCALE = 3.0
 
 
 def _snap(value: float, grid: int, *, up: bool = True) -> int:
@@ -89,12 +87,14 @@ def _snap(value: float, grid: int, *, up: bool = True) -> int:
 
 @dataclass
 class Node:
-    """One block: a box, its label lines, and an optional shape annotation."""
+    """One block, operator, or ellipsis placed in a flow."""
 
     id: str
     lines: List[str]
-    shape: Optional[str]
-    kind: str
+    shape: Optional[str] = None
+    kind: str = "module"
+    role: str = "node"
+    glyph: str = ""
     x: int = 0
     y: int = 0
     width: int = 0
@@ -111,19 +111,19 @@ class Node:
         return self.y + self.height
 
     @property
-    def mid_y(self) -> int:
-        """Vertical centre."""
-        return self.y + self.height // 2
-
-    @property
     def mid_x(self) -> int:
         """Horizontal centre."""
         return self.x + self.width // 2
 
+    @property
+    def mid_y(self) -> int:
+        """Vertical centre."""
+        return self.y + self.height // 2
+
     def port(self, side: str) -> Tuple[int, int]:
         """Return the attachment point on one side.
 
-        Connectors bind to ports rather than to free coordinates, which is what
+        Connectors bind to ports rather than free coordinates, which is what
         makes a dangling or drifted connector impossible to author.
 
         Args:
@@ -135,28 +135,42 @@ class Node:
         Raises:
             ValueError: If the side is not one of the four.
         """
-        if side == "left":
-            return self.x, self.mid_y
-        if side == "right":
-            return self.right, self.mid_y
-        if side == "top":
-            return self.mid_x, self.y
-        if side == "bottom":
-            return self.mid_x, self.bottom
-        raise ValueError(f"unknown port side: {side!r}")
+        sides = {
+            "left": (self.x, self.mid_y),
+            "right": (self.right, self.mid_y),
+            "top": (self.mid_x, self.y),
+            "bottom": (self.mid_x, self.bottom),
+        }
+        if side not in sides:
+            raise ValueError(f"unknown port side: {side!r}")
+        return sides[side]
 
 
 @dataclass
-class Boundary:
-    """A labelled dashed container holding nodes, laid out in one column."""
+class Container:
+    """A titled dashed box holding nodes or further containers.
+
+    Attributes:
+        id: Stable identifier, prefixed onto the ids of what it holds.
+        title: Caption at the top-left, or empty for an untitled grouping.
+        flow: `row` lays children left to right, `column` top to bottom.
+        children: Nodes and nested containers, in flow order.
+        band: Which horizontal strip of the slide this sits in. Meaningful only
+            on a top-level section.
+    """
 
     id: str
     title: str
-    nodes: List[Node] = field(default_factory=list)
+    flow: str = "column"
+    children: List[Union[Node, "Container"]] = field(default_factory=list)
+    band: int = 0
     x: int = 0
     y: int = 0
     width: int = 0
     height: int = 0
+
+
+Item = Union[Node, Container]
 
 
 class Diagram:
@@ -188,14 +202,32 @@ class Diagram:
         self.safe = tokens["canvas"]["safe_area"]
         self.colors: Dict[str, str] = tokens["color"]["roles"]
         self.node_pad = tokens["spacing"]["node_padding"]
-        self.node_gap: int = tokens["spacing"]["node_gap_min"]
-        self.family = fonts.resolve_font_stack(
-            tokens["typography"]["family"]["sans"]
-        )
+        self.gap: int = _snap(tokens["spacing"]["node_gap_min"], self.grid)
+        self.family = fonts.resolve_font_stack(tokens["typography"]["family"]["sans"])
         self.label_role = tokens["typography"]["roles"]["node_label"]
-        self.render_scale = self._render_scale()
         self.caption_role = tokens["typography"]["roles"]["caption"]
-        self.boundaries: List[Boundary] = []
+        self.render_scale = self._render_scale()
+        # Line advance and annotation room come from the type roles rather
+        # than from constants: a denser token set with a smaller scale would
+        # otherwise be drawn with the leading of a presentation slide, and the
+        # boxes would be padded out with air the smaller type does not need.
+        self.line_step = _snap(
+            self.label_role["size"] * self.label_role["line_height"], self.grid
+        )
+        self.shape_step = _snap(
+            self.caption_role["size"] * self.caption_role["line_height"], self.grid
+        )
+        # Large enough that the glyph clears the token insets on every side.
+        self.op_size = _snap(
+            max(
+                self.label_role["size"] + 2 * self.node_pad["x"],
+                self.label_role["size"] + 2 * self.node_pad["y"],
+            )
+            + self.grid,
+            self.grid,
+        )
+        self.ellipsis_w = _snap(self.label_role["size"] * _ELLIPSIS_SCALE, self.grid)
+        self.sections: List[Container] = []
         self.connections: List[Dict[str, Any]] = []
         self.notes: List[Dict[str, Any]] = []
 
@@ -210,63 +242,120 @@ class Diagram:
         caught and these metrics alone could not.
 
         Derived rather than hardcoded, so a later change to that mapping is
-        picked up instead of silently leaving a stale constant behind.
+        picked up instead of leaving a stale constant behind.
 
         Returns:
             The factor to widen measured text by, never below 1.
         """
         from svg_to_pptx.converter import PPTX_W
 
-        points_per_unit = (PPTX_W / 12700) / self.canvas_w
-        return max(1.0, 1.0 / points_per_unit)
+        return max(1.0, 1.0 / ((PPTX_W / 12700) / self.canvas_w))
 
     # --- authoring ------------------------------------------------------
 
-    def boundary(self, ident: str, title: str) -> Boundary:
-        """Add a labelled container. Containers lay out left to right.
+    def section(
+        self, ident: str, title: str, *, band: int = 0, flow: str = "column"
+    ) -> Container:
+        """Add a top-level titled container.
 
         Args:
-            ident: Stable identifier, used for node ids.
-            title: The container's caption.
+            ident: Stable identifier.
+            title: Caption.
+            band: Horizontal strip of the slide. Sections sharing a band are
+                laid left to right; bands stack top to bottom, which is how a
+                wide sequence gets its own full-width row beneath the columns.
+            flow: `column` or `row`.
 
         Returns:
-            The new boundary.
+            The new section.
         """
-        b = Boundary(id=ident, title=title)
-        self.boundaries.append(b)
-        return b
+        c = Container(id=ident, title=title, flow=flow, band=band)
+        self.sections.append(c)
+        return c
+
+    def group(
+        self, parent: Container, ident: str, title: str = "", *, flow: str = "row"
+    ) -> Container:
+        """Nest a titled container inside another.
+
+        Args:
+            parent: The container to nest inside.
+            ident: Identifier, unique within the parent.
+            title: Caption, or empty for an untitled grouping.
+            flow: `row` or `column`.
+
+        Returns:
+            The new group.
+        """
+        c = Container(id=f"{parent.id}-{ident}", title=title, flow=flow)
+        parent.children.append(c)
+        return c
 
     def node(
         self,
-        boundary: Boundary,
+        parent: Container,
         ident: str,
         lines: Sequence[str],
         *,
         shape: Optional[str] = None,
         kind: str = "module",
     ) -> Node:
-        """Add a block to a container.
+        """Add a block.
 
         Args:
-            boundary: The container to place it in.
-            ident: Identifier, unique within the boundary.
-            lines: Label lines, rendered one per line.
-            shape: Optional tensor-shape annotation shown beneath the label.
-            kind: One of `KINDS`, which decides surface and accent.
+            parent: The container to place it in.
+            ident: Identifier, unique within the parent.
+            lines: Label lines, one per line. Lines after the first are set in
+                the caption role, which is where a block's parameters go -- and
+                that detail is most of what makes a diagram dense.
+            shape: Optional tensor-shape annotation beneath the label.
+            kind: One of `KINDS`.
 
         Returns:
             The new node.
 
         Raises:
-            ValueError: If the kind is unknown -- a typo would otherwise paint
-                a block in the wrong semantic colour and say nothing about it.
+            ValueError: If the kind is unknown, since a typo would otherwise
+                paint a block in a semantic colour that says nothing.
         """
         if kind not in KINDS:
             raise ValueError(
                 f"unknown node kind {kind!r}; expected one of {sorted(KINDS)}"
             )
-        n = Node(id=f"{boundary.id}-{ident}", lines=list(lines), shape=shape, kind=kind)
-        boundary.nodes.append(n)
+        n = Node(id=f"{parent.id}-{ident}", lines=list(lines), shape=shape, kind=kind)
+        parent.children.append(n)
+        return n
+
+    def op(self, parent: Container, ident: str, glyph: str) -> Node:
+        """Add an operator: a small circle carrying an arithmetic glyph.
+
+        Args:
+            parent: The container to place it in.
+            ident: Identifier.
+            glyph: The symbol, such as `+` for a residual add or `x` for a gate.
+
+        Returns:
+            The operator node.
+        """
+        n = Node(id=f"{parent.id}-{ident}", lines=[], role="operator", glyph=glyph)
+        parent.children.append(n)
+        return n
+
+    def ellipsis(self, parent: Container, ident: str = "more") -> Node:
+        """Add a repeated-block ellipsis.
+
+        Drawing every copy of a repeated block spends the reader's attention on
+        the repetition rather than on what repeats.
+
+        Args:
+            parent: The container to place it in.
+            ident: Identifier.
+
+        Returns:
+            The ellipsis node.
+        """
+        n = Node(id=f"{parent.id}-{ident}", lines=[], role="ellipsis")
+        parent.children.append(n)
         return n
 
     def connect(
@@ -277,6 +366,7 @@ class Diagram:
         label: str = "",
         style: str = "solid",
         route: str = "auto",
+        kind: str = "line",
     ) -> None:
         """Join two nodes port to port.
 
@@ -285,12 +375,14 @@ class Diagram:
             target: Node the arrow enters.
             label: Optional text along the connector.
             style: A key of `connectors.dash_patterns`.
-            route: `auto` picks a straight line when the ports share an axis and
-                an elbow otherwise; `straight` and `elbow` force one.
+            route: `auto` picks a straight run when the ports align and an elbow
+                otherwise; `over` and `under` arc clear of everything between
+                the two ends, which is what a skip or identity path needs.
+            kind: `line`, or `aux` to draw it in the training-only accent.
         """
         self.connections.append(
             {"source": source, "target": target, "label": label,
-             "style": style, "route": route}
+             "style": style, "route": route, "kind": kind, "lane": None}
         )
 
     def note(self, text: str, x: int, y: int, *, color: str = "muted") -> None:
@@ -305,7 +397,7 @@ class Diagram:
         self.notes.append({"text": text, "x": _snap(x, self.grid),
                            "y": _snap(y, self.grid), "color": color})
 
-    # --- measurement and layout ----------------------------------------
+    # --- measurement ----------------------------------------------------
 
     def _text_width(self, text: str, role: Dict[str, Any]) -> float:
         """Measure one string in a type role.
@@ -319,122 +411,169 @@ class Diagram:
         """
         return fonts.text_width(text, self.family, role["size"], role["weight"])
 
-    def _size_node(self, node: Node) -> None:
-        """Derive a node's box from the text it must hold.
+    def _measure(self, item: Item) -> Tuple[int, int]:
+        """Compute an item's intrinsic size, recursing into containers.
 
-        This is the whole point of the module: the box cannot be too small for
-        its label, because the label determines the box. A generous allowance is
-        added on top of the token padding because PowerPoint lays text out
-        slightly wider than these metrics predict, and it insets the text frame
-        -- measured on a real deck, a label that fitted by 6.7pt here still
-        finished 8pt outside its shape once rendered.
+        Sizes are derived bottom-up: a node from its text, a container from the
+        children it holds. Nothing is guessed at any level, which is what keeps
+        a deeply nested composition from drifting.
+
+        Args:
+            item: A node or container.
+
+        Returns:
+            Its `(width, height)`.
+        """
+        if isinstance(item, Node):
+            return self._measure_node(item)
+
+        sizes = [self._measure(child) for child in item.children]
+        title_room = 32 if item.title else 0
+        if item.flow == "row":
+            inner_w = sum(w for w, _ in sizes) + self.gap * (len(sizes) - 1)
+            inner_h = max(h for _, h in sizes)
+        else:
+            inner_w = max(w for w, _ in sizes)
+            inner_h = sum(h for _, h in sizes) + self.gap * (len(sizes) - 1)
+        item.width = _snap(inner_w + self.gap * 2, self.grid)
+        item.height = _snap(inner_h + self.gap * 2 + title_room, self.grid)
+        return item.width, item.height
+
+    def _measure_node(self, node: Node) -> Tuple[int, int]:
+        """Size one node from the text it must hold.
 
         Args:
             node: The node to size.
-        """
-        widest = max(
-            [self._text_width(line, self.label_role) for line in node.lines]
-            + ([self._text_width(node.shape, self.caption_role)] if node.shape else [0.0])
-        )
-        content = (
-            widest * self.render_scale * _RENDER_SAFETY
-            + 2 * self.node_pad["x"]
-            + _PPTX_TEXT_INSET
-        )
-        node.width = _snap(content, self.grid)
-
-        height = 2 * self.node_pad["y"] + _LINE_STEP * len(node.lines)
-        if node.shape:
-            height += _SHAPE_STEP
-        node.height = _snap(max(height, 48), self.grid)
-
-    def _column_gap(self) -> int:
-        """Width of every empty column between boundaries.
-
-        One width for all of them, not one per gap. A connector label sits
-        centred in a gap, so the widest label sets the distance -- the same
-        principle that sizes a node from its own text. Varying the gap per
-        column would fit each label individually and read as uneven rhythm,
-        which is exactly what the linter's `spacing-variance` check reports.
 
         Returns:
-            The gap width, snapped to the grid.
+            Its `(width, height)`.
         """
-        labels = [c["label"] for c in self.connections if c["label"]]
-        needed = max(
-            [self._text_width(text, self.caption_role) for text in labels] + [0.0]
+        if node.role == "operator":
+            node.width = node.height = self.op_size
+            return node.width, node.height
+        if node.role == "ellipsis":
+            node.width, node.height = self.ellipsis_w, self.op_size
+            return node.width, node.height
+
+        label_widths = [self._text_width(node.lines[0], self.label_role)] if node.lines else [0.0]
+        detail_widths = [self._text_width(t, self.caption_role) for t in node.lines[1:]]
+        if node.shape:
+            detail_widths.append(self._text_width(node.shape, self.caption_role))
+        widest = max(label_widths + detail_widths + [0.0])
+        node.width = _snap(
+            widest * self.render_scale * _RENDER_SAFETY
+            + 2 * self.node_pad["x"]
+            + _PPTX_TEXT_INSET,
+            self.grid,
         )
-        return _snap(max(self.node_gap * 2, needed + self.grid * 2), self.grid)
+        height = 2 * self.node_pad["y"] + self.line_step * len(node.lines)
+        if node.shape:
+            height += self.shape_step
+        node.height = _snap(max(height, self.line_step * 2 + 8), self.grid)
+        return node.width, node.height
+
+    # --- placement ------------------------------------------------------
+
+    def _place(self, item: Item, x: int, y: int) -> None:
+        """Assign absolute positions, recursing into containers.
+
+        Children are centred on the container's cross axis, so a row of blocks
+        of differing heights shares one centre line rather than sitting on a
+        ragged top edge.
+
+        Args:
+            item: The node or container to place.
+            x: Left coordinate.
+            y: Top coordinate.
+        """
+        item.x, item.y = x, y
+        if isinstance(item, Node):
+            return
+
+        title_room = 32 if item.title else 0
+        cx = x + self.gap
+        cy = y + self.gap + title_room
+        span_w = item.width - self.gap * 2
+        span_h = item.height - self.gap * 2 - title_room
+
+        for child in item.children:
+            if item.flow == "row":
+                offset = max(0, _snap((span_h - child.height) / 2, self.grid, up=False))
+                self._place(child, cx, cy + offset)
+                cx += child.width + self.gap
+            else:
+                offset = max(0, _snap((span_w - child.width) / 2, self.grid, up=False))
+                self._place(child, cx + offset, cy)
+                cy += child.height + self.gap
 
     def layout(self) -> None:
-        """Place every boundary and node, snapped to the grid.
-
-        Boundaries run left to right and are sized to their widest node; nodes
-        stack top to bottom inside, separated by at least `spacing.node_gap_min`.
+        """Measure and place every section, snapped to the grid.
 
         Raises:
-            ValueError: If the composition cannot fit the safe area, rather than
-                silently producing a diagram that runs off the slide.
+            ValueError: If the composition cannot fit the safe area, naming the
+                overshoot in units rather than silently running off the slide.
         """
-        for b in self.boundaries:
-            for n in b.nodes:
-                self._size_node(n)
+        for section in self.sections:
+            self._measure(section)
 
-        pad = _snap(self.node_gap, self.grid)
-        gap = self._column_gap()
-        x = self.safe["left"]
-        top = _snap(self.safe["top"] + 96, self.grid)
-        bottom_limit = self.canvas_h - self.safe["bottom"] - 40
+        top = _snap(self.safe["top"] + 92, self.grid)
+        for band in sorted({s.band for s in self.sections}):
+            row = [s for s in self.sections if s.band == band]
+            x = self.safe["left"]
+            for section in row:
+                self._place(section, x, top)
+                x += section.width + self.gap
+            widest = x - self.gap
+            if widest > self.canvas_w - self.safe["right"]:
+                raise ValueError(
+                    f"band {band} is {widest - (self.canvas_w - self.safe['right'])} "
+                    "units wider than the safe area; use fewer sections, shorter "
+                    "labels, or move a section to another band"
+                )
+            top += max(s.height for s in row) + self.gap
 
-        for b in self.boundaries:
-            inner = max(n.width for n in b.nodes)
-            b.x, b.y = x, top
-            b.width = inner + 2 * pad
-            stack = sum(n.height for n in b.nodes) + pad * (len(b.nodes) - 1)
-            b.height = _snap(stack + pad * 2 + 32, self.grid)
-
-            ny = b.y + pad + 32
-            for n in b.nodes:
-                n.x = b.x + pad
-                n.width = inner          # one width per column reads as a column
-                n.y = ny
-                ny += n.height + pad
-            x = b.x + b.width + gap
-
-        right = max(b.x + b.width for b in self.boundaries)
-        if right > self.canvas_w - self.safe["right"]:
+        limit = self.canvas_h - self.safe["bottom"] - (24 if self.footnote else 0)
+        if top - self.gap > limit:
             raise ValueError(
-                f"composition is {right - (self.canvas_w - self.safe['right'])} "
-                "units wider than the safe area; use fewer columns or shorter labels"
-            )
-        deepest = max(b.y + b.height for b in self.boundaries)
-        if deepest > bottom_limit:
-            raise ValueError(
-                f"composition is {deepest - bottom_limit} units taller than the "
-                "safe area; use fewer rows per column"
+                f"the bands are {top - self.gap - limit} units taller than the "
+                "safe area; use fewer bands or fewer rows per section"
             )
 
     # --- emission -------------------------------------------------------
 
-    def _connector_points(self, conn: Dict[str, Any]) -> List[Tuple[int, int]]:
+    def _route(self, conn: Dict[str, Any]) -> List[Tuple[int, int]]:
         """Compute a connector's path between two node ports.
 
         Args:
             conn: One entry from `self.connections`.
 
         Returns:
-            Two points for a straight run, or four for an elbow.
+            The polyline points: two for a straight run, four for an elbow or
+            for an arc that clears what lies between the ends.
         """
         s, t = conn["source"], conn["target"]
+        if conn["route"] in ("over", "under"):
+            side = "top" if conn["route"] == "over" else "bottom"
+            sp, tp = s.port(side), t.port(side)
+            reach = self.gap + self.grid * 2
+            lane = (min(sp[1], tp[1]) - reach if conn["route"] == "over"
+                    else max(sp[1], tp[1]) + reach)
+            conn["lane"] = lane
+            return [sp, (sp[0], lane), (tp[0], lane), tp]
+
         rightward = t.x >= s.right
-        sp = s.port("right" if rightward else "bottom")
-        tp = t.port("left" if rightward else "top")
+        downward = t.y >= s.bottom
+        sp = s.port("right" if rightward else "bottom" if downward else "left")
+        tp = t.port("left" if rightward else "top" if downward else "right")
         if conn["route"] == "straight" or (
             conn["route"] == "auto" and (sp[1] == tp[1] or sp[0] == tp[0])
         ):
             return [sp, tp]
-        mid = _snap((sp[0] + tp[0]) / 2, self.grid, up=False)
-        return [sp, (mid, sp[1]), (mid, tp[1]), tp]
+        if rightward:
+            mid = _snap((sp[0] + tp[0]) / 2, self.grid, up=False)
+            return [sp, (mid, sp[1]), (mid, tp[1]), tp]
+        mid = _snap((sp[1] + tp[1]) / 2, self.grid, up=False)
+        return [sp, (sp[0], mid), (tp[0], mid), tp]
 
     def to_svg(self) -> str:
         """Render the composed diagram as SVG.
@@ -445,40 +584,25 @@ class Diagram:
         self.layout()
         c = self.colors
         stack = self.t["typography"]["family"]["sans"]
-        out: List[str] = [
+        title_role = self.t["typography"]["roles"]["slide_title"]
+        out = [
             f'<svg xmlns="http://www.w3.org/2000/svg" '
             f'viewBox="0 0 {self.canvas_w} {self.canvas_h}" font-family="{stack}">',
             f"  <desc>{self.title}. {self.subtitle}</desc>",
             f'  <rect x="0" y="0" width="{self.canvas_w}" height="{self.canvas_h}" '
             f'fill="{c["bg"]}"/>',
-        ]
-        title_role = self.t["typography"]["roles"]["slide_title"]
-        out.append(
-            f'  <text x="{self.safe["left"]}" y="{self.safe["top"] + 52}" '
+            f'  <text x="{self.safe["left"]}" y="{self.safe["top"] + 48}" '
             f'font-size="{title_role["size"]}" font-weight="{title_role["weight"]}" '
-            f'fill="{c["primary"]}">{self.title}</text>'
-        )
+            f'fill="{c["primary"]}">{self.title}</text>',
+        ]
         if self.subtitle:
             out.append(
-                f'  <text x="{self.safe["left"]}" y="{self.safe["top"] + 86}" '
+                f'  <text x="{self.safe["left"]}" y="{self.safe["top"] + 78}" '
                 f'font-size="{self.caption_role["size"]}" fill="{c["muted"]}">'
                 f"{self.subtitle}</text>"
             )
-
-        for b in self.boundaries:
-            out.append(
-                f'  <rect x="{b.x}" y="{b.y}" width="{b.width}" height="{b.height}" '
-                f'rx="8" fill="none" stroke="{c["divider"]}" stroke-width="1.5" '
-                f'stroke-dasharray="8 4"/>'
-            )
-            out.append(
-                f'  <text x="{b.x + 16}" y="{b.y + 28}" '
-                f'font-size="{self.caption_role["size"]}" font-weight="600" '
-                f'fill="{c["muted"]}">{b.title}</text>'
-            )
-            for n in b.nodes:
-                out.extend(self._node_svg(n))
-
+        for section in self.sections:
+            out.extend(self._container_svg(section, depth=0))
         out.extend(self._connectors_svg())
         for note in self.notes:
             out.append(
@@ -489,15 +613,48 @@ class Diagram:
         if self.footnote:
             out.append(
                 f'  <text x="{self.safe["left"]}" '
-                f'y="{self.canvas_h - self.safe["bottom"] - 8}" '
+                f'y="{self.canvas_h - self.safe["bottom"] - 4}" '
                 f'font-size="{self.caption_role["size"]}" fill="{c["muted"]}">'
                 f"{self.footnote}</text>"
             )
         out.append("</svg>")
         return "\n".join(out) + "\n"
 
+    def _container_svg(self, box: Container, *, depth: int) -> List[str]:
+        """Emit a container and everything inside it.
+
+        Args:
+            box: The placed container.
+            depth: Nesting depth. A nested group is drawn in a lighter, tighter
+                dash so a reader can tell an inner grouping from an outer one
+                without either competing with the blocks themselves.
+
+        Returns:
+            SVG lines.
+        """
+        c = self.colors
+        dash = "8 4" if depth == 0 else "4 3"
+        stroke = c["divider"] if depth == 0 else c["muted"]
+        out = [
+            f'  <rect x="{box.x}" y="{box.y}" width="{box.width}" '
+            f'height="{box.height}" rx="8" fill="none" stroke="{stroke}" '
+            f'stroke-width="1.5" stroke-dasharray="{dash}"/>'
+        ]
+        if box.title:
+            out.append(
+                f'  <text x="{box.x + 16}" y="{box.y + 26}" '
+                f'font-size="{self.caption_role["size"]}" font-weight="600" '
+                f'fill="{c["muted"]}">{box.title}</text>'
+            )
+        for child in box.children:
+            if isinstance(child, Container):
+                out.extend(self._container_svg(child, depth=depth + 1))
+            else:
+                out.extend(self._node_svg(child))
+        return out
+
     def _node_svg(self, n: Node) -> List[str]:
-        """Emit one node as a native-group-marked box with its text.
+        """Emit one node, operator, or ellipsis.
 
         Args:
             n: The placed node.
@@ -506,34 +663,52 @@ class Diagram:
             SVG lines.
         """
         c = self.colors
+        if n.role == "ellipsis":
+            return [
+                f'  <text x="{n.mid_x}" y="{n.mid_y + self.label_role["size"] // 2}" text-anchor="middle" '
+                f'font-size="{self.label_role["size"]}" font-weight="700" fill="{c["muted"]}">'
+                "• • •</text>"
+            ]
+        if n.role == "operator":
+            return [
+                f'  <g data-pptx-role="group" data-node-id="{n.id}">',
+                f'    <circle cx="{n.mid_x}" cy="{n.mid_y}" r="{n.width // 2}" '
+                f'fill="{c["bg"]}" stroke="{c["line"]}" stroke-width="1.5"/>',
+                f'    <text x="{n.mid_x}" y="{n.mid_y + self.label_role["size"] // 2 - 2}" text-anchor="middle" '
+                f'font-size="{self.label_role["size"]}" font-weight="700" fill="{c["line"]}">'
+                f"{n.glyph}</text>",
+                "  </g>",
+            ]
+
         kind = KINDS[n.kind]
         surface = self.t["surfaces"]["node"]
         first = n.y + self.node_pad["y"] + self.label_role["size"]
-        lines = [f'  <g data-pptx-role="group" data-node-id="{n.id}">',
-                 f'    <rect x="{n.x}" y="{n.y}" width="{n.width}" '
-                 f'height="{n.height}" rx="{surface["radius"]}" '
-                 f'fill="{c[kind["surface"]]}" stroke="{c[kind["border"]]}" '
-                 f'stroke-width="{surface["border_width"]}"/>']
         tx = n.x + self.node_pad["x"]
+        out = [
+            f'  <g data-pptx-role="group" data-node-id="{n.id}">',
+            f'    <rect x="{n.x}" y="{n.y}" width="{n.width}" height="{n.height}" '
+            f'rx="{surface["radius"]}" fill="{c[kind["surface"]]}" '
+            f'stroke="{c[kind["border"]]}" stroke-width="{surface["border_width"]}"/>',
+        ]
         for i, line in enumerate(n.lines):
-            lines.append(
-                f'    <text x="{tx}" y="{first + i * _LINE_STEP}" '
-                f'font-size="{self.label_role["size"]}" '
-                f'font-weight="{self.label_role["weight"]}" '
-                f'fill="{c["body"]}">{line}</text>'
+            weight = self.label_role["weight"] if i == 0 else 400
+            size = self.label_role["size"] if i == 0 else self.caption_role["size"]
+            fill = c["body"] if i == 0 else c["muted"]
+            out.append(
+                f'    <text x="{tx}" y="{first + i * self.line_step}" '
+                f'font-size="{size}" font-weight="{weight}" fill="{fill}">{line}</text>'
             )
         if n.shape:
-            lines.append(
-                f'    <text x="{tx}" '
-                f'y="{first + len(n.lines) * _LINE_STEP + 2}" '
-                f'font-size="{self.caption_role["size"]}" '
-                f'fill="{c["muted"]}">{n.shape}</text>'
+            out.append(
+                f'    <text x="{tx}" y="{first + len(n.lines) * self.line_step + 2}" '
+                f'font-size="{self.caption_role["size"]}" fill="{c["muted"]}">'
+                f"{n.shape}</text>"
             )
-        lines.append("  </g>")
-        return lines
+        out.append("  </g>")
+        return out
 
     def _connectors_svg(self) -> List[str]:
-        """Emit every connector plus the shared arrowhead marker.
+        """Emit every connector plus the shared arrowhead markers.
 
         Returns:
             SVG lines.
@@ -543,32 +718,39 @@ class Diagram:
         c = self.colors
         dashes = self.t["connectors"]["dash_patterns"]
         width = self.t["connectors"]["stroke_width"]
-        out = [
-            f'  <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" '
+        markers = "".join(
+            f'<marker id="arrow-{name}" viewBox="0 0 10 10" refX="9" refY="5" '
             f'markerWidth="6" markerHeight="6" orient="auto-start-reverse">'
-            f'<path d="M 0 0 L 10 5 L 0 10 z" fill="{c["line"]}"/></marker></defs>'
-        ]
+            f'<path d="M 0 0 L 10 5 L 0 10 z" fill="{c[role]}"/></marker>'
+            for name, role in (("line", "line"), ("aux", "warn"))
+        )
+        out = [f"  <defs>{markers}</defs>"]
         for conn in self.connections:
-            pts = self._connector_points(conn)
+            pts = self._route(conn)
+            stroke = c["warn"] if conn["kind"] == "aux" else c["line"]
             dash = dashes.get(conn["style"], "")
             dash_attr = f' stroke-dasharray="{dash}"' if dash else ""
             coords = " ".join(f"{x},{y}" for x, y in pts)
             # `data-from`/`data-to` state which nodes the connector joins. The
             # scene parser reads them directly, so an elbow's interior corners
-            # -- which touch nothing by construction -- cannot be mistaken for
-            # dangling ends, and the intent is recorded rather than inferred
-            # from pixel proximity.
+            # -- which touch nothing by construction -- are not mistaken for
+            # dangling ends, and the intent is recorded rather than inferred.
             out.append(
-                f'  <polyline points="{coords}" fill="none" stroke="{c["line"]}" '
+                f'  <polyline points="{coords}" fill="none" stroke="{stroke}" '
                 f'stroke-width="{width}"{dash_attr} '
                 f'data-from="{conn["source"].id}" data-to="{conn["target"].id}" '
-                f'marker-end="url(#arrow)"/>'
+                f'marker-end="url(#arrow-{conn["kind"]})"/>'
             )
             if conn["label"]:
-                # Centred on the gap the label was measured into, so it cannot
-                # land on a boundary it does not belong to.
                 mx = (pts[0][0] + pts[-1][0]) // 2
-                my = min(p[1] for p in pts) - 10
+                if conn["lane"] is not None:
+                    # Sit on the lane the route already cleared. Placing the
+                    # label at the path's extreme instead put a band-crossing
+                    # connector's caption up inside the band above it.
+                    my = (conn["lane"] - self.grid if conn["route"] == "over"
+                          else conn["lane"] + self.caption_role["size"])
+                else:
+                    my = min(p[1] for p in pts) - self.caption_role["size"]
                 out.append(
                     f'  <text x="{mx}" y="{my}" text-anchor="middle" '
                     f'font-size="{self.caption_role["size"]}" '
