@@ -1050,6 +1050,14 @@ python -m svg_to_pptx `
     --out    "$SLIDES_DIR\reports\YYYY-MM-DD_<name>\deck.pptx"
 ```
 
+**Speaker notes.** `slide_architect_agent` is asked to identify speaker notes
+as one of a slide's content elements; the export carries them. Write them to a
+sibling `<stem>.notes.md` beside the slide (`slide-03.svg` →
+`slide-03.notes.md`), or as a `<desc>` on the SVG root when they should travel
+inside the slide file. The sidecar wins if both exist, a `<desc>` nested inside
+a shape is left alone as that shape's description, and a slide with no notes
+gets no notes pane rather than an empty one.
+
 Only `python-pptx` and `lxml` required — no cairosvg, Pillow, or image converter needed.
 Verify both are installed before exporting; on Windows
 `.\install.ps1 -Doctor` reports them along with the renderer chain.
@@ -1062,6 +1070,17 @@ source or the PPTX's internal object tree. Immediately after export:
 1. Validate the produced package's structure (relationships, editable
    objects, image references) into `statuses.pptx_structure`. This never
    inspects visual placement.
+1b. Where PowerPoint is available, measure the deck's real text layout:
+   `python scripts/validate_pptx_layout.py --pptx <deck.pptx> --json`. Every
+   other measurable check in this skill runs against the authored SVG, which
+   cannot know how tall a paragraph becomes once a layout engine draws it;
+   this one asks the engine. It exits `1` with `pptx-clipped-text` (an error:
+   words are cut off) or `pptx-overflowing-text` (a warning: the shape grew
+   past its designed bounds and may collide below), `0` when the deck fits,
+   and `2` naming the missing capability when the host cannot render — in
+   which case skip it and rely on the model-vision gate alone. Fold its
+   findings into `statuses.pptx_render.findings`; it supplements that gate and
+   never replaces it.
 2. Convert the actual `deck.pptx` — never the source SVG — with LibreOffice
    or an equivalent available office renderer, producing exactly one PNG per
    expected slide (see `references/visual-review.md` for the concrete

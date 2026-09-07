@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import fcntl
 import errno
 import os
 import threading
@@ -10,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+import presentation_file_lock
 import presentation_no_follow
 from presentation_transaction_journal_admission import (
     acquire_journal_admission,
@@ -60,7 +60,7 @@ def test_journal_admission_waits_for_active_publisher(tmp_path: Path) -> None:
     writer = threading.Thread(target=competing_admission)
     writer.start()
     assert not entered.wait(timeout=0.05)
-    fcntl.flock(publisher_descriptor, fcntl.LOCK_UN)
+    presentation_file_lock.release(publisher_descriptor)
     os.close(publisher_descriptor)
     writer.join(timeout=2)
 
@@ -68,20 +68,21 @@ def test_journal_admission_waits_for_active_publisher(tmp_path: Path) -> None:
     assert not writer.is_alive()
 
 
-def test_journal_admission_wraps_unsupported_flock(
+def test_journal_admission_wraps_unsupported_lock(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """An unsupported directory flock fails through the typed transaction API."""
+    """An unsupported guard lock fails through the typed transaction API."""
     project = tmp_path / "project"
     project.mkdir()
 
-    def unsupported_flock(_descriptor: int, _operation: int) -> None:
-        """Simulate a filesystem that rejects directory advisory locks."""
+    def unsupported_lock(_descriptor: int) -> None:
+        """Simulate a filesystem that rejects advisory locks on the guard."""
         raise OSError(errno.EOPNOTSUPP, "operation not supported")
 
     monkeypatch.setattr(
-        "presentation_transaction_journal_admission.fcntl.flock",
-        unsupported_flock,
+        "presentation_transaction_journal_admission."
+        "presentation_file_lock.acquire_exclusive",
+        unsupported_lock,
     )
 
     with pytest.raises(TransactionError, match="journal admission guard failed"):

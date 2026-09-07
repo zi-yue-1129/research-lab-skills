@@ -8,12 +8,13 @@ state/event/CAS ordering to ``presentation_transactions``.
 from __future__ import annotations
 
 import errno
-import fcntl
 import os
 import stat
 import time
 from contextlib import contextmanager
 from pathlib import Path
+
+import presentation_file_lock
 from typing import Iterator
 
 from presentation_evidence_workflow import require_schema_v2
@@ -75,7 +76,7 @@ def workflow_lock(project_root: Path) -> Iterator[None]:
         _ensure_workflow_gitignore(root)
         yield
     finally:
-        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        presentation_file_lock.release(descriptor)
         os.close(descriptor)
         anchored.close()
 
@@ -245,7 +246,7 @@ def _flock_with_timeout(descriptor: int, path: Path) -> None:
     deadline = time.monotonic() + timeout
     while True:
         try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            presentation_file_lock.acquire_exclusive(descriptor)
             return
         except OSError as exc:
             if exc.errno not in (errno.EACCES, errno.EAGAIN):

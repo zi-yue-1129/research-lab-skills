@@ -11,7 +11,6 @@ remain held, so unrelated low-level writers cannot be lost during rollback.
 from __future__ import annotations
 import base64
 import errno
-import fcntl
 import json
 import os
 import re
@@ -21,16 +20,19 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
+
+import presentation_file_lock
 from typing import Any, Iterator, Mapping, Sequence
 
 import yaml
 
 from presentation_evidence_contracts import EVIDENCE_SCHEMA_VERSION
 from presentation_no_follow import (
-    AnchoredPath,
-    NoFollowPathError,
     acquire_sidecar as acquire_anchored_sidecar,
+    AnchoredPath,
     fsync_directory as _directory_fsync,
+    NoFollowPathError,
+    open_leaf_at_path,
     open_parent_beneath,
     open_parent_no_follow,
     read_regular_siblings,
@@ -38,7 +40,9 @@ from presentation_no_follow import (
     release_sidecar as _release_sidecar,
     restore_regular,
     sidecar_path as _sidecar,
+    stat_at,
     temporary_path as _temporary_path,
+    unlink_at,
     write_bytes_at,
 )
 from presentation_transaction_files import (
@@ -114,14 +118,9 @@ def _open_sidecar(path: Path) -> int:
         An open descriptor for the sidecar lock file.
 
     Raises:
-        TransactionError: If the sidecar is a symlink or unsafe file type, or
-            the platform does not provide ``os.O_NOFOLLOW``.
+        TransactionError: If the sidecar is a symlink or unsafe file type.
     """
     lock_path = _sidecar(path)
-    if not hasattr(os, "O_NOFOLLOW"):
-        raise TransactionError(
-            f"sidecar locking requires os.O_NOFOLLOW; refusing unsafe lock: {lock_path}"
-        )
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     try:
         existing = os.lstat(lock_path)
@@ -129,9 +128,19 @@ def _open_sidecar(path: Path) -> int:
         existing = None
     if existing is not None and not stat.S_ISREG(existing.st_mode):
         raise TransactionError(f"sidecar lock must be a regular file, not symlink or special type: {lock_path}")
-    flags = os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW
     try:
-        descriptor = os.open(str(lock_path), flags, 0o666)
+        # Anchored on the sidecar's parent so a link swapped in for the leaf is
+        # refused rather than followed -- the O_NOFOLLOW guarantee, on both
+        # platforms.
+        descriptor = open_leaf_at_path(lock_path, os.O_RDWR | os.O_CREAT, 0o666)
+    except NoFollowPathError as exc:
+        # The cause is carried into the message rather than flattened: this
+        # path reports both "the leaf is a link" and "this platform cannot
+        # open no-follow at all", and the caller needs to tell them apart --
+        # the fail-closed tests assert on the capability wording.
+        raise TransactionError(
+            f"sidecar lock is not safe to open: {lock_path}: {exc}"
+        ) from exc
     except OSError as exc:
         if exc.errno in (errno.ELOOP, errno.EISDIR):
             raise TransactionError(f"sidecar lock must be a regular file, not symlink or directory: {lock_path}") from exc
@@ -154,7 +163,7 @@ def _acquire_sidecar(path: Path) -> int:
     try:
         while True:
             try:
-                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                presentation_file_lock.acquire_exclusive(descriptor)
                 return descriptor
             except OSError as exc:
                 if exc.errno not in (errno.EACCES, errno.EAGAIN):
@@ -612,7 +621,7 @@ class WorkflowTransaction:
                     self._restore_anchored_snapshot(path, snapshot, anchored)
                     remove_staged_siblings(anchored)
                 if self._journal_anchor is not None:
-                    os.unlink(journal.name, dir_fd=self._journal_anchor.parent_fd)
+                    unlink_at(self._journal_anchor.parent_fd, journal.name)
                     self._journal_anchor.fsync_parent()
                 else:
                     journal.unlink()
@@ -926,15 +935,11 @@ class WorkflowTransaction:
         journal = self._journal
         if self._journal_anchor is not None:
             try:
-                os.stat(
-                    journal.name,
-                    dir_fd=self._journal_anchor.parent_fd,
-                    follow_symlinks=False,
-                )
+                stat_at(self._journal_anchor.parent_fd, journal.name)
             except FileNotFoundError:
                 pass
             else:
-                os.unlink(journal.name, dir_fd=self._journal_anchor.parent_fd)
+                unlink_at(self._journal_anchor.parent_fd, journal.name)
                 self._journal_anchor.fsync_parent()
         elif journal.exists():
             journal.unlink()

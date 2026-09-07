@@ -7,13 +7,14 @@ file in the same project.
 """
 import argparse
 import errno
-import fcntl
 import json
 import os
 import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
+
+import presentation_file_lock
 from typing import Any, Dict, Iterator, Mapping, Optional
 from presentation_transactions import (
     _open_sidecar,
@@ -159,7 +160,7 @@ def _locked_file(project_root: Path, path: Path) -> Iterator[None]:
             deadline = time.monotonic() + LOCK_TIMEOUT_SECONDS
             while True:
                 try:
-                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    presentation_file_lock.acquire_exclusive(fd)
                     break
                 except OSError as exc:
                     if exc.errno not in (errno.EACCES, errno.EAGAIN):
@@ -174,7 +175,7 @@ def _locked_file(project_root: Path, path: Path) -> Iterator[None]:
             _ensure_research_gitignore(project_root)
             yield
         finally:
-            fcntl.flock(fd, fcntl.LOCK_UN)
+            presentation_file_lock.release(fd)
             os.close(fd)
 def _load_yaml_map(path: Path, top_key: str) -> Dict[str, Any]:
     """Load an id-keyed YAML document's records map.

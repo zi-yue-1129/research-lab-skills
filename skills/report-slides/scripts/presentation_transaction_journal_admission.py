@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import errno
-import fcntl
 import os
+import sys
 import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
+import presentation_file_lock
 from presentation_no_follow import NoFollowPathError, open_parent_no_follow
 from presentation_transaction_errors import (
     TransactionError,
@@ -24,14 +25,20 @@ _THREAD_STATE = threading.local()
 
 
 def acquire_journal_admission(project_root: Path, timeout: int) -> int:
-    """Acquire the project-wide journal guard without creating a lock file.
+    """Acquire the project-wide journal guard.
+
+    On POSIX the guard inode is the project root directory itself and nothing
+    is created. Windows has no descriptor for a directory and no byte range to
+    lock on one, so it guards an anchored lock file instead -- see
+    `_open_guard_descriptor` for why that keeps the same safety property.
 
     Args:
-        project_root: Existing project root whose directory is the guard inode.
+        project_root: Existing project root whose directory is the guard inode
+            on POSIX, and which contains the guard file on Windows.
         timeout: Maximum seconds to wait for another process.
 
     Returns:
-        Locked directory descriptor; the caller must unlock and close it.
+        Locked descriptor; the caller must unlock and close it.
 
     Raises:
         TransactionError: If the root is unsafe or the guard times out.
@@ -40,19 +47,12 @@ def acquire_journal_admission(project_root: Path, timeout: int) -> int:
         raise TypeError("project_root must be a pathlib.Path")
     if type(timeout) is not int or timeout < 0:
         raise TypeError("timeout must be a non-negative int")
-    try:
-        anchor = open_parent_no_follow(
-            project_root, ".journal-admission-anchor", create_parents=False
-        )
-    except NoFollowPathError as exc:
-        raise TransactionError(f"journal admission root is unsafe: {exc}") from exc
-    descriptor = os.dup(anchor.parent_fd)
-    anchor.close()
+    descriptor = _open_guard_descriptor(project_root)
     deadline = time.monotonic() + timeout
     try:
         while True:
             try:
-                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                presentation_file_lock.acquire_exclusive(descriptor)
                 return descriptor
             except OSError as exc:
                 if exc.errno not in (errno.EACCES, errno.EAGAIN):
@@ -67,6 +67,89 @@ def acquire_journal_admission(project_root: Path, timeout: int) -> int:
     except BaseException:
         os.close(descriptor)
         raise
+
+
+#: Name of the Windows guard file, created inside `.research/` rather than at
+#: the project root so it lands in the store's own already-ignored directory.
+_WINDOWS_GUARD_NAME = "journal-admission.lock"
+
+
+def _open_guard_descriptor(project_root: Path) -> int:
+    """Open the descriptor the project-wide journal guard locks.
+
+    The two platforms guard the same thing by different means, because they
+    have to:
+
+    * POSIX locks the project root *directory inode* itself, duplicated from an
+      anchored no-follow open. Nothing is created, and there is no lock file an
+      attacker could swap.
+    * Windows cannot do that -- a directory has no file descriptor there and no
+      byte range to lock -- so it locks a real file instead. To keep the
+      property the directory-inode design was protecting, that file is opened
+      through the same anchored, no-follow traversal: resolved relative to an
+      already-open handle for the directory that contains it, and refused if it
+      turns out to be a link. It lives in `.research/`, which the store already
+      creates and git-ignores, rather than polluting the project root.
+
+    Args:
+        project_root: Existing project root the guard serializes.
+
+    Returns:
+        A descriptor the caller must unlock and close.
+
+    Raises:
+        TransactionError: If the root is unsafe or the guard cannot be opened.
+    """
+    if sys.platform == "win32":
+        return _open_windows_guard_descriptor(project_root)
+
+    try:
+        anchor = open_parent_no_follow(
+            project_root, ".journal-admission-anchor", create_parents=False
+        )
+    except NoFollowPathError as exc:
+        raise TransactionError(f"journal admission root is unsafe: {exc}") from exc
+    descriptor = os.dup(anchor.parent_fd)
+    anchor.close()
+    return descriptor
+
+
+def _open_windows_guard_descriptor(project_root: Path) -> int:
+    """Open the Windows guard file through anchored no-follow traversal.
+
+    Args:
+        project_root: Existing project root the guard serializes.
+
+    Returns:
+        A descriptor for the guard file.
+
+    Raises:
+        TransactionError: If the root is unsafe or the guard cannot be opened.
+    """
+    import presentation_win32
+
+    try:
+        root_handle = presentation_win32.open_root_directory(str(project_root))
+    except NoFollowPathError as exc:
+        raise TransactionError(f"journal admission root is unsafe: {exc}") from exc
+
+    research_handle = None
+    try:
+        presentation_win32.make_child_directory(root_handle, ".research")
+        research_handle = presentation_win32.open_child_directory(
+            root_handle, ".research"
+        )
+        handle = presentation_win32.open_child_file(
+            research_handle, _WINDOWS_GUARD_NAME, writable=True, create=True
+        )
+    except NoFollowPathError as exc:
+        raise TransactionError(f"journal admission root is unsafe: {exc}") from exc
+    finally:
+        if research_handle is not None:
+            presentation_win32.close_handle(research_handle)
+        presentation_win32.close_handle(root_handle)
+
+    return presentation_win32.handle_to_descriptor(handle, os.O_RDWR)
 
 
 @contextmanager
@@ -98,7 +181,7 @@ def journal_admission_guard(project_root: Path, timeout: int) -> Iterator[None]:
             _THREAD_STATE.depth -= 1
             if _THREAD_STATE.depth == 0:
                 descriptor = _THREAD_STATE.descriptor
-                fcntl.flock(descriptor, fcntl.LOCK_UN)
+                presentation_file_lock.release(descriptor)
                 os.close(descriptor)
                 del _THREAD_STATE.descriptor
                 del _THREAD_STATE.project_root

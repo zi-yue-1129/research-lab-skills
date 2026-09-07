@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import errno
-import fcntl
 import os
 import stat
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
+
+import presentation_file_lock
 from types import MappingProxyType
 from typing import Any, Iterator, Mapping
 
@@ -203,7 +204,7 @@ def migration_workflow_lock(project_root: Path) -> Iterator[None]:
         deadline = time.monotonic() + timeout
         while True:
             try:
-                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                presentation_file_lock.acquire_exclusive(descriptor)
                 break
             except OSError as exc:
                 if exc.errno not in {errno.EACCES, errno.EAGAIN}:
@@ -216,7 +217,7 @@ def migration_workflow_lock(project_root: Path) -> Iterator[None]:
         yield
     finally:
         if descriptor is not None:
-            fcntl.flock(descriptor, fcntl.LOCK_UN)
+            presentation_file_lock.release(descriptor)
             os.close(descriptor)
         anchor.close()
 

@@ -108,16 +108,16 @@ def test_non_dry_migration_locks_before_parse_and_preserves_writer_order(
         descriptor = os.open(str(lock_path), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o666)
         try:
             writer_started.set()
-            import fcntl
+            import presentation_file_lock
 
-            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            presentation_file_lock.acquire_exclusive_blocking(descriptor)
             acquired_before_commit.append(not commit_done.is_set())
             target.write_bytes(writer_bytes)
             target.chmod(0o640)
         finally:
-            import fcntl
+            import presentation_file_lock
 
-            fcntl.flock(descriptor, fcntl.LOCK_UN)
+            presentation_file_lock.release(descriptor)
             os.close(descriptor)
             writer_done.set()
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -115,6 +116,14 @@ def test_plan_destination_allowlist_rejects_symlinked_directories(
     assert not (outside / "plan-v0001.yaml.lock").exists()
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason=(
+        "asserts exact POSIX permission bits, which Windows cannot represent: "
+        "it has only the read-only attribute, so a file reports 0o444 or 0o666. "
+        "Mode preservation is a POSIX guarantee of the store, not a portable one"
+    ),
+)
 def test_transaction_new_file_mode_honors_umask(tmp_path: Path) -> None:
     """A newly committed file follows open(0o666) and the process umask."""
     target = tmp_path / ".research/presentations/state/visual_modules.yaml"
@@ -174,6 +183,14 @@ def test_transaction_rollback_restores_exact_mtime(tmp_path: Path, monkeypatch: 
     assert (target.read_bytes(), target.stat().st_mode & 0o777, target.stat().st_mtime_ns) == before
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason=(
+        "asserts exact POSIX permission bits, which Windows cannot represent: "
+        "it has only the read-only attribute, so a file reports 0o444 or 0o666. "
+        "Mode preservation is a POSIX guarantee of the store, not a portable one"
+    ),
+)
 def test_transaction_journal_recovery_restores_exact_mtime(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -222,6 +239,14 @@ def _journal_entry(path: str, *, exists: bool = False, mode: int = 0o644) -> dic
     }
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason=(
+        "asserts exact POSIX permission bits, which Windows cannot represent: "
+        "it has only the read-only attribute, so a file reports 0o444 or 0o666. "
+        "Mode preservation is a POSIX guarantee of the store, not a portable one"
+    ),
+)
 def test_legacy_journal_without_mtime_metadata_remains_recoverable(tmp_path: Path) -> None:
     """Older journals without ``mtime_ns`` are accepted without invention."""
     target = tmp_path / ".research/presentations/state/slides.yaml"
@@ -307,6 +332,15 @@ def test_absent_journal_requires_explicit_empty_content_and_zero_mode(
     assert _sentinel_snapshot(journal) == journal_before
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason=(
+        "the test rebinds .research mid-transaction to simulate a directory "
+        "swap; Windows refuses to rename a directory that has open handles "
+        "beneath it, so the precondition cannot be constructed there -- the "
+        "attack this guards against is prevented by the OS instead"
+    ),
+)
 def test_cas_recovery_keeps_anchored_tree_across_regular_directory_rebind(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -511,6 +545,13 @@ def test_event_append_rejects_sidecar_symlink_without_touching_outside_sentinel(
     assert not target.exists()
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason=(
+        "simulates a POSIX host with no O_NOFOLLOW; on Windows the capability "
+        "comes from the NT backend instead, so the premise does not hold"
+    ),
+)
 def test_state_write_fails_closed_when_no_follow_unavailable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -536,6 +577,13 @@ def test_state_write_fails_closed_when_no_follow_unavailable(
     assert _sentinel_snapshot(outside) == before_outside
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason=(
+        "simulates a POSIX host with no O_NOFOLLOW; on Windows the capability "
+        "comes from the NT backend instead, so the premise does not hold"
+    ),
+)
 def test_event_append_fails_closed_when_no_follow_unavailable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -571,18 +619,22 @@ def test_state_write_rechecks_journal_after_lock_acquisition(
     sidecar.touch()
     before = target.read_bytes()
     deck_id = next(iter(load_decks(project)))
-    original_flock = presentation_state.fcntl.flock
+    original_acquire = presentation_state.presentation_file_lock.acquire_exclusive
     injected = False
 
-    def flock_with_pending_journal(descriptor: int, operation: int) -> None:
-        """Publish a valid journal immediately before the first exclusive flock."""
+    def acquire_with_pending_journal(descriptor: int) -> None:
+        """Publish a valid journal immediately before the first lock acquisition."""
         nonlocal injected
-        if operation & presentation_state.fcntl.LOCK_EX and not injected:
+        if not injected:
             _write_journal(project, [_journal_entry(".research/presentations/state/decks.yaml")])
             injected = True
-        original_flock(descriptor, operation)
+        original_acquire(descriptor)
 
-    monkeypatch.setattr(presentation_state.fcntl, "flock", flock_with_pending_journal)
+    monkeypatch.setattr(
+        presentation_state.presentation_file_lock,
+        "acquire_exclusive",
+        acquire_with_pending_journal,
+    )
     with pytest.raises(TransactionRecoveryRequiredError, match="recovery required"):
         set_deck_status(project, deck_id, "content_review")
 
@@ -596,18 +648,22 @@ def test_event_append_rechecks_journal_after_lock_acquisition(
     """A journal appearing during lock acquisition blocks event mutation."""
     project, target, sidecar = _prepare_event_write_target(tmp_path)
     sidecar.touch()
-    original_flock = presentation_events.fcntl.flock
+    original_acquire = presentation_events.presentation_file_lock.acquire_exclusive
     injected = False
 
-    def flock_with_pending_journal(descriptor: int, operation: int) -> None:
-        """Publish a valid journal immediately before the first exclusive flock."""
+    def acquire_with_pending_journal(descriptor: int) -> None:
+        """Publish a valid journal immediately before the first lock acquisition."""
         nonlocal injected
-        if operation & presentation_events.fcntl.LOCK_EX and not injected:
+        if not injected:
             _write_journal(project, [_journal_entry(".research/presentations/events/" + target.name)])
             injected = True
-        original_flock(descriptor, operation)
+        original_acquire(descriptor)
 
-    monkeypatch.setattr(presentation_events.fcntl, "flock", flock_with_pending_journal)
+    monkeypatch.setattr(
+        presentation_events.presentation_file_lock,
+        "acquire_exclusive",
+        acquire_with_pending_journal,
+    )
     with pytest.raises(TransactionRecoveryRequiredError, match="recovery required"):
         append_event(project, {"event": "guarded", "id": "guarded"})
 
@@ -897,6 +953,14 @@ def test_unexpected_journal_entry_blocks_query_gate_and_low_level_writer(tmp_pat
     assert unexpected.read_bytes() == b"unexpected"
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason=(
+        "asserts exact POSIX permission bits, which Windows cannot represent: "
+        "it has only the read-only attribute, so a file reports 0o444 or 0o666. "
+        "Mode preservation is a POSIX guarantee of the store, not a portable one"
+    ),
+)
 def test_real_three_target_crash_blocks_writes_and_recovers_exact_preimages(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
