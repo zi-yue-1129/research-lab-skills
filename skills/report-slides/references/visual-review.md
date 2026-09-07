@@ -61,6 +61,38 @@ pdftoppm -png -r 150 \
     docs/slides/reports/2026-08-03_pptx-review-gate/renders/pptx/libreoffice/slide
 ```
 
+**Windows: PowerPoint is the equivalent renderer.** A stock Windows install has
+neither `libreoffice` nor `pdftoppm`, but a machine with Office already has a
+higher-fidelity renderer than either — the application the reader will open the
+deck in. `scripts/pptx_com.py` drives it over COM and exports PNG directly,
+with no PDF hop:
+
+```powershell
+python -m svg_to_pptx --slides docs/slides/reports/2026-08-03_pptx-review-gate `
+    --out docs/slides/reports/2026-08-03_pptx-review-gate/deck.pptx
+python scripts/pptx_com.py --render `
+    --pptx docs/slides/reports/2026-08-03_pptx-review-gate/deck.pptx `
+    --out  docs/slides/reports/2026-08-03_pptx-review-gate/renders/pptx/powerpoint `
+    --json
+```
+
+The command prints the `renderer` / `conversion_artifacts` /
+`rendered_png_paths` fields ready to merge into the review record — its
+`conversion_format` is `direct-png` rather than LibreOffice's `pdf-to-png`.
+Check availability first with `python scripts/pptx_com.py --probe --json`; it
+exits 2 and names the missing capability when this host cannot render, which is
+the cue to fall back to the LibreOffice commands above (and, when neither is
+available, the exact text to record as the `blocked` blocker). Note that on
+Windows the skill's `python3 ...` invocations must be run as `python ...` —
+`python3` there is a Microsoft Store stub that exits without output.
+
+`pptx_com.py --layout` additionally reports each shape's geometry *after*
+PowerPoint has laid the deck out, including the height the text actually
+occupies. That measurement settles clipping and text-reflow findings that would
+otherwise be argued from the SVG source; a shape reported `clipped` is cut off,
+while one merely reported `overflows_box` stays legible but grows past its
+declared bounds and may collide with what sits below it.
+
 Record the renderer's actual name, version, and conversion format, the PDF
 path when one was produced, and every final PNG path — never the example
 values above. If an equivalent office renderer is used instead, record its

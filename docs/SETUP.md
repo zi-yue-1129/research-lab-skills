@@ -90,6 +90,73 @@ curl --proto '=https' --tlsv1.2 -fsSL https://drop-sh.fullyjustified.net | sh
 
 ---
 
+## Slide decks — `report-slides` dependencies
+
+Installing the skills copies directories; it does not install the tools
+`report-slides` shells out to. On Windows, run the bundled check first — it
+reports every item below and prints the command that fixes each gap:
+
+```powershell
+.\install.ps1 -Doctor
+```
+
+**Required for PPTX export:**
+
+```bash
+pip install python-pptx lxml
+```
+
+Without these, `svg_to_pptx` cannot run at all and PPTX export fails outright.
+
+**Required for the visual review gate — one complete chain.** The gate converts
+the exported deck to one PNG per slide and inspects those pixels; with no
+renderer, `statuses.pptx_render` is `blocked` and no deck can reach `completed`.
+
+*Option A — LibreOffice + poppler (cross-platform, the default path):*
+
+```bash
+# macOS
+brew install --cask libreoffice && brew install poppler
+
+# Linux (Debian/Ubuntu)
+sudo apt-get install libreoffice poppler-utils
+
+# Windows
+winget install TheDocumentFoundation.LibreOffice
+winget install oschwartz10612.Poppler
+```
+
+*Option B — Microsoft PowerPoint (Windows only, recommended there):*
+
+```powershell
+pip install pywin32
+```
+
+If you already have Office, this needs nothing else. `scripts/pptx_com.py`
+drives PowerPoint over COM and exports PNG directly — no PDF intermediate, no
+LibreOffice, no poppler — and it renders with the same engine your readers
+will open the deck in. It also reports post-layout text extents, which is how
+clipped text is detected rather than guessed. Confirm with:
+
+```powershell
+python skills/report-slides/scripts/pptx_com.py --probe --json
+```
+
+**Optional — Mermaid diagram slides:**
+
+```bash
+npm install -g @mermaid-js/mermaid-cli
+```
+
+Without `mmdc`, diagram slides fall back to Claude-authored SVG.
+
+> **Windows: use `python`, not `python3`.** The skill documents every command as
+> `python3 ...`, which on Windows resolves to a Microsoft Store stub that exits
+> with no output — so those commands fail silently rather than erroring. Run
+> them as `python ...`.
+
+---
+
 ## Material Passport `literature_corpus[]` adapters (v3.6.4+, optional)
 
 If you maintain a curated literature corpus (Zotero, Obsidian, a folder of PDFs, etc.), you can pre-load it into a Material Passport so Phase 1 ARS agents read your library *before* searching external databases. This is opt-in and presence-based — when no corpus is supplied, ARS runs the external-DB-only flow unchanged.

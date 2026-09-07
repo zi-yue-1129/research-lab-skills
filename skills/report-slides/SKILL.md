@@ -1041,7 +1041,18 @@ python3 to_pptx.py \
     --out    "$SLIDES_DIR/reports/YYYY-MM-DD_<name>/deck.pptx"
 ```
 
+```powershell
+# Windows (PowerShell) — `python3` there is a Microsoft Store stub, use `python`:
+cd (Get-ChildItem $env:USERPROFILE\.claude -Recurse -Directory -Filter scripts |
+    Where-Object FullName -like "*report-slides*" | Select-Object -First 1).FullName
+python -m svg_to_pptx `
+    --slides "$SLIDES_DIR\reports\YYYY-MM-DD_<name>\" `
+    --out    "$SLIDES_DIR\reports\YYYY-MM-DD_<name>\deck.pptx"
+```
+
 Only `python-pptx` and `lxml` required — no cairosvg, Pillow, or image converter needed.
+Verify both are installed before exporting; on Windows
+`.\install.ps1 -Doctor` reports them along with the renderer chain.
 
 **A PPTX export is not the final visual check.** Exporting `deck.pptx` only
 produces the artifact `statuses.pptx_render` will judge — it is not itself
@@ -1054,7 +1065,10 @@ source or the PPTX's internal object tree. Immediately after export:
 2. Convert the actual `deck.pptx` — never the source SVG — with LibreOffice
    or an equivalent available office renderer, producing exactly one PNG per
    expected slide (see `references/visual-review.md` for the concrete
-   `libreoffice`/`pdftoppm` commands).
+   `libreoffice`/`pdftoppm` commands). On Windows, where neither tool is
+   present by default, `scripts/pptx_com.py --render` drives the installed
+   PowerPoint instead and exports PNG directly; probe it first with
+   `python scripts/pptx_com.py --probe --json`.
 3. Send every converted PNG path directly to model vision as
    `model_vision.inspected_paths` and record the outcome as
    `statuses.pptx_render` — the authoritative final visual gate.
@@ -1067,6 +1081,8 @@ final-PNG inspection cannot be completed, record `statuses.pptx_render` as
 `blocked` with the exact missing capability and set
 `overall.completion_allowed` to `false` — do not report the deck complete
 from the SVG preview, the review sheet, or the PPTX structure result alone.
+`pptx_com.py --probe` and `--render` exit 2 and print that missing capability
+verbatim, so record its message rather than paraphrasing one.
 
 ---
 
