@@ -2,13 +2,20 @@
 
 這個目錄展示 `report-slides` 技能的 `diagram_builder`：用**資料**描述一張技術架構圖，尺寸與座標由工具從實際文字量測推導，再由兩道閘門驗證。
 
+**高密度版本**（`figure` token 集，2400×1350，一頁 25 個節點）：
+
+![完整架構圖](figure-preview-01.png)
+
+**投影片版本**（`default` token 集，1200×675，自動分成兩張）：
+
 ![第一張](preview-01.png)
 ![第二張](preview-02.png)
 
 ## 自己跑一次
 
 ```bash
-python3 examples/architecture-diagram/build_diagram.py
+python3 examples/architecture-diagram/build_figure.py    # 高密度單頁圖
+python3 examples/architecture-diagram/build_diagram.py   # 投影片版，自動分頁
 ```
 
 只需要 Python 與 `PyYAML`。腳本會自己找到技能目錄（先看 `~/.claude/skills/`，再看這個 repo），輸出 `slide-01.svg`。SVG 在任何向量編輯器裡都能開，GitHub 也會直接渲染。
@@ -95,8 +102,36 @@ shorten its labels or split it into two sections
 
 那次的處理方式就寫在 `build_diagram.py` 裡：照它說的把一個區段拆成兩個，分頁隨即自然解決。
 
-## 密度的上限
+## 高密度圖怎麼來的
 
-預設 token 集為**投影片**校準：`node_label` 18、`caption` 16，都已經在 schema 的下限；畫布固定在 1200×675。所以單一畫布能承載的量有天花板——超過的部分會分頁，而不是縮小到看不清楚。
+兩個腳本描述的是**同一個東西**，差別只有一行：
 
-如果你要的是論文裡那種整頁、不分頁的高密度圖，需要更小的字級或更大的畫布，兩者目前都被 `design-tokens.schema.json` 擋住（`typeRole18`、`canvas.width: const 1200`）。那是這個技能刻意的設計選擇，不是 `diagram_builder` 的限制。
+```python
+TOKENS = yaml.safe_load((SKILL / "references/tokens/figure.tokens.yaml").read_text())
+```
+
+`figure.tokens.yaml` 與 `default.tokens.yaml` **除了畫布以外完全相同** —— 一樣的字級、一樣的間距下限、一樣的色票。畫布從 1200×675 變成 2400×1350（仍是 16:9，所以放進簡報不會變形）。
+
+密度就是從這裡來的，而且**沒有降低任何易讀性下限**：
+
+| | 投影片 | 圖表 |
+|---|---|---|
+| 畫布 | 1200×675 | 2400×1350（四倍面積） |
+| `node_label` 宣告值 | 18 | 18（相同） |
+| 實際渲染 | 18pt | **9pt** |
+| 相對大小 | — | 一半 |
+
+`svg_to_pptx` 現在會用 1200 單位作為基準來縮放宣告的字級。1200 畫布的比例是 1.0，所以**既有的簡報一個位元組都沒變**（207 個轉換器測試全過）。
+
+## Schema 怎麼放行的
+
+`design-tokens.schema.json` 原本把畫布寫死成 `const: 1200`。現在加了 `kind` 欄位，並用條件式規則：
+
+- 沒有 `kind` 或 `kind: slide` → 畫布仍然**只能是** 1200×675
+- `kind: figure` → 可用 1200 / 1600 / 2000 / 2400，且**必須維持 16:9**
+
+型別下限與間距下限**一律沒有放寬**。四道守衛都有測試釘住：投影片不能用大畫布、圖表不能用非 16:9、圖表不能低於字級下限。
+
+## 該選哪個畫布
+
+`figure.tokens.yaml` 用的是 2400×1350。內容較少時 1600×900 或 2000×1125 也合法，改 token 檔的 `canvas` 即可——選一個剛好裝得下的，留白太多的圖不會比較好讀。

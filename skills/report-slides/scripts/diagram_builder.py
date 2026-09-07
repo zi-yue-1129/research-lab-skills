@@ -246,9 +246,15 @@ class Diagram:
         Returns:
             The factor to widen measured text by, never below 1.
         """
-        from svg_to_pptx.converter import PPTX_W
+        from svg_to_pptx.converter import PPTX_W, CoordSystem
 
-        return max(1.0, 1.0 / ((PPTX_W / 12700) / self.canvas_w))
+        points_per_unit = (PPTX_W / 12700) / self.canvas_w
+        # The converter scales a declared size against its 1200-unit reference,
+        # so the two factors together are what a label actually renders at.
+        # Asking the converter keeps this correct on any canvas rather than
+        # baking in the ratio of one.
+        emitted = CoordSystem(self.canvas_w, self.canvas_h).font_scale()
+        return max(1.0, emitted / points_per_unit)
 
     # --- authoring ------------------------------------------------------
 

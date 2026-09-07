@@ -295,7 +295,7 @@ def _write_label(shape: Any, text_elem: Any, parent_style: Dict,
         para.line_spacing = Emu(cs.y(line_heights[i]))
         run = para.add_run()
         run.text = text
-        _apply_font(run, line_style, parent_style)
+        _apply_font(run, line_style, parent_style, cs.font_scale())
 
 
 def _collect_text_lines(
@@ -376,12 +376,23 @@ def _is_bold_weight(weight: str) -> bool:
         return False
 
 
-def _apply_font(run: Any, style: Dict, parent_style: Dict) -> None:
+def _apply_font(run: Any, style: Dict, parent_style: Dict,
+                scale: float = 1.0) -> None:
+    """Apply an SVG text style to one PPTX run.
+
+    Args:
+        run: The run to style.
+        style: The element's resolved style.
+        parent_style: Styles inherited from its parent.
+        scale: Factor from SVG font-size units to points, supplied by the
+            slide's `CoordSystem`. Defaults to 1.0, which is the value for the
+            1200-unit canvas, so a caller without one behaves as before.
+    """
     size_raw = style.get("font-size", parent_style.get("font-size", "14"))
     try:
-        run.font.size = Pt(float(re.sub(r"[^0-9.]", "", size_raw) or "14"))
+        run.font.size = Pt(float(re.sub(r"[^0-9.]", "", size_raw) or "14") * scale)
     except ValueError:
-        run.font.size = Pt(14)
+        run.font.size = Pt(14 * scale)
     weight = style.get("font-weight", parent_style.get("font-weight", "normal"))
     if _is_bold_weight(weight):
         run.font.bold = True

@@ -178,7 +178,7 @@ def _fill_text_frame(tf: Any, elem: Any, style: Dict, cs: CoordSystem, anchor: s
     if dt:
         run = current_para.add_run()
         run.text = dt
-        _apply_font(run, style, style)
+        _apply_font(run, style, style, cs.font_scale())
 
     for ts in tspans:
         dy = _tspan_dy(ts)
@@ -200,4 +200,4 @@ def _fill_text_frame(tf: Any, elem: Any, style: Dict, cs: CoordSystem, anchor: s
         if ts_text:
             run = current_para.add_run()
             run.text = ts_text
-            _apply_font(run, ts_style, style)
+            _apply_font(run, ts_style, style, cs.font_scale())
