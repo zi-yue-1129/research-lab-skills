@@ -811,6 +811,24 @@ def _try_bind(conn: Any, begin_pt: tuple, end_pt: tuple, anchor_map: Dict) -> No
             bind_connector_end(conn, is_begin, best_sp_id, best_idx)
 
 
+def _warn_on_aspect_mismatch(prs: Any) -> None:
+    """Report a template whose page shape differs from the SVG canvas.
+
+    Args:
+        prs: The presentation opened from the template.
+    """
+    canvas = PPTX_W / PPTX_H
+    page = prs.slide_width / prs.slide_height
+    if abs(page - canvas) <= 0.01:
+        return
+    print(
+        f"warning: the template's slides are {page:.3f}:1 but the deck's SVG "
+        f"canvas is {canvas:.3f}:1. The artwork will be mapped onto a page it "
+        f"was not composed for. Re-author the slides at the template's aspect, "
+        f"or export without --template."
+    )
+
+
 def convert_file(slides_dir: str, out_path: str, verbose: bool = False,
                  template: str | None = None,
                  layout_name: str | None = None) -> None:
@@ -835,11 +853,16 @@ def convert_file(slides_dir: str, out_path: str, verbose: bool = False,
 
     prs = open_presentation(None if template is None else Path(template))
     layout = choose_layout(prs, layout_name)
-    # A template states its own slide size; only impose the skill's 16:9
-    # canvas when none was supplied, so a house template's page setup wins.
+    # A template states its own slide size, and a house template's page setup
+    # wins -- but only after saying so. Slides are painted from a fixed SVG
+    # canvas, so a template with a different aspect maps that artwork onto a
+    # shape it was not composed for: nothing errors, the deck simply comes out
+    # subtly wrong, which is the failure mode hardest to notice in review.
     if template is None:
         prs.slide_width = Emu(PPTX_W)
         prs.slide_height = Emu(PPTX_H)
+    else:
+        _warn_on_aspect_mismatch(prs)
 
     svg_files = sorted(Path(slides_dir).glob("slide*.svg"))
     if not svg_files:

@@ -349,3 +349,68 @@ def test_render_rejects_a_missing_deck(tmp_path: Path) -> None:
     """A missing deck is a typed, reportable blocker."""
     with pytest.raises(PowerPointUnavailable, match="deck not found"):
         render(tmp_path / "absent.pptx", tmp_path / "out")
+
+
+class _FakePageSetup:
+    """Page setup reporting a slide's dimensions in points."""
+
+    def __init__(self, width: float, height: float) -> None:
+        self.SlideWidth = width
+        self.SlideHeight = height
+
+
+class _FakePresentation:
+    """Just enough presentation for `_export_size` to read a page shape."""
+
+    def __init__(self, width: float, height: float) -> None:
+        self.PageSetup = _FakePageSetup(width, height)
+
+
+def test_export_size_derives_height_from_a_widescreen_deck() -> None:
+    """A 16:9 deck renders at the default long edge, undistorted."""
+    from pptx_com import DEFAULT_LONG_EDGE, _export_size
+
+    assert _export_size(_FakePresentation(960.0, 540.0), None, None) == (
+        DEFAULT_LONG_EDGE,
+        DEFAULT_LONG_EDGE * 9 // 16,
+    )
+
+
+def test_export_size_does_not_stretch_a_four_three_deck() -> None:
+    """The defect this replaced: a 4:3 deck forced into a 16:9 frame.
+
+    The visual gate inspects these pixels to judge what the reader will see, so
+    handing it a horizontally stretched picture undermines the whole gate.
+    """
+    from pptx_com import _export_size
+
+    width, height = _export_size(_FakePresentation(720.0, 540.0), None, None)
+    assert round(width / height, 3) == round(720.0 / 540.0, 3)
+
+
+def test_export_size_handles_a_portrait_deck() -> None:
+    """A taller-than-wide deck puts the long edge on the height."""
+    from pptx_com import DEFAULT_LONG_EDGE, _export_size
+
+    width, height = _export_size(_FakePresentation(540.0, 720.0), None, None)
+    assert height == DEFAULT_LONG_EDGE
+    assert round(width / height, 3) == round(540.0 / 720.0, 3)
+
+
+def test_export_size_derives_the_missing_side_from_one_given() -> None:
+    """Capping one dimension must not skew the other."""
+    from pptx_com import _export_size
+
+    assert _export_size(_FakePresentation(960.0, 540.0), 1280, None) == (1280, 720)
+    assert _export_size(_FakePresentation(960.0, 540.0), None, 720) == (1280, 720)
+
+
+def test_export_size_honours_both_dimensions_when_given() -> None:
+    """An explicit size is obeyed verbatim, distortion included.
+
+    A caller comparing against a fixed-size reference sometimes needs exactly
+    that, so the override is not second-guessed.
+    """
+    from pptx_com import _export_size
+
+    assert _export_size(_FakePresentation(720.0, 540.0), 1920, 1080) == (1920, 1080)

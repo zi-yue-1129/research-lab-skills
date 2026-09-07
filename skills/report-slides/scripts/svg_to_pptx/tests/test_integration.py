@@ -124,9 +124,33 @@ def test_all_shapes_have_positive_size():
 
 _ROOT_FONT_SVG = """\
 <svg viewBox="0 0 1200 675" xmlns="http://www.w3.org/2000/svg" \
-font-family="DejaVu Sans">
+font-family="{family}">
   <text x="100" y="100" font-size="21" data-style-role="body">Inherited</text>
 </svg>"""
+
+
+def _installed_family() -> str:
+    """Return a font family installed on this host.
+
+    Returns:
+        The first candidate that resolves, preferring families that exist on
+        Linux CI and on Windows respectively.
+
+    Raises:
+        pytest.skip.Exception: When none of the candidates is installed, which
+            means the host cannot exercise font resolution at all.
+    """
+    import pytest
+
+    from fonts import FontError, is_family_available
+
+    for candidate in ("DejaVu Sans", "Arial", "Segoe UI", "Liberation Sans"):
+        try:
+            if is_family_available(candidate):
+                return candidate
+        except FontError:
+            break
+    pytest.skip("no known font family is installed on this host")
 
 
 def test_root_svg_font_family_reaches_the_run():
@@ -140,7 +164,12 @@ def test_root_svg_font_family_reaches_the_run():
     every slide. Fixing the truncation in `_apply_font` alone left this intact,
     because there was no `font-family` in scope for it to resolve.
     """
-    path = _make_tmp_svg(_ROOT_FONT_SVG)
+    # The family is incidental to what this asserts -- that a `font-family` on
+    # `<svg>` reaches the runs -- but it must actually be installed, or font
+    # resolution fails for a reason unrelated to the subject. Hardcoding
+    # "DejaVu Sans" made this a Linux-only test by accident.
+    family = _installed_family()
+    path = _make_tmp_svg(_ROOT_FONT_SVG.format(family=family))
     try:
         prs = Presentation()
         prs.slide_width = Emu(12_192_000)
@@ -153,7 +182,7 @@ def test_root_svg_font_family_reaches_the_run():
             for para in shape.text_frame.paragraphs
             for run in para.runs
         }
-        assert names == {"DejaVu Sans"}
+        assert names == {family}
     finally:
         os.unlink(path)
 

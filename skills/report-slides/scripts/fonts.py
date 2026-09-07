@@ -10,6 +10,7 @@ import functools
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -19,6 +20,24 @@ _GENERIC_FAMILIES = frozenset(
     {"serif", "sans-serif", "monospace", "cursive", "fantasy", "system-ui"}
 )
 _FC_TIMEOUT_SECONDS = 15
+
+
+def _use_windows_registry() -> bool:
+    """Report whether font lookups should go through the Windows registry.
+
+    fontconfig is preferred wherever it exists, including on a Windows host
+    that has it installed: it is what the rest of the toolchain and the Linux
+    CI resolve against, so using it keeps one answer across platforms. The
+    registry is the fallback that makes a stock Windows machine work at all.
+
+    Returns:
+        True when this is Windows and `fc-match` is not on PATH.
+    """
+    if sys.platform != "win32" or shutil.which("fc-match") is not None:
+        return False
+    import windows_fonts
+
+    return windows_fonts.available()
 
 
 class FontError(RuntimeError):
@@ -69,6 +88,9 @@ def is_family_available(family: str) -> bool:
     """
     if family.lower() in _GENERIC_FAMILIES:
         return False
+    if _use_windows_registry():
+        import windows_fonts
+        return windows_fonts.is_family_available(family)
     if shutil.which("fc-match") is None:
         raise FontError("fontconfig (fc-match) is required to resolve font families")
     try:
@@ -147,6 +169,14 @@ def font_file_for(family: str, weight: int = 400) -> Path:
     """
     if not is_family_available(family):
         raise FontError(f"font family {family!r} is not installed")
+    if _use_windows_registry():
+        import windows_fonts
+        path = windows_fonts.font_file_for(family, weight)
+        if path is None:
+            raise FontError(
+                f"font family {family!r} is registered but its file is missing"
+            )
+        return path
     try:
         result = subprocess.run(
             ["fc-match", "--format=%{file}", f"{family}:weight={_fc_weight(weight)}"],

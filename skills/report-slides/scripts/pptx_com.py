@@ -61,10 +61,12 @@ RENDERER_NAME = "Microsoft PowerPoint (COM)"
 #: `pdf-to-png`. Recorded verbatim in `renderer.conversion_format`.
 CONVERSION_FORMAT = "direct-png"
 
-#: Default export size. 1920x1080 is 16:9 at a resolution where 12pt body text
-#: is legible to model vision without the files becoming unwieldy.
-DEFAULT_WIDTH = 1920
-DEFAULT_HEIGHT = 1080
+#: Default long edge of an exported PNG. 1920 renders 12pt body text legibly
+#: for model vision without the files becoming unwieldy. The other dimension is
+#: derived from the deck's own aspect ratio rather than assumed: forcing a 4:3
+#: deck into a 16:9 frame stretches it, and a gate whose whole purpose is to
+#: inspect what the reader will see must not be handed a distorted picture.
+DEFAULT_LONG_EDGE = 1920
 
 #: `Presentation.SaveAs` format code for PDF (ppSaveAsPDF).
 _PP_SAVE_AS_PDF = 32
@@ -202,8 +204,8 @@ def render(
     pptx: Path,
     out_dir: Path,
     *,
-    width: int = DEFAULT_WIDTH,
-    height: int = DEFAULT_HEIGHT,
+    width: Optional[int] = None,
+    height: Optional[int] = None,
     prefix: str = "slide",
     pdf: bool = True,
 ) -> Dict[str, Any]:
@@ -213,8 +215,11 @@ def render(
         pptx: The exported deck to convert. Convert the actual deck, never the
             source SVG -- that distinction is the whole point of the gate.
         out_dir: Directory for the PNGs; created if absent.
-        width: Export width in pixels.
-        height: Export height in pixels.
+        width: Export width in pixels. Omit to derive it from the deck's own
+            aspect ratio, which is what keeps the render undistorted.
+        height: Export height in pixels. Omit to derive it the same way. Giving
+            one and not the other derives the missing side from the aspect, so
+            a caller can cap a single dimension without skewing the result.
         prefix: PNG basename stem; files are `<prefix>-01.png`, zero-padded to
             two digits so a 10+ slide deck still sorts lexicographically.
         pdf: Also save a PDF beside the PNGs. On by default because the review
@@ -236,6 +241,7 @@ def render(
     with _session(deck) as (app, presentation):
         version = str(app.Version)
         slide_count = int(presentation.Slides.Count)
+        width, height = _export_size(presentation, width, height)
         for index in range(1, slide_count + 1):
             png = destination / f"{prefix}-{index:02d}.png"
             presentation.Slides(index).Export(str(png), "PNG", width, height)
@@ -259,6 +265,36 @@ def render(
     }
 
 
+def _export_size(
+    presentation: Any, width: Optional[int], height: Optional[int]
+) -> Tuple[int, int]:
+    """Choose an export size that preserves the deck's aspect ratio.
+
+    Args:
+        presentation: The open presentation, whose page setup states the real
+            slide dimensions in points.
+        width: Caller's width, or None to derive it.
+        height: Caller's height, or None to derive it.
+
+    Returns:
+        The `(width, height)` to export at. Both given are honoured verbatim --
+        a caller asking for an exact size gets it, distortion included, because
+        that is sometimes what a comparison needs.
+    """
+    if width is not None and height is not None:
+        return width, height
+
+    page = presentation.PageSetup
+    aspect = float(page.SlideWidth) / float(page.SlideHeight)
+    if width is not None:
+        return width, max(1, round(width / aspect))
+    if height is not None:
+        return max(1, round(height * aspect)), height
+    if aspect >= 1.0:
+        return DEFAULT_LONG_EDGE, max(1, round(DEFAULT_LONG_EDGE / aspect))
+    return max(1, round(DEFAULT_LONG_EDGE * aspect)), DEFAULT_LONG_EDGE
+
+
 def layout(pptx: Path) -> Dict[str, Any]:
     """Report each shape's geometry *after* PowerPoint has laid the deck out.
 
@@ -266,12 +302,14 @@ def layout(pptx: Path) -> Dict[str, Any]:
     sizes in the design tokens so an overflow is directly comparable to the
     type scale that caused it.
 
-    `text_bound_height` is the height the laid-out text occupies, which is the
-    fact `python-pptx` cannot supply. Text exceeding its shape is reported two
-    ways, because the two failures are different: `clipped` means the text is
-    cut off (a fixed-size box, `msoAutoSizeNone`), while `overflows_box` also
-    covers an auto-sizing box that stays legible but silently grows past its
-    declared bounds and can collide with whatever sits below it.
+    `text_bound_width` and `text_bound_height` are the extents the laid-out
+    text occupies, the facts `python-pptx` cannot supply. Both axes are
+    reported, because they fail differently and because height alone misses
+    most of it: on a real architecture slide, measuring only height found 3 of
+    9 genuine overflows. `clipped` means the words leave the box the reader
+    sees -- always true horizontally, since autosize grows height and never
+    width. `overflows_box` also covers an auto-sizing box that stays legible
+    but grows past its declared bounds into whatever sits below.
 
     Note: `Shapes` does not recurse into groups, so a grouped child is measured
     as part of its group's bounding box rather than individually.
@@ -301,6 +339,24 @@ def layout(pptx: Path) -> Dict[str, Any]:
     }
 
 
+def _has_visible_boundary(shape: Any) -> bool:
+    """Report whether a shape draws a fill or an outline.
+
+    Args:
+        shape: A live PowerPoint `Shape`.
+
+    Returns:
+        True when either is visible. A shape whose visibility cannot be read is
+        treated as bounded, so an unreadable case errs toward reporting rather
+        than toward silence.
+    """
+    try:
+        # msoTrue is -1; anything non-zero counts as visible.
+        return bool(shape.Fill.Visible) or bool(shape.Line.Visible)
+    except Exception:  # pragma: no cover - host-dependent
+        return True
+
+
 def _measure_shape(shape: Any) -> Dict[str, Any]:
     """Measure one laid-out shape.
 
@@ -314,6 +370,11 @@ def _measure_shape(shape: Any) -> Dict[str, Any]:
     """
     measured: Dict[str, Any] = {
         "name": str(shape.Name),
+        # Whether the reader can see a boundary for the text to escape from.
+        # A bare text box has none, so text extending past its nominal width is
+        # simply how non-wrapping text behaves -- not a defect, and reporting it
+        # would train people to ignore the gate.
+        "has_visible_boundary": _has_visible_boundary(shape),
         "left": float(shape.Left),
         "top": float(shape.Top),
         "width": float(shape.Width),
@@ -328,8 +389,23 @@ def _measure_shape(shape: Any) -> Dict[str, Any]:
             return measured
         text_range = frame.TextRange
         bound_height = float(text_range.BoundHeight)
+        bound_width = float(text_range.BoundWidth)
         autosize = int(frame.AutoSize)
         overflow = bound_height - measured["height"]
+        # Width matters at least as much as height, and for a diagram it
+        # matters more: node boxes have a fixed width and their labels are the
+        # thing that outgrows them. Measuring only the vertical axis reported 3
+        # of 9 real overflows on a real architecture slide.
+        #
+        # Compare *edges*, not widths. A text frame insets its content from the
+        # left, so the text starts right of the shape and a width comparison
+        # under-reports by that inset -- measured on a real slide, a label whose
+        # words visibly escaped its box by 8pt was reported as fitting with
+        # 6.7pt to spare. Where the text actually ends is the only thing a
+        # reader sees.
+        overflow_x = (
+            float(text_range.BoundLeft) + bound_width
+        ) - (measured["left"] + measured["width"])
         measured.update(
             {
                 "has_text": True,
@@ -340,9 +416,20 @@ def _measure_shape(shape: Any) -> Dict[str, Any]:
                 "text_bound_height": bound_height,
                 "autosize": autosize,
                 "text_overflow_pt": round(overflow, 2),
-                "overflows_box": overflow > _OVERFLOW_TOLERANCE_PT,
+                "text_overflow_x_pt": round(overflow_x, 2),
+                "overflows_box": (
+                    overflow > _OVERFLOW_TOLERANCE_PT
+                    or overflow_x > _OVERFLOW_TOLERANCE_PT
+                ),
+                # Autosize grows a shape's *height* to fit; it never widens it.
+                # Horizontal overflow is therefore a clip whatever the autosize
+                # mode says -- the words run outside the box the reader sees.
                 "clipped": (
-                    overflow > _OVERFLOW_TOLERANCE_PT and autosize == _MSO_AUTOSIZE_NONE
+                    overflow_x > _OVERFLOW_TOLERANCE_PT
+                    or (
+                        overflow > _OVERFLOW_TOLERANCE_PT
+                        and autosize == _MSO_AUTOSIZE_NONE
+                    )
                 ),
             }
         )
@@ -384,8 +471,12 @@ def _build_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--pptx", type=Path, help="deck to render or measure")
     parser.add_argument("--out", type=Path, help="output directory for --render")
-    parser.add_argument("--width", type=int, default=DEFAULT_WIDTH, help="export width in pixels")
-    parser.add_argument("--height", type=int, default=DEFAULT_HEIGHT, help="export height in pixels")
+    parser.add_argument(
+        "--width", type=int, default=None,
+        help="export width in pixels (default: derived from the deck's aspect)")
+    parser.add_argument(
+        "--height", type=int, default=None,
+        help="export height in pixels (default: derived from the deck's aspect)")
     parser.add_argument("--prefix", default="slide", help="PNG basename stem (default: slide)")
     parser.add_argument(
         "--no-pdf",
