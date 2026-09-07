@@ -75,6 +75,17 @@ _FILE_OPEN_REPARSE_POINT = 0x00200000
 #: ObjectAttributes.
 _OBJ_CASE_INSENSITIVE = 0x00000040
 
+#: `FILE_INFO_BY_HANDLE_CLASS` values used to enumerate a directory. The
+#: RESTART variant begins an enumeration; the plain one continues it.
+_FILE_FULL_DIRECTORY_INFO = 14
+_FILE_FULL_DIRECTORY_RESTART_INFO = 15
+
+#: Signals the end of a `GetFileInformationByHandleEx` enumeration.
+_ERROR_NO_MORE_FILES = 18
+
+#: Byte offset of the inline `FileName` array inside `FILE_FULL_DIR_INFO`.
+_FILE_FULL_DIR_INFO_NAME_OFFSET = 68
+
 #: File attribute marking an object as a link of some kind.
 _FILE_ATTRIBUTE_REPARSE_POINT = 0x00000400
 _FILE_ATTRIBUTE_DIRECTORY = 0x00000010
@@ -113,6 +124,24 @@ class _OBJECT_ATTRIBUTES(ctypes.Structure):
 
 class _IO_STATUS_BLOCK(ctypes.Structure):
     _fields_ = [("Status", ctypes.c_long), ("Information", _ULONG_PTR)]
+
+
+class _FILE_FULL_DIR_INFO(ctypes.Structure):
+    """Fixed header of a directory entry; the name follows it inline."""
+
+    _fields_ = [
+        ("NextEntryOffset", wintypes.ULONG),
+        ("FileIndex", wintypes.ULONG),
+        ("CreationTime", ctypes.c_longlong),
+        ("LastAccessTime", ctypes.c_longlong),
+        ("LastWriteTime", ctypes.c_longlong),
+        ("ChangeTime", ctypes.c_longlong),
+        ("EndOfFile", ctypes.c_longlong),
+        ("AllocationSize", ctypes.c_longlong),
+        ("FileAttributes", wintypes.ULONG),
+        ("FileNameLength", wintypes.ULONG),
+        ("EaSize", wintypes.ULONG),
+    ]
 
 
 class _BY_HANDLE_FILE_INFORMATION(ctypes.Structure):
@@ -179,6 +208,13 @@ def _bind() -> Tuple[ctypes.WinDLL, ctypes.WinDLL]:
     kernel32.GetFileInformationByHandle.argtypes = [
         wintypes.HANDLE,
         ctypes.POINTER(_BY_HANDLE_FILE_INFORMATION),
+    ]
+    kernel32.GetFileInformationByHandleEx.restype = wintypes.BOOL
+    kernel32.GetFileInformationByHandleEx.argtypes = [
+        wintypes.HANDLE,
+        wintypes.INT,
+        ctypes.c_void_p,
+        wintypes.DWORD,
     ]
     kernel32.FlushFileBuffers.restype = wintypes.BOOL
     kernel32.FlushFileBuffers.argtypes = [wintypes.HANDLE]
@@ -406,15 +442,23 @@ def open_child_file(
     *,
     writable: bool = False,
     create: bool = False,
+    exclusive: bool = False,
     deletable: bool = False,
 ) -> int:
     """Open one file component relative to its parent handle.
+
+    The three dispositions map onto the only flag combinations the store uses:
+    `O_RDONLY`, `O_RDWR | O_CREAT` for a sidecar lock, and
+    `O_WRONLY | O_CREAT | O_EXCL` for a staging temporary that must not
+    collide with an existing name.
 
     Args:
         parent: Handle for the containing directory.
         name: A single component.
         writable: Request write access.
         create: Create the file when absent.
+        exclusive: With `create`, fail when the name already exists -- the
+            `O_EXCL` equivalent, which is what makes a staging temporary safe.
         deletable: Request DELETE, needed before renaming or unlinking.
 
     Returns:
@@ -422,14 +466,19 @@ def open_child_file(
 
     Raises:
         MissingPathError: If the file is absent and `create` is false.
+        FileExistsError: If `exclusive` is set and the name is taken.
         NoFollowPathError: If the component is a link.
     """
+    if create:
+        disposition = _FILE_CREATE if exclusive else _FILE_OPEN_IF
+    else:
+        disposition = _FILE_OPEN
     return _nt_open(
         name,
         parent,
         directory=False,
         writable=writable,
-        disposition=_FILE_OPEN_IF if create else _FILE_OPEN,
+        disposition=disposition,
         deletable=deletable,
     )
 
@@ -515,6 +564,81 @@ class WindowsStat:
         self.is_link = bool(
             information.dwFileAttributes & _FILE_ATTRIBUTE_REPARSE_POINT
         )
+        # Synthesized so call sites can keep using `stat.S_ISREG` / `S_ISDIR`
+        # rather than branching on platform. Only the type bits are meaningful:
+        # Windows has no POSIX permission bits to report, and the store never
+        # inspects them.
+        self.st_mode = _synthesize_mode(
+            is_directory=self.is_directory, is_link=self.is_link
+        )
+
+
+def _synthesize_mode(*, is_directory: bool, is_link: bool) -> int:
+    """Build a `st_mode` carrying only the type bits Windows can answer for.
+
+    Args:
+        is_directory: Whether the object is a directory.
+        is_link: Whether the object is a reparse point.
+
+    Returns:
+        A mode with exactly one type bit set, so `stat.S_ISREG`, `S_ISDIR` and
+        `S_ISLNK` classify it the way the POSIX path expects. A link reports as
+        a link even when it points at a directory, matching `lstat`.
+    """
+    import stat as stat_module
+
+    if is_link:
+        return stat_module.S_IFLNK
+    if is_directory:
+        return stat_module.S_IFDIR
+    return stat_module.S_IFREG
+
+
+def list_children(handle: int) -> list:
+    """List the entry names in an open directory handle.
+
+    The `os.listdir(dir_fd)` equivalent. Enumeration goes through the handle
+    rather than a path, so the listing describes the directory that was opened
+    even if its name is re-pointed afterwards.
+
+    Args:
+        handle: An open directory handle.
+
+    Returns:
+        Entry names, excluding `.` and `..`.
+
+    Raises:
+        OSError: If enumeration fails.
+    """
+    names: list = []
+    buffer = ctypes.create_string_buffer(64 * 1024)
+    info_class = _FILE_FULL_DIRECTORY_RESTART_INFO
+    while True:
+        if not _KERNEL32.GetFileInformationByHandleEx(
+            wintypes.HANDLE(handle), info_class, buffer, ctypes.sizeof(buffer)
+        ):
+            error = ctypes.get_last_error()
+            if error == _ERROR_NO_MORE_FILES:
+                break
+            raise ctypes.WinError(error)
+        # Continue the same enumeration on the next pass.
+        info_class = _FILE_FULL_DIRECTORY_INFO
+
+        offset = 0
+        while True:
+            entry = ctypes.cast(
+                ctypes.byref(buffer, offset), ctypes.POINTER(_FILE_FULL_DIR_INFO)
+            ).contents
+            name = ctypes.wstring_at(
+                ctypes.addressof(buffer) + offset + _FILE_FULL_DIR_INFO_NAME_OFFSET,
+                entry.FileNameLength // 2,
+            )
+            if name not in (".", ".."):
+                names.append(name)
+            if entry.NextEntryOffset == 0:
+                break
+            offset += entry.NextEntryOffset
+    return names
 
 
 def _filetime_to_ns(filetime: wintypes.FILETIME) -> int:

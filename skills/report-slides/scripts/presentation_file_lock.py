@@ -72,6 +72,35 @@ def acquire_exclusive(descriptor: int) -> None:
     fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
 
 
+def acquire_exclusive_blocking(descriptor: int) -> None:
+    """Wait for an exclusive lock on `descriptor` rather than failing at once.
+
+    The store's own write paths never use this -- they poll `acquire_exclusive`
+    against a deadline so a stuck peer surfaces as a timeout. It exists for
+    code that genuinely wants to *wait*, such as a test's competing thread that
+    must still be blocked when a rollback releases the lock.
+
+    Args:
+        descriptor: An open file descriptor.
+
+    Raises:
+        OSError: If the wait fails, or -- on Windows only -- if the lock is
+            still held when the platform gives up.
+
+    Note:
+        The two platforms wait differently. POSIX blocks indefinitely; Windows
+        `LK_LOCK` retries ten times at one-second intervals and then raises. A
+        caller that must not give up has to loop.
+    """
+    if USES_BYTE_RANGE_LOCKS:
+        _lock_windows_range("LK_LOCK", descriptor)
+        return
+
+    import fcntl
+
+    fcntl.flock(descriptor, fcntl.LOCK_EX)
+
+
 def release(descriptor: int) -> None:
     """Release the exclusive lock held on `descriptor`.
 
@@ -99,13 +128,28 @@ def _acquire_windows(descriptor: int) -> None:
     Raises:
         OSError: `EAGAIN` on contention; the original error otherwise.
     """
+    _lock_windows_range("LK_NBLCK", descriptor)
+
+
+def _lock_windows_range(mode_name: str, descriptor: int) -> None:
+    """Apply one `msvcrt.locking` mode over the module's fixed byte range.
+
+    Args:
+        mode_name: `"LK_NBLCK"` to fail immediately on contention, or
+            `"LK_LOCK"` to let the platform retry before giving up.
+        descriptor: An open file descriptor.
+
+    Raises:
+        OSError: `EAGAIN` on contention; the original error otherwise.
+    """
     import msvcrt
 
+    mode = getattr(msvcrt, mode_name)
     position = os.lseek(descriptor, 0, os.SEEK_CUR)
     try:
         os.lseek(descriptor, 0, os.SEEK_SET)
         try:
-            msvcrt.locking(descriptor, msvcrt.LK_NBLCK, _WINDOWS_LOCK_BYTES)
+            msvcrt.locking(descriptor, mode, _WINDOWS_LOCK_BYTES)
         except OSError as exc:
             # Contention surfaces two ways here and neither means on Windows
             # what it means on POSIX: EDEADLOCK is the documented "could not

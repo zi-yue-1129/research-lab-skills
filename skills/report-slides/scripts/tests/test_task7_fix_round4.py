@@ -84,7 +84,7 @@ def test_failed_new_plan_keeps_one_sidecar_inode_for_a_blocked_waiter(
             try:
                 waiter_inode.append(os.fstat(descriptor).st_ino)
                 waiter_opened.set()
-                presentation_file_lock.acquire_exclusive(descriptor)
+                presentation_file_lock.acquire_exclusive_blocking(descriptor)
                 waiter_acquired.set()
                 release_waiter.wait(5)
                 presentation_file_lock.release(descriptor)

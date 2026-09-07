@@ -263,3 +263,147 @@ def test_unlink_child_refuses_a_junction(project: Path, root_handle: int) -> Non
     with pytest.raises(NoFollowPathError):
         win32.unlink_child(root_handle, "link")
     assert (project / "state" / "decks.yaml").exists()
+
+
+def test_list_children_enumerates_by_handle(project: Path, root_handle: int) -> None:
+    """The `os.listdir(dir_fd)` equivalent, including exact name boundaries.
+
+    Names of differing length are used deliberately: the inline `FileName`
+    sits at a documented 68-byte offset while ctypes reports the header as 72
+    because of trailing alignment, so a wrong offset shifts every name.
+    """
+    state = win32.open_child_directory(root_handle, "state")
+    try:
+        (project / "state" / "a.yaml").write_bytes(b"a\n")
+        (project / "state" / "much-longer-name.yaml").write_bytes(b"b\n")
+        names = win32.list_children(state)
+    finally:
+        win32.close_handle(state)
+
+    assert sorted(names) == ["a.yaml", "decks.yaml", "much-longer-name.yaml"]
+
+
+def test_list_children_excludes_dot_entries(root_handle: int) -> None:
+    """`.` and `..` are filtered, as `os.listdir` does."""
+    names = win32.list_children(root_handle)
+    assert "." not in names and ".." not in names
+    assert "state" in names
+
+
+def test_list_children_handles_many_entries(project: Path, root_handle: int) -> None:
+    """More entries than one buffer pass, exercising the continuation class."""
+    state = win32.open_child_directory(root_handle, "state")
+    try:
+        expected = {f"entry-{index:04d}.yaml" for index in range(500)}
+        for name in expected:
+            (project / "state" / name).write_bytes(b"x\n")
+        names = set(win32.list_children(state))
+    finally:
+        win32.close_handle(state)
+
+    assert expected.issubset(names)
+    assert len(names) == len(expected) + 1
+
+
+def test_stat_child_reports_a_posix_shaped_mode(root_handle: int) -> None:
+    """`st_mode` classifies through the standard `stat` helpers."""
+    import stat as stat_module
+
+    state = win32.open_child_directory(root_handle, "state")
+    try:
+        directory = win32.stat_child(root_handle, "state")
+        regular = win32.stat_child(state, "decks.yaml")
+    finally:
+        win32.close_handle(state)
+
+    assert stat_module.S_ISDIR(directory.st_mode)
+    assert stat_module.S_ISREG(regular.st_mode)
+    assert not stat_module.S_ISREG(directory.st_mode)
+
+
+def test_stat_child_reports_a_junction_as_a_link_mode(
+    project: Path, root_handle: int
+) -> None:
+    """A link classifies as a link even though it points at a directory."""
+    import stat as stat_module
+
+    if not _make_junction(project / "link", project / "state"):
+        pytest.skip("host does not permit creating a junction")
+
+    metadata = win32.stat_child(root_handle, "link")
+    assert stat_module.S_ISLNK(metadata.st_mode)
+    assert not stat_module.S_ISDIR(metadata.st_mode)
+
+
+def test_open_child_file_exclusive_create_refuses_an_existing_name(
+    root_handle: int,
+) -> None:
+    """The `O_EXCL` equivalent, which is what makes a staging temporary safe."""
+    state = win32.open_child_directory(root_handle, "state")
+    try:
+        with pytest.raises(FileExistsError):
+            win32.open_child_file(
+                state, "decks.yaml", writable=True, create=True, exclusive=True
+            )
+    finally:
+        win32.close_handle(state)
+
+
+def test_open_child_file_exclusive_create_makes_a_new_name(root_handle: int) -> None:
+    """An unused staging name is created."""
+    state = win32.open_child_directory(root_handle, "state")
+    try:
+        handle = win32.open_child_file(
+            state, "decks.yaml.tmp", writable=True, create=True, exclusive=True
+        )
+        descriptor = win32.handle_to_descriptor(handle, os.O_RDWR)
+        try:
+            os.write(descriptor, b"staged\n")
+        finally:
+            os.close(descriptor)
+        assert win32.stat_child(state, "decks.yaml.tmp") is not None
+    finally:
+        win32.close_handle(state)
+
+
+def test_blocking_acquire_waits_for_a_release() -> None:
+    """`acquire_exclusive_blocking` waits instead of failing on contention.
+
+    This is the semantic a rollback test depends on: the waiter must still be
+    blocked when the holder releases, then proceed. Converting such a call to
+    the non-blocking primitive silently changes what the test proves, which is
+    how it was caught in CI rather than here.
+    """
+    import tempfile
+    import threading
+
+    import presentation_file_lock
+
+    directory = tempfile.mkdtemp()
+    path = os.path.join(directory, "state.lock")
+    open(path, "wb").close()
+
+    holder = os.open(path, os.O_RDWR)
+    presentation_file_lock.acquire_exclusive(holder)
+
+    acquired = threading.Event()
+
+    def waiter() -> None:
+        """Block on the lock until the holder lets go."""
+        descriptor = os.open(path, os.O_RDWR)
+        try:
+            presentation_file_lock.acquire_exclusive_blocking(descriptor)
+            acquired.set()
+            presentation_file_lock.release(descriptor)
+        finally:
+            os.close(descriptor)
+
+    thread = threading.Thread(target=waiter, daemon=True)
+    thread.start()
+    try:
+        # Still held, so the waiter must not have got through.
+        assert not acquired.wait(0.5)
+        presentation_file_lock.release(holder)
+        assert acquired.wait(5), "waiter never acquired after the release"
+    finally:
+        os.close(holder)

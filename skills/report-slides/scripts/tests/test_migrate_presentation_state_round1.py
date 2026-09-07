@@ -110,7 +110,7 @@ def test_non_dry_migration_locks_before_parse_and_preserves_writer_order(
             writer_started.set()
             import presentation_file_lock
 
-            presentation_file_lock.acquire_exclusive(descriptor)
+            presentation_file_lock.acquire_exclusive_blocking(descriptor)
             acquired_before_commit.append(not commit_done.is_set())
             target.write_bytes(writer_bytes)
             target.chmod(0o640)
