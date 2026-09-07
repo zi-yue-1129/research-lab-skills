@@ -118,6 +118,14 @@ def main(arguments: Sequence[str] | None = None) -> int:
                     help="native: editable shapes; embed: SVG blip. "
                          "Omit to be prompted with a description of each "
                          "mode at a terminal, or to take native off one.")
+    ap.add_argument(
+        "--template", default=None,
+        help="A .pptx/.potx whose master, layouts and theme the deck inherits. "
+             "Without one the deck carries python-pptx's default theme.")
+    ap.add_argument(
+        "--layout", default=None,
+        help="Layout new slides are built on, by name. Defaults to a blank "
+             "layout, since each slide is painted whole from SVG.")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args(arguments)
 
@@ -138,7 +146,10 @@ def main(arguments: Sequence[str] | None = None) -> int:
         pack_slides(svg_files, Path(args.out))
         print(f"\n{len(svg_files)} slide(s) → {args.out} (embed mode)")
     else:
-        convert_file(args.slides, args.out, verbose=args.verbose)
+        convert_file(
+            args.slides, args.out, verbose=args.verbose,
+            template=args.template, layout_name=args.layout,
+        )
     return 0
 
 

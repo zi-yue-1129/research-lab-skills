@@ -60,6 +60,12 @@ class CoordSystem:
         return cls(svg_w=1200.0, svg_h=675.0)
 
 
+def _is_media(elem: Any) -> bool:
+    """Report whether an element declares embedded media."""
+    from .media import is_media_marker
+    return is_media_marker(elem)
+
+
 def _local_tag(elem: Any) -> str:
     tag = elem.tag
     if not isinstance(tag, str):
@@ -146,6 +152,12 @@ class SvgConverter:
         self._text_to_shape = {}
         self._pending_texts = []
         self._group_collect = None
+        # `<a>` nests, so the active target is a stack rather than a single
+        # value; text is emitted after every shape, so its link has to be
+        # remembered against the element until then.
+        self._href_stack = []
+        self._text_hrefs = {}
+        self._links_applied = 0
         slide = prs.slides.add_slide(slide_layout)
         self._resolve_defs()
         self._resolve_use_elements()
@@ -161,7 +173,10 @@ class SvgConverter:
         # Add all text boxes after shapes so they appear on top
         from .text_converter import add_textbox
         for text_elem, text_style in self._pending_texts:
-            add_textbox(slide, text_elem, text_style, self.cs)
+            box = add_textbox(slide, text_elem, text_style, self.cs)
+            from .hyperlinks import apply_to_text
+            if apply_to_text(box, self._text_hrefs.get(id(text_elem))):
+                self._links_applied += 1
         self._bind_connectors(slide)
         return slide
 
@@ -335,6 +350,9 @@ class SvgConverter:
     def _dispatch_element(self, slide: Any, elem: Any, style: Dict) -> None:
         tag = _local_tag(elem)
         self._resolve_paint_server(style)
+        if tag == "rect" and _is_media(elem):
+            self._dispatch_media(slide, elem)
+            return
         if tag in ("rect", "circle", "ellipse", "image"):
             from .shapes import dispatch_shape
             shape = dispatch_shape(
@@ -342,6 +360,7 @@ class SvgConverter:
             )
             if shape is not None and self._group_collect is not None:
                 self._group_collect.append(shape)
+            self._link_shape(shape)
             if shape is not None and tag in ("rect", "circle", "ellipse"):
                 # A malformed geometry attribute must not silently drop the
                 # shape from the anchor registry: `_bind_connectors` would then
@@ -368,12 +387,16 @@ class SvgConverter:
         elif tag == "text":
             if id(elem) not in self._text_to_shape:
                 self._pending_texts.append((elem, style))
+                if self._active_href() is not None:
+                    self._text_hrefs[id(elem)] = self._active_href()
         elif tag in ("line", "polyline", "polygon"):
             from .connector import dispatch_connector
             conns = dispatch_connector(slide, elem, style, self.cs)
             self._connector_registry.extend(
                 [(conn, elem) for conn in conns]
             )
+            for conn in conns:
+                self._link_shape(conn)
             if self._group_collect is not None:
                 self._group_collect.extend(conns)
         elif tag == "path":
@@ -384,6 +407,16 @@ class SvgConverter:
                 path_shape = add_path_shape(slide, parse_path(d), self.cs, style)
                 if path_shape is not None and self._group_collect is not None:
                     self._group_collect.append(path_shape)
+                self._link_shape(path_shape)
+        elif tag == "a":
+            # Without this branch an anchor matched nothing and its children
+            # were dropped from the deck -- no link, and no shape either.
+            from .hyperlinks import anchor_href
+            self._href_stack.append(anchor_href(elem))
+            try:
+                self._dispatch_children(slide, elem, style)
+            finally:
+                self._href_stack.pop()
         elif tag == "g":
             role = elem.get("data-pptx-role")
             if role in ("table", "chart"):
@@ -392,6 +425,65 @@ class SvgConverter:
                 self._dispatch_native_group(slide, elem, style)
             else:
                 self._dispatch_children(slide, elem, style)
+
+    def _dispatch_media(self, slide: Any, elem: Any) -> None:
+        """Turn a media marker into an embedded player.
+
+        The rect's own geometry becomes the player's box, so the placeholder a
+        reviewer sees in the SVG occupies exactly the area the player will.
+
+        Args:
+            slide: The slide being built.
+            elem: The `<rect>` carrying the media marker.
+
+        Raises:
+            MediaMarkerError: If the marker is incomplete or the file is
+                missing, unsupported, or cannot be embedded.
+        """
+        from pptx.util import Emu
+
+        from .media import add_media, read_marker
+        from .shapes import _geometry
+
+        marker = read_marker(elem)
+        base_dir = Path(self.svg_path).resolve().parent
+        movie = self._resolve_source_path(base_dir, marker["src"], marker["src"])
+        poster = (
+            None if marker["poster"] is None
+            else self._resolve_source_path(
+                base_dir, marker["poster"], marker["poster"]
+            )
+        )
+        box = (
+            Emu(self.cs.x(_geometry(elem, "x"))),
+            Emu(self.cs.y(_geometry(elem, "y"))),
+            Emu(self.cs.x(_geometry(elem, "width")) - self.cs.x(0)),
+            Emu(self.cs.y(_geometry(elem, "height")) - self.cs.y(0)),
+        )
+        shape = add_media(slide, movie, box, poster)
+        if self._group_collect is not None:
+            self._group_collect.append(shape)
+        self._link_shape(shape)
+
+    def _active_href(self) -> Any:
+        """Return the innermost enclosing anchor's target, if any.
+
+        Returns:
+            The nearest non-None target on the anchor stack, so an unsupported
+            inner `<a>` does not silently inherit an outer link.
+        """
+        return self._href_stack[-1] if self._href_stack else None
+
+    def _link_shape(self, shape: Any) -> None:
+        """Attach the enclosing anchor's target to one produced shape.
+
+        Args:
+            shape: The shape just created, or None when the element produced
+                nothing.
+        """
+        from .hyperlinks import apply_to_shape
+        if apply_to_shape(shape, self._active_href()):
+            self._links_applied += 1
 
     def _bind_connectors(self, slide: Any) -> None:
         from .connector import build_anchor_map
@@ -719,11 +811,35 @@ def _try_bind(conn: Any, begin_pt: tuple, end_pt: tuple, anchor_map: Dict) -> No
             bind_connector_end(conn, is_begin, best_sp_id, best_idx)
 
 
-def convert_file(slides_dir: str, out_path: str, verbose: bool = False) -> None:
-    prs = Presentation()
-    prs.slide_width = Emu(PPTX_W)
-    prs.slide_height = Emu(PPTX_H)
-    layout = prs.slide_layouts[6]
+def convert_file(slides_dir: str, out_path: str, verbose: bool = False,
+                 template: str | None = None,
+                 layout_name: str | None = None) -> None:
+    """Convert a directory of slide SVGs into one PPTX.
+
+    Args:
+        slides_dir: Directory holding `slide*.svg`, converted in sorted order.
+        out_path: Destination `.pptx`.
+        verbose: Print each slide as it converts.
+        template: Optional `.pptx`/`.potx` whose master, layouts and theme the
+            deck inherits. Without one the deck carries python-pptx's default
+            theme, which no organisation actually wants.
+        layout_name: Layout to build slides on. Defaults to a blank layout,
+            since each slide is painted whole from SVG and any placeholder the
+            layout carries would sit behind the artwork as an empty prompt.
+
+    Raises:
+        ValueError: If the directory holds no `slide*.svg`.
+        TemplateError: If the template or the named layout cannot be used.
+    """
+    from .template import choose_layout, open_presentation
+
+    prs = open_presentation(None if template is None else Path(template))
+    layout = choose_layout(prs, layout_name)
+    # A template states its own slide size; only impose the skill's 16:9
+    # canvas when none was supplied, so a house template's page setup wins.
+    if template is None:
+        prs.slide_width = Emu(PPTX_W)
+        prs.slide_height = Emu(PPTX_H)
 
     svg_files = sorted(Path(slides_dir).glob("slide*.svg"))
     if not svg_files:
