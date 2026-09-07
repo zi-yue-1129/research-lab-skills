@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **`report-slides`: PowerPoint as a native Windows renderer** (`scripts/pptx_com.py`) — a stock Windows install has neither `libreoffice` nor `pdftoppm`, so the authoritative `pptx_render` gate was permanently `blocked` there and no deck could reach `completed`. On a machine with Office, `--render` drives PowerPoint over COM and exports one PNG per slide directly, with no PDF intermediate, rendering with the same engine the reader will open the deck in. It emits the `renderer` / `conversion_artifacts` / `rendered_png_paths` fields ready to merge into a review record, and exits 2 with the exact missing capability when the host cannot render, which is the cue to fall back to LibreOffice.
+- **`report-slides`: post-layout geometry oracle** (`pptx_com.py --layout`) — reports the height text *actually* occupies after PowerPoint lays the deck out, a fact `python-pptx` structurally cannot supply because it has no font metrics. Distinguishes text that is cut off (`clipped`) from text that stays legible while growing past its declared bounds (`overflows_box`), turning clipping and text-reflow findings into measurements rather than inferences.
+- **`install.ps1 -Doctor`** — reports every runtime dependency the skills shell out to (python-pptx, lxml, the renderer chain, `mmdc`) with the command that fixes each gap. Copying skill directories was never a complete install, and each missing piece previously surfaced as a silent no-op mid-deck.
+- **`docs/SETUP.md`: `report-slides` dependency section** — the skill's Python, renderer, and diagram dependencies were undocumented. Also records that Windows must run the skills' `python3 ...` commands as `python ...`, because `python3` there resolves to a Microsoft Store stub that exits without output.
+
 ## [1.1.0] - 2026-08-16
 
 ### Added
