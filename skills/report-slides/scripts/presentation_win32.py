@@ -51,6 +51,7 @@ _STATUS_OBJECT_NAME_COLLISION = 0xC0000035
 _STATUS_ACCESS_DENIED = 0xC0000022
 
 #: `NtCreateFile` DesiredAccess bits.
+_FILE_WRITE_ATTRIBUTES = 0x00000100
 _DELETE = 0x00010000
 _SYNCHRONIZE = 0x00100000
 _GENERIC_READ = 0x80000000
@@ -85,6 +86,21 @@ _ERROR_NO_MORE_FILES = 18
 
 #: Byte offset of the inline `FileName` array inside `FILE_FULL_DIR_INFO`.
 _FILE_FULL_DIR_INFO_NAME_OFFSET = 68
+
+#: `DuplicateHandle` option: give the copy the source's access rights.
+_DUPLICATE_SAME_ACCESS = 0x00000002
+
+#: The one POSIX-mode-like bit Windows can represent.
+_FILE_ATTRIBUTE_READONLY = 0x00000001
+
+#: `FILE_INFO_BY_HANDLE_CLASS` value for `FILE_BASIC_INFO`.
+_FILE_BASIC_INFO_CLASS = 0
+
+#: `FILE_INFO_BY_HANDLE_CLASS` value for `FILE_ID_INFO`. This is the source
+#: CPython's own `os.stat` uses for `st_dev` on Windows, so querying it is what
+#: makes an identity from this module comparable with one from `os.fstat` --
+#: which the store does directly when it checks whether a file was rebound.
+_FILE_ID_INFO_CLASS = 18
 
 #: File attribute marking an object as a link of some kind.
 _FILE_ATTRIBUTE_REPARSE_POINT = 0x00000400
@@ -141,6 +157,27 @@ class _FILE_FULL_DIR_INFO(ctypes.Structure):
         ("FileAttributes", wintypes.ULONG),
         ("FileNameLength", wintypes.ULONG),
         ("EaSize", wintypes.ULONG),
+    ]
+
+
+class _FILE_ID_INFO(ctypes.Structure):
+    """Volume serial plus the 128-bit file id, as CPython reads them."""
+
+    _fields_ = [
+        ("VolumeSerialNumber", ctypes.c_ulonglong),
+        ("FileId", ctypes.c_ubyte * 16),
+    ]
+
+
+class _FILE_BASIC_INFO(ctypes.Structure):
+    """Timestamps plus attributes; a zeroed time field leaves it unchanged."""
+
+    _fields_ = [
+        ("CreationTime", ctypes.c_longlong),
+        ("LastAccessTime", ctypes.c_longlong),
+        ("LastWriteTime", ctypes.c_longlong),
+        ("ChangeTime", ctypes.c_longlong),
+        ("FileAttributes", wintypes.DWORD),
     ]
 
 
@@ -216,8 +253,34 @@ def _bind() -> Tuple[ctypes.WinDLL, ctypes.WinDLL]:
         ctypes.c_void_p,
         wintypes.DWORD,
     ]
+    kernel32.SetFileInformationByHandle.restype = wintypes.BOOL
+    kernel32.SetFileInformationByHandle.argtypes = [
+        wintypes.HANDLE,
+        wintypes.INT,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+    ]
+    kernel32.SetFileTime.restype = wintypes.BOOL
+    kernel32.SetFileTime.argtypes = [
+        wintypes.HANDLE,
+        ctypes.POINTER(wintypes.FILETIME),
+        ctypes.POINTER(wintypes.FILETIME),
+        ctypes.POINTER(wintypes.FILETIME),
+    ]
     kernel32.FlushFileBuffers.restype = wintypes.BOOL
     kernel32.FlushFileBuffers.argtypes = [wintypes.HANDLE]
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    kernel32.GetCurrentProcess.argtypes = []
+    kernel32.DuplicateHandle.restype = wintypes.BOOL
+    kernel32.DuplicateHandle.argtypes = [
+        wintypes.HANDLE,
+        wintypes.HANDLE,
+        wintypes.HANDLE,
+        ctypes.POINTER(wintypes.HANDLE),
+        wintypes.DWORD,
+        wintypes.BOOL,
+        wintypes.DWORD,
+    ]
     kernel32.CloseHandle.restype = wintypes.BOOL
     kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
     return ntdll, kernel32
@@ -287,6 +350,7 @@ def _nt_open(
     writable: bool = False,
     disposition: int = _FILE_OPEN,
     deletable: bool = False,
+    attribute_writable: bool = False,
     missing_is_error: bool = True,
     refuse_links: bool = True,
 ) -> int:
@@ -324,6 +388,10 @@ def _nt_open(
     access = _GENERIC_READ | _SYNCHRONIZE
     if writable:
         access |= _GENERIC_WRITE
+    if attribute_writable:
+        # A read-only file refuses GENERIC_WRITE, and that is precisely the
+        # file whose read-only bit has to be cleared.
+        access |= _FILE_WRITE_ATTRIBUTES
     if deletable:
         access |= _DELETE
 
@@ -380,6 +448,28 @@ def _is_reparse_point(handle: int) -> bool:
         True when the object carries the reparse-point attribute.
     """
     return bool(_handle_information(handle).dwFileAttributes & _FILE_ATTRIBUTE_REPARSE_POINT)
+
+
+def _handle_identity(handle: int):
+    """Return `(st_dev, st_ino)` the way `os.stat` reports them on Windows.
+
+    Args:
+        handle: An open Windows handle.
+
+    Returns:
+        The pair, or None when the filesystem does not supply `FILE_ID_INFO`,
+        in which case the caller falls back to the volume serial and index.
+    """
+    identity = _FILE_ID_INFO()
+    if not _KERNEL32.GetFileInformationByHandleEx(
+        wintypes.HANDLE(handle),
+        _FILE_ID_INFO_CLASS,
+        ctypes.byref(identity),
+        ctypes.sizeof(identity),
+    ):
+        return None
+    file_id = int.from_bytes(bytes(identity.FileId), "little")
+    return int(identity.VolumeSerialNumber), file_id
 
 
 def _handle_information(handle: int) -> _BY_HANDLE_FILE_INFORMATION:
@@ -527,7 +617,7 @@ def stat_child(parent: int, name: str):
     except FileNotFoundError:
         return None
     try:
-        return WindowsStat(_handle_information(handle))
+        return WindowsStat(_handle_information(handle), _handle_identity(handle))
     finally:
         close_handle(handle)
 
@@ -542,16 +632,24 @@ class WindowsStat:
     detection actually depends on.
     """
 
-    def __init__(self, information: _BY_HANDLE_FILE_INFORMATION) -> None:
+    def __init__(self, information: _BY_HANDLE_FILE_INFORMATION, identity=None) -> None:
         """Derive POSIX-shaped fields from a Windows information block.
 
         Args:
             information: A populated `BY_HANDLE_FILE_INFORMATION`.
+            identity: Optional `(st_dev, st_ino)` from `FILE_ID_INFO`, which is
+                what `os.stat` reports on Windows. Supplying it keeps this
+                comparable with `os.fstat`; without it the 32-bit volume serial
+                is used, which identifies the file correctly but does not match
+                what `os.stat` would print for `st_dev`.
         """
-        self.st_dev = int(information.dwVolumeSerialNumber)
-        self.st_ino = (int(information.nFileIndexHigh) << 32) | int(
-            information.nFileIndexLow
-        )
+        if identity is not None:
+            self.st_dev, self.st_ino = identity
+        else:
+            self.st_dev = int(information.dwVolumeSerialNumber)
+            self.st_ino = (int(information.nFileIndexHigh) << 32) | int(
+                information.nFileIndexLow
+            )
         self.st_size = (int(information.nFileSizeHigh) << 32) | int(
             information.nFileSizeLow
         )
@@ -569,29 +667,41 @@ class WindowsStat:
         # Windows has no POSIX permission bits to report, and the store never
         # inspects them.
         self.st_mode = _synthesize_mode(
-            is_directory=self.is_directory, is_link=self.is_link
+            is_directory=self.is_directory,
+            is_link=self.is_link,
+            readonly=bool(information.dwFileAttributes & _FILE_ATTRIBUTE_READONLY),
         )
 
 
-def _synthesize_mode(*, is_directory: bool, is_link: bool) -> int:
-    """Build a `st_mode` carrying only the type bits Windows can answer for.
+def _synthesize_mode(*, is_directory: bool, is_link: bool, readonly: bool) -> int:
+    """Build a `st_mode` from the little Windows can actually answer for.
+
+    The type bits let `stat.S_ISREG`, `S_ISDIR` and `S_ISLNK` classify the
+    object exactly as on POSIX; a link reports as a link even when it points at
+    a directory, matching `lstat`.
+
+    The permission bits carry the single distinction Windows can represent --
+    read-only or not -- and use the same values CPython's own `os.stat` reports
+    there, so a mode read through this path and one read through `os.stat`
+    agree. That matters because the transaction journal encodes its commit
+    marker in the write bit.
 
     Args:
         is_directory: Whether the object is a directory.
         is_link: Whether the object is a reparse point.
+        readonly: Whether the read-only attribute is set.
 
     Returns:
-        A mode with exactly one type bit set, so `stat.S_ISREG`, `S_ISDIR` and
-        `S_ISLNK` classify it the way the POSIX path expects. A link reports as
-        a link even when it points at a directory, matching `lstat`.
+        A synthesized `st_mode`.
     """
     import stat as stat_module
 
+    permissions = 0o444 if readonly else 0o666
     if is_link:
-        return stat_module.S_IFLNK
+        return stat_module.S_IFLNK | permissions
     if is_directory:
-        return stat_module.S_IFDIR
-    return stat_module.S_IFREG
+        return stat_module.S_IFDIR | (0o555 if readonly else 0o777)
+    return stat_module.S_IFREG | permissions
 
 
 def list_children(handle: int) -> list:
@@ -674,6 +784,11 @@ def rename_child(
     Raises:
         NoFollowPathError: If the source is a link, or the rename fails.
     """
+    # Same reason as `unlink_child`: a read-only source cannot be opened for
+    # write, and a read-only target cannot be replaced.
+    _clear_readonly_if_set(parent, name)
+    if replace:
+        _clear_readonly_if_set(parent, new_name)
     # DELETE access is what NtSetInformationFile requires to move a name.
     handle = _nt_open(name, parent, directory=False, writable=True, deletable=True)
     try:
@@ -719,6 +834,12 @@ def unlink_child(parent: int, name: str) -> None:
         MissingPathError: If the component does not exist.
         NoFollowPathError: If it is a link, or the delete fails.
     """
+    # POSIX lets a read-only file be deleted -- the containing directory's
+    # permission governs, not the file's. Windows refuses while
+    # FILE_ATTRIBUTE_READONLY is set, so clear it first to match. The journal
+    # protocol marks its staged files read-only, so without this every rollback
+    # of an incomplete transaction fails.
+    _clear_readonly_if_set(parent, name)
     handle = _nt_open(name, parent, directory=False, deletable=True)
     try:
         disposition = ctypes.c_ubyte(1)
@@ -733,6 +854,100 @@ def unlink_child(parent: int, name: str) -> None:
         _raise_for_status(status, name)
     finally:
         close_handle(handle)
+
+
+def set_child_times(parent: int, name: str, mtime_ns: int) -> None:
+    """Set a component's modification time, without following a link.
+
+    The `os.utime(name, ns=..., dir_fd=..., follow_symlinks=False)` equivalent.
+    Recovery uses it to restore a preimage's exact timestamp, which the store's
+    replacement detection then compares against.
+
+    Args:
+        parent: Handle for the containing directory.
+        name: A single component.
+        mtime_ns: Modification time in nanoseconds since the Unix epoch.
+
+    Raises:
+        NoFollowPathError: If the component is a link, or the update fails.
+    """
+    handle = _nt_open(name, parent, directory=False, writable=True)
+    try:
+        filetime = _ns_to_filetime(mtime_ns)
+        # A NULL creation/access time leaves those fields untouched, matching
+        # `os.utime`, which only writes the times it is given.
+        if not _KERNEL32.SetFileTime(
+            wintypes.HANDLE(handle), None, None, ctypes.byref(filetime)
+        ):
+            raise ctypes.WinError(ctypes.get_last_error())
+    finally:
+        close_handle(handle)
+
+
+def _clear_readonly_if_set(parent: int, name: str) -> None:
+    """Drop a component's read-only attribute when it has one.
+
+    Absent or unreadable components are left alone: the caller's own operation
+    will report that far more precisely than this helper could.
+
+    Args:
+        parent: Handle for the containing directory.
+        name: A single component.
+    """
+    metadata = stat_child(parent, name)
+    if metadata is None or metadata.is_link:
+        return
+    if not metadata.st_mode & 0o200:
+        set_child_readonly(parent, name, readonly=False)
+
+
+def set_child_readonly(parent: int, name: str, *, readonly: bool) -> None:
+    """Set or clear a component's read-only attribute, without following a link.
+
+    This is the only part of a POSIX mode Windows can actually represent, and
+    it happens to be the bit the transaction journal uses as its commit marker.
+
+    Args:
+        parent: Handle for the containing directory.
+        name: A single component.
+        readonly: Whether the component should become read-only.
+
+    Raises:
+        NoFollowPathError: If the component is a link, or the update fails.
+    """
+    handle = _nt_open(name, parent, directory=False, attribute_writable=True)
+    try:
+        information = _handle_information(handle)
+        attributes = int(information.dwFileAttributes)
+        if readonly:
+            attributes |= _FILE_ATTRIBUTE_READONLY
+        else:
+            attributes &= ~_FILE_ATTRIBUTE_READONLY
+
+        basic = _FILE_BASIC_INFO()
+        basic.FileAttributes = attributes
+        if not _KERNEL32.SetFileInformationByHandle(
+            wintypes.HANDLE(handle),
+            _FILE_BASIC_INFO_CLASS,
+            ctypes.byref(basic),
+            ctypes.sizeof(basic),
+        ):
+            raise ctypes.WinError(ctypes.get_last_error())
+    finally:
+        close_handle(handle)
+
+
+def _ns_to_filetime(mtime_ns: int) -> wintypes.FILETIME:
+    """Convert nanoseconds since the Unix epoch into a FILETIME.
+
+    Args:
+        mtime_ns: Nanoseconds since 1970.
+
+    Returns:
+        The equivalent FILETIME (100ns ticks since 1601).
+    """
+    ticks = (mtime_ns // 100) + _FILETIME_EPOCH_DELTA
+    return wintypes.FILETIME(ticks & 0xFFFFFFFF, ticks >> 32)
 
 
 def flush_directory(handle: int) -> None:
@@ -751,6 +966,39 @@ def flush_directory(handle: int) -> None:
     """
     if not _KERNEL32.FlushFileBuffers(wintypes.HANDLE(handle)):
         raise ctypes.WinError(ctypes.get_last_error())
+
+
+def duplicate_handle(handle: int) -> int:
+    """Duplicate a handle, the `os.dup` equivalent.
+
+    Used where the POSIX code dups a retained directory descriptor so a
+    traversal can consume one copy while the anchor keeps the other. Note that
+    NT has no `"."` entry to reopen a directory through -- `NtCreateFile` with
+    a relative `"."` fails with `STATUS_OBJECT_NAME_INVALID` -- so duplicating
+    the handle is the only faithful way to do this.
+
+    Args:
+        handle: The handle to duplicate.
+
+    Returns:
+        A new handle referring to the same object, owned by the caller.
+
+    Raises:
+        OSError: If duplication fails.
+    """
+    target = wintypes.HANDLE()
+    current_process = _KERNEL32.GetCurrentProcess()
+    if not _KERNEL32.DuplicateHandle(
+        current_process,
+        wintypes.HANDLE(handle),
+        current_process,
+        ctypes.byref(target),
+        0,
+        False,
+        _DUPLICATE_SAME_ACCESS,
+    ):
+        raise ctypes.WinError(ctypes.get_last_error())
+    return target.value
 
 
 def close_handle(handle: int) -> None:

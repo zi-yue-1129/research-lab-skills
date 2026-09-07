@@ -10,11 +10,19 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from presentation_no_follow import (
+    INCOMPLETE_MARKER_MODE,
+    PUBLISHED_MARKER_MODE,
     AnchoredPath,
+    chmod_at,
+    list_children_at,
     MissingPathError,
     NoFollowPathError,
+    open_at,
     open_parent_no_follow,
     read_stable_regular,
+    replace_at,
+    stat_at,
+    unlink_at,
 )
 
 
@@ -83,10 +91,8 @@ def journal_entry_names(project_root: Path) -> tuple[str, ...]:
         return ()
     try:
         documents: dict[str, bytes] = {}
-        for name in os.listdir(anchor.parent_fd):
-            metadata = os.stat(
-                name, dir_fd=anchor.parent_fd, follow_symlinks=False
-            )
+        for name in list_children_at(anchor.parent_fd):
+            metadata = stat_at(anchor.parent_fd, name)
             if not stat.S_ISREG(metadata.st_mode):
                 raise NoFollowPathError(
                     "journal child must be a regular no-follow file: "
@@ -130,10 +136,8 @@ def durable_journal_names(
         return ()
     try:
         documents: dict[str, bytes] = {}
-        for name in os.listdir(anchor.parent_fd):
-            metadata = os.stat(
-                name, dir_fd=anchor.parent_fd, follow_symlinks=False
-            )
+        for name in list_children_at(anchor.parent_fd):
+            metadata = stat_at(anchor.parent_fd, name)
             if not stat.S_ISREG(metadata.st_mode):
                 raise NoFollowPathError(
                     "journal child must be a regular no-follow file: "
@@ -206,13 +210,17 @@ def publish_journal(
     """
     temporary = f"{transaction_id}.json.tmp"
     prefix = "rewrite_" if rewrite else ""
-    descriptor = os.open(
+    descriptor = open_at(
+        anchor.parent_fd,
         temporary,
-        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
         0o400,
-        dir_fd=anchor.parent_fd,
     )
     try:
+        # On Windows the creation mode is not carried by the open, so the
+        # incomplete marker is stamped immediately afterwards. The crash point
+        # stays where it was: after the file exists and is marked incomplete.
+        chmod_at(anchor.parent_fd, temporary, INCOMPLETE_MARKER_MODE)
         crash(f"{prefix}after_create")
         offset = 0
         while offset < len(content):
@@ -223,7 +231,7 @@ def publish_journal(
         crash(f"{prefix}after_write")
         os.fsync(descriptor)
         crash(f"{prefix}after_first_fsync")
-        os.fchmod(descriptor, 0o600)
+        chmod_at(anchor.parent_fd, temporary, PUBLISHED_MARKER_MODE)
         crash(f"{prefix}after_chmod")
         os.fsync(descriptor)
         crash(f"{prefix}after_second_fsync")
@@ -231,19 +239,14 @@ def publish_journal(
         crash(f"{prefix}before_rename")
     except Exception:
         os.close(descriptor)
-        os.unlink(temporary, dir_fd=anchor.parent_fd)
+        unlink_at(anchor.parent_fd, temporary)
         anchor.fsync_parent()
         raise
     except BaseException:
         os.close(descriptor)
         raise
     os.close(descriptor)
-    os.replace(
-        temporary,
-        f"{transaction_id}.json",
-        src_dir_fd=anchor.parent_fd,
-        dst_dir_fd=anchor.parent_fd,
-    )
+    replace_at(anchor.parent_fd, temporary, f"{transaction_id}.json")
     anchor.fsync_parent()
     crash(f"{prefix}after_rename")
 
@@ -275,20 +278,20 @@ def reconcile_journal_temporaries(
     match = _JOURNAL_TEMP.fullmatch(temporary)
     if match is None:
         raise ValueError(f"invalid transaction journal temporary name: {temporary}")
-    metadata = os.stat(temporary, dir_fd=anchor.parent_fd, follow_symlinks=False)
+    metadata = stat_at(anchor.parent_fd, temporary)
     mode = metadata.st_mode & 0o777
-    if not stat.S_ISREG(metadata.st_mode) or mode not in (0o400, 0o600):
+    if not stat.S_ISREG(metadata.st_mode) or mode not in _MARKER_MODES:
         raise ValueError(f"transaction journal temporary has invalid type or mode: {temporary}")
     content = result[temporary]
     canonical = f"{match.group(1)}.json"
-    if mode == 0o400:
+    if mode == INCOMPLETE_MARKER_MODE:
         if content:
             transaction_id, _ = _journal_identity(content, temporary)
             if transaction_id != match.group(1):
                 raise ValueError(
                     f"transaction journal temporary id does not match name: {temporary}"
                 )
-        os.unlink(temporary, dir_fd=anchor.parent_fd)
+        unlink_at(anchor.parent_fd, temporary)
         anchor.fsync_parent()
         del result[temporary]
         return result
@@ -299,16 +302,11 @@ def reconcile_journal_temporaries(
         current_id, current_paths = _journal_identity(result[canonical], canonical)
         if current_id != transaction_id or current_paths != paths:
             raise ValueError(f"transaction journal rewrite is ambiguous: {temporary}")
-        os.unlink(temporary, dir_fd=anchor.parent_fd)
+        unlink_at(anchor.parent_fd, temporary)
         anchor.fsync_parent()
         del result[temporary]
         return result
-    os.replace(
-        temporary,
-        canonical,
-        src_dir_fd=anchor.parent_fd,
-        dst_dir_fd=anchor.parent_fd,
-    )
+    replace_at(anchor.parent_fd, temporary, canonical)
     anchor.fsync_parent()
     del result[temporary]
     result[canonical] = content
@@ -330,18 +328,22 @@ def _journal_identity(content: bytes, name: str) -> tuple[str, object]:
     return transaction_id, paths
 
 
+#: The two journal marker states, as this platform reports them.
+_MARKER_MODES = (INCOMPLETE_MARKER_MODE, PUBLISHED_MARKER_MODE)
+
+
 def _validate_sibling_modes(
     anchor: AnchoredPath, documents: Mapping[str, bytes]
 ) -> None:
     """Require canonical names and exact published/incomplete marker modes."""
     for name in documents:
-        metadata = os.stat(name, dir_fd=anchor.parent_fd, follow_symlinks=False)
+        metadata = stat_at(anchor.parent_fd, name)
         mode = metadata.st_mode & 0o777
         if _JOURNAL.fullmatch(name) is not None:
-            if mode != 0o600:
+            if mode != PUBLISHED_MARKER_MODE:
                 raise ValueError(f"published transaction journal mode is invalid: {name}")
         elif _JOURNAL_TEMP.fullmatch(name) is not None:
-            if mode not in {0o400, 0o600}:
+            if mode not in _MARKER_MODES:
                 raise ValueError(f"transaction journal temporary mode is invalid: {name}")
         else:
             raise ValueError(f"invalid transaction journal filename: {name}")
@@ -357,22 +359,22 @@ def remove_staged_siblings(anchored: AnchoredPath) -> None:
         OSError: If a matching sibling is unsafe or cannot be removed.
     """
     prefix = f".{anchored.leaf_name}.transaction."
-    for name in os.listdir(anchored.parent_fd):
+    for name in list_children_at(anchored.parent_fd):
         if not name.startswith(prefix) or not name.endswith(".tmp"):
             continue
-        metadata = os.stat(name, dir_fd=anchored.parent_fd, follow_symlinks=False)
+        metadata = stat_at(anchored.parent_fd, name)
         if not stat.S_ISREG(metadata.st_mode):
             raise OSError(f"transaction temporary must be regular: {name}")
-        os.unlink(name, dir_fd=anchored.parent_fd)
+        unlink_at(anchored.parent_fd, name)
     anchored.fsync_parent()
 
 
 def remove_regular_sibling(anchored: AnchoredPath, name: str) -> None:
     """Remove one named regular sibling through a retained parent descriptor."""
     try:
-        metadata = os.stat(name, dir_fd=anchored.parent_fd, follow_symlinks=False)
+        metadata = stat_at(anchored.parent_fd, name)
     except FileNotFoundError:
         return
     if not stat.S_ISREG(metadata.st_mode):
         raise OSError(f"transaction temporary must be regular: {name}")
-    os.unlink(name, dir_fd=anchored.parent_fd)
+    unlink_at(anchored.parent_fd, name)

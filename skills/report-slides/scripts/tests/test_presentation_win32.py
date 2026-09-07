@@ -407,3 +407,26 @@ def test_blocking_acquire_waits_for_a_release() -> None:
         assert acquired.wait(5), "waiter never acquired after the release"
     finally:
         os.close(holder)
+
+
+def test_set_child_times_round_trips_a_modification_time(root_handle: int) -> None:
+    """Recovery restores a preimage's exact timestamp, so it must round-trip."""
+    state = win32.open_child_directory(root_handle, "state")
+    try:
+        target_ns = 1_600_000_000_000_000_000
+        win32.set_child_times(state, "decks.yaml", target_ns)
+        metadata = win32.stat_child(state, "decks.yaml")
+    finally:
+        win32.close_handle(state)
+
+    # FILETIME has 100ns resolution, so equality holds only to that tick.
+    assert abs(metadata.st_mtime_ns - target_ns) < 100
+
+
+def test_set_child_times_refuses_a_junction(project: Path, root_handle: int) -> None:
+    """Timestamps are not written through a link."""
+    if not _make_junction(project / "link", project / "state"):
+        pytest.skip("host does not permit creating a junction")
+
+    with pytest.raises(NoFollowPathError):
+        win32.set_child_times(root_handle, "link", 1_600_000_000_000_000_000)
