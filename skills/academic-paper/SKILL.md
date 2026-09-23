@@ -8,6 +8,7 @@ metadata:
   data_access_level: redacted
   task_type: open-ended
   related_skills:
+    - advisor-writing-style
     - deep-research
     - academic-paper-reviewer
     - academic-pipeline
@@ -18,7 +19,7 @@ metadata:
 A general-purpose academic paper writing tool — 12-agent pipeline covering all disciplines, with higher education domain as the default reference.
 
 **v2.5** adds two writing quality features:
-- **Style Calibration** (intake Step 10, optional) — Provide 3+ past papers and the pipeline learns your writing voice (sentence rhythm, vocabulary preferences, citation integration style). Applied as a soft guide during drafting; discipline conventions always take priority. See `shared/protocols/style_calibration_protocol.md`.
+- **Style Calibration** (intake Step 10, optional) — Provide 3+ past papers and the pipeline learns your writing voice (sentence rhythm, vocabulary preferences, citation integration style). Applied as a soft guide during drafting; discipline conventions always take priority. See `shared/protocols/style_calibration_protocol.md`. For this lab's manuscripts the voice is already calibrated: invoke the `advisor-writing-style` skill instead of re-deriving it from past papers. It is prescriptive, not a soft guide, and its guardrails (never drop a limitation, never let a strengthened verb outrun its evidence, never let style touch a number) outrank the style rules themselves.
 - **Writing Quality Check** (`references/writing_quality_check.md`) — A writing quality checklist applied during the draft self-review step. Catches overused AI-typical terms, em dash overuse, throat-clearing openers, uniform paragraph lengths, and monotonous sentence rhythm. These are good writing rules, not detection evasion.
 
 > **Routing discipline (v3.9.2):** see `.claude/CLAUDE.md` "Routing Discipline (v3.9.2)" + `shared/protocols/intent_clarification_protocol.md` for cross-skill routing rules. This skill assumes routing has already settled — ambiguous cross-phase materials should have been clarified upstream.

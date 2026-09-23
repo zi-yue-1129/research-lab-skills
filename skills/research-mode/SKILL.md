@@ -78,6 +78,7 @@ For `/mode publish`:
   [PUBLISH] Publication Mode — Active
 ═══════════════════════════════════════
   Tools    : academic-pipeline (/ars-full, /ars-revision-coach, etc.)
+             advisor-writing-style (draft and revise in the advisor's voice)
   End      : /mode end → log current pipeline stage
 ═══════════════════════════════════════
 ```
