@@ -11,6 +11,11 @@ All notable changes to this project will be documented in this file.
 - **`report-slides`: post-layout geometry oracle** (`pptx_com.py --layout`) — reports the height text *actually* occupies after PowerPoint lays the deck out, a fact `python-pptx` structurally cannot supply because it has no font metrics. Distinguishes text that is cut off (`clipped`) from text that stays legible while growing past its declared bounds (`overflows_box`), turning clipping and text-reflow findings into measurements rather than inferences.
 - **`install.ps1 -Doctor`** — reports every runtime dependency the skills shell out to (python-pptx, lxml, the renderer chain, `mmdc`) with the command that fixes each gap. Copying skill directories was never a complete install, and each missing piece previously surfaced as a silent no-op mid-deck.
 - **`docs/SETUP.md`: `report-slides` dependency section** — the skill's Python, renderer, and diagram dependencies were undocumented. Also records that Windows must run the skills' `python3 ...` commands as `python ...`, because `python3` there resolves to a Microsoft Store stub that exits without output.
+- **`scripts/checks/check_installer_skill_parity.py`** — compares `install.sh` / `install.ps1` / `bin/crs.js`'s hardcoded skill arrays against `marketplace.json`'s plugin lists and fails on drift, wired into `spec-consistency.yml` alongside the other manifest-consistency checks.
+
+### Fixed
+
+- **`advisor-writing-style` was not actually installed by any script-based installer.** It shipped correctly in `marketplace.json`'s `academic-research-skills` plugin, but `install.sh`, `install.ps1` and `bin/crs.js` each keep their own hardcoded `ARS_SKILLS` array rather than reading the manifest, and none of the three had the new skill added to it — so `curl | bash`, the PowerShell installer, and `npx research-lab-skills` all silently left it out of `~/.claude/skills` while the plugin-marketplace install path worked. Added to all three arrays; `check_installer_skill_parity.py` (above) now catches this class of drift for future skills.
 
 ## [1.1.0] - 2026-08-16
 

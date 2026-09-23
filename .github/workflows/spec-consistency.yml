@@ -126,6 +126,18 @@ jobs:
           PYTHONPATH: .
         run: python3 -m unittest tests.checks.test_check_version_consistency -v
 
+      - name: Check installer skill parity (install.sh / install.ps1 / crs.js)
+        # marketplace.json is the canonical skill list; each installer keeps
+        # its own hardcoded copy rather than reading the manifest, so a
+        # skill added to the manifest and to none of the installer arrays
+        # ships silently broken (see check_installer_skill_parity.py).
+        run: python3 scripts/checks/check_installer_skill_parity.py
+
+      - name: Run installer skill parity unit tests
+        env:
+          PYTHONPATH: .
+        run: python3 -m unittest tests.checks.test_check_installer_skill_parity -v
+
       - name: Run spec consistency unit tests
         env:
           PYTHONPATH: .
