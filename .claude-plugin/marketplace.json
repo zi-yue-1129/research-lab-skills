@@ -36,7 +36,8 @@
         "./skills/deep-research",
         "./skills/academic-paper",
         "./skills/academic-paper-reviewer",
-        "./skills/academic-pipeline"
+        "./skills/academic-pipeline",
+        "./skills/advisor-writing-style"
       ]
     }
   ]
