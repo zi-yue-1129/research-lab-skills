@@ -13,7 +13,7 @@ REPO="https://github.com/zi-yue-1129/research-lab-skills.git"
 # Shared foundation both lab and ARS skills depend on -- always installed
 RESOLVER_SKILLS=("resource-resolver" "agent-state")
 # Lab skills (experiment journal + presentations + mode routing)
-LAB_SKILLS=("research-log" "report-slides" "research-mode")
+LAB_SKILLS=("research-log" "report-slides" "lecture-slides" "research-mode")
 # Academic Research Skills (deep research, paper writing, review, pipeline)
 ARS_SKILLS=("research-project-init" "deep-research" "academic-paper" "academic-paper-reviewer" "academic-pipeline" "advisor-writing-style")
 # Default: install everything

@@ -43,7 +43,7 @@ $Repo = "https://github.com/zi-yue-1129/research-lab-skills.git"
 # Shared foundation both lab and ARS skills depend on -- always installed
 $ResolverSkills = @("resource-resolver", "agent-state")
 # Lab skills (experiment journal + presentations + mode routing)
-$LabSkills = @("research-log", "report-slides", "research-mode")
+$LabSkills = @("research-log", "report-slides", "lecture-slides", "research-mode")
 # Academic Research Skills (deep research, paper writing, review, pipeline)
 $ArsSkills = @("research-project-init", "deep-research", "academic-paper", "academic-paper-reviewer", "academic-pipeline", "advisor-writing-style")
 

@@ -1,0 +1,30 @@
+# Warm paper: cream page, earthy accents, soft-shadowed cards.
+# Measured from 第06週_判斷類別_分類與決策樹.pptx and 07_空間濾波.pptx.
+name: warm-paper
+description: Cream page, Times New Roman + 標楷體, green / rust / navy / ochre accents
+title_style: plain          # plain | bar
+fonts:
+  latin: Times New Roman
+  east_asian: DFKai-SB      # 標楷體
+  mono: Consolas
+colors:
+  bg: "FFF8EC"
+  text: "1F1F1F"
+  muted: "524C45"
+  faint: "8C857B"
+  card: "FFFFFF"
+  panel: "EAE1D2"           # inactive nav chip, neutral panel
+  line: "B8AC9A"
+tones:                      # accent = text/border colour, tint = card fill
+  positive:  {accent: "3F6A26", tint: "DCE8CC"}
+  alert:     {accent: "9C3A24", tint: "EDD3C6"}
+  info:      {accent: "24466E", tint: "D6E0ED"}
+  highlight: {accent: "8A5A00", tint: "F1DDB0"}
+  neutral:   {accent: "524C45", tint: "FFFFFF"}
+sizes:
+  title: 26
+  body: 17
+  small: 13
+  caption: 10
+  footer: 9
+  stat: 30

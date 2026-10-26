@@ -1,0 +1,31 @@
+# Navy academic: white page, navy title bar, crimson emphasis, cool grey panels.
+# Measured from 第06週_U-Net語意分割.pptx.
+name: navy-academic
+description: White page, navy title bar, crimson / blue / green accents, grey panels
+title_style: bar
+fonts:
+  latin: Times New Roman
+  east_asian: DFKai-SB
+  mono: Consolas
+colors:
+  bg: "FFFFFF"
+  text: "1F2328"
+  muted: "5F6670"
+  faint: "A9AEB4"
+  card: "F7F8FA"
+  panel: "F2F3F5"
+  line: "D0D4DA"
+  bar: "002855"
+tones:
+  positive:  {accent: "2E7D4F", tint: "E7F2EB"}
+  alert:     {accent: "BA0C2F", tint: "F8E6E9"}
+  info:      {accent: "00629B", tint: "E8F1F8"}
+  highlight: {accent: "6C4A9E", tint: "EEEAF5"}
+  neutral:   {accent: "5F6670", tint: "F7F8FA"}
+sizes:
+  title: 28
+  body: 16
+  small: 13
+  caption: 11
+  footer: 9
+  stat: 30

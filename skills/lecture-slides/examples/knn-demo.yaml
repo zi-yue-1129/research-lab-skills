@@ -1,0 +1,222 @@
+# Demo deck for lecture-slides: one layout of each kind, on a toy example.
+# All numbers are illustrative toy data (stated in each slide's source line).
+deck:
+  theme: warm-paper
+  course: 人工智慧導論
+  week: 第七週
+  title: 看鄰居猜類別：K 近鄰
+  author: 授課教師
+  sections: [看資料, 量距離, 檢查, 比方法]
+
+slides:
+  - layout: title
+    motif: tree
+    title: 看鄰居猜類別：K 近鄰
+    subtitle: 一顆沒貼標籤的水果，是蘋果還是柳丁？
+    notes: |
+      今天只問一個問題：一顆沒有標籤的水果，電腦怎麼猜它是什麼？
+      答案很樸素：看它旁邊長得最像的幾顆是什麼。
+
+  - layout: facts
+    title: 先問一個問題：這顆是什麼？
+    image: images/mystery-fruit.png
+    image_label: 一顆沒有標籤的水果
+    caption: 示意圖
+    heading: 量得到的東西
+    tone: highlight
+    facts:
+      - 重量: 165 公克
+      - 直徑: 7.2 公分
+      - 表面: 有細小凹點
+    question: "是蘋果還是柳丁？\n你有幾成把握？"
+    takeaway: 先放著，做完今天的判斷器再回來回答。
+    source: 示意資料，本課自編
+    notes: |
+      先看一顆水果。我們量到三件事：重量、直徑、表面。
+      【按】
+      你猜它是什麼？有幾成把握？先放著，最後回來。
+
+  - layout: agenda
+    title: 今天的順序
+    current: 1
+    items:
+      - {label: 為什麼要看鄰居, note: 有答案的例子就是老師}
+      - {label: 今天的資料, note: 40 顆有標籤的水果}
+      - {label: 怎麼量「像不像」, note: 距離}
+      - {label: K 要選多少, note: 太小會背答案，太大會變平均}
+      - {label: 比一比, note: 跟決策樹放在一起看}
+    source: 本課大綱
+    notes: 今天分五段，先講為什麼看鄰居就能猜。
+
+  - layout: compare
+    title: 上週和這週：先問問題，還是先找鄰居？
+    section: 看資料
+    panels:
+      - heading: 上週：決策樹
+        tone: info
+        lines:
+          - ■ 一題一題問：重不重？大不大？
+          - ■ 問完走到一片葉子
+          - ■ 葉子裡多數是什麼，就猜什麼
+      - heading: 這週：K 近鄰
+        tone: positive
+        lines:
+          - ■ 不問問題，直接找最像的 K 顆
+          - ■ 那 K 顆投票
+          - ■ 票多的就是答案
+    takeaway: 兩種方法都靠 **有答案的例子**，只是用的方式不一樣。
+    source: 示意圖
+    notes: 先跟上週連起來。決策樹是問問題，K 近鄰是找鄰居。
+
+  - layout: cards
+    title: 找三個最近的鄰居，投票
+    section: 量距離
+    cards:
+      - heading: 三票都是蘋果
+        dots: [3, 3]
+        value: 蘋果
+        tone: positive
+        lines: [很有把握]
+      - heading: 兩票對一票
+        dots: [2, 3]
+        value: 蘋果
+        tone: highlight
+        lines: [多數決，但沒那麼確定]
+      - heading: 一票對兩票
+        dots: [1, 3]
+        value: 柳丁
+        tone: alert
+        lines: [多數變成柳丁]
+    takeaway: K 選奇數，就不會平手。
+    source: 示意圖：綠點 = 蘋果，空心 = 柳丁
+    notes: |
+      找最近的三顆，看它們是什麼，票多的贏。
+      【按】三種情況各看一次。
+
+  - layout: formula
+    title: 「最近」怎麼算？
+    section: 量距離
+    band:
+      expr: 距離 ＝ √( (重量差)² ＋ (直徑差)² )
+      plain: 白話：把兩顆水果放在同一張圖上，量兩點之間的直線長度
+      aside: "畢氏定理\n{alert:國中就學過}"
+    steps:
+      - heading: 水果 A
+        lines: ["165 g，7.2 cm"]
+      - heading: 水果 B
+        lines: ["150 g，7.0 cm"]
+      - heading: 距離
+        tone: alert
+        lines: ["√(15² + 0.2²) ≈ **15.0**"]
+    result:
+      expr: 問題：公克和公分單位不同，重量的差會蓋過直徑的差
+    source: 歐氏距離；示意數字
+    notes: |
+      距離就是畢氏定理。
+      【按】
+      但要注意單位：重量差 15，直徑差 0.2，直徑幾乎沒有影響。所以要先標準化。
+
+  - layout: table
+    title: 今天的資料：40 顆有標籤的水果
+    section: 看資料
+    headers: [編號, 重量 (g), 直徑 (cm), 表面, 答案]
+    highlight_col: 4
+    rows:
+      - [1, 172, 7.5, 光滑, 蘋果]
+      - [2, 140, 6.8, 凹點, 柳丁]
+      - [3, 181, 7.9, 光滑, 蘋果]
+      - [4, 158, 7.1, 凹點, 柳丁]
+      - [5, 166, 7.3, 光滑, 蘋果]
+    caption: ……（共 40 顆，本課自編示意資料）
+    takeaway: 特徵：重量、直徑、表面　　標籤：蘋果／柳丁
+    source: 示意資料，本課自編
+    notes: 資料長這樣，每一列是一顆水果，最後一欄是答案。
+
+  - layout: bars
+    title: K 要選多少？每個 K 都試一次
+    section: 檢查
+    axis_label: 考試正確率（沒看過的 10 顆）
+    max: 100
+    best: 2
+    items:
+      - {label: K = 1, value: 70, note: 背答案}
+      - {label: K = 3, value: 80}
+      - {label: K = 5, value: 90, note: 最好}
+      - {label: K = 9, value: 80}
+      - {label: K = 21, value: 60, note: 變成全體平均}
+    takeaway: K 太小會被一顆怪水果帶走；K 太大，鄰居就不再是「鄰居」。
+    source: 示意數字，本課自編
+    notes: 每個 K 都在沒看過的水果上考一次。K = 5 最好。
+
+  - layout: numbers
+    title: 要付出什麼代價？
+    section: 檢查
+    panel:
+      heading: 每猜一顆，要做的事
+      lines:
+        - 1. 跟資料裡每一顆都算一次距離
+        - 2. 排序，取最近的 K 顆
+        - 3. 投票
+        - ""
+        - 資料越多，猜得越慢
+    stats:
+      - {value: 40 次, label: 40 顆資料要算 40 次距離, tone: info}
+      - {value: 0 秒, label: 訓練時間：什麼都不用學, tone: positive}
+      - {value: 全部, label: 資料都要留著, tone: alert}
+    source: 示意
+    notes: K 近鄰不用訓練，但每次猜都要跟全部資料比。
+
+  - layout: flow
+    title: 整體流程：存起來，要用時再找
+    section: 比方法
+    steps:
+      - heading: 標準化
+        lines: [把重量、直徑換成同一種尺度]
+      - heading: 存資料
+        lines: [40 顆全部留著]
+      - heading: 找鄰居
+        tone: alert
+        lines: [算距離、排序、取 K 顆]
+      - heading: 投票
+        tone: positive
+        lines: [票多的就是答案]
+    source: 示意流程
+    notes: 四步。注意第二步：K 近鄰沒有在學，它只是把資料存起來。
+
+  - layout: code
+    title: 程式：十幾行就做得完
+    section: 比方法
+    label: 第 7 週 範例程式
+    code: |
+      from sklearn.preprocessing import StandardScaler
+      from sklearn.neighbors import KNeighborsClassifier
+
+      scaler = StandardScaler().fit(X_train)       # 先標準化
+      knn = KNeighborsClassifier(n_neighbors=5)    # K = 5
+      knn.fit(scaler.transform(X_train), y_train)  # 只是存起來
+
+      print(knn.predict(scaler.transform([[165, 7.2, 1]])))
+    points:
+      - {heading: 標準化, text: 一定要做，不然重量會蓋過直徑, tone: alert}
+      - {heading: fit, text: 沒有在學，只是把資料存起來, tone: info}
+      - {heading: predict, text: 這時才算距離、投票, tone: positive}
+    source: scikit-learn 1.5 文件：KNeighborsClassifier
+    notes: 程式很短。重點是標準化那一行不能少。
+
+  - layout: image
+    title: 回到開頭：這顆是什麼？
+    section: 比方法
+    image: images/neighbors.png
+    image_label: 散佈圖：問號水果與最近的 5 個鄰居
+    quote: 5 個鄰居裡，4 顆是柳丁、1 顆是蘋果 → 猜柳丁
+    takeaway: 判斷器給的是「鄰居怎麼說」，不是保證。
+    source: 示意資料，本課自編
+    notes: 回到開頭那顆水果。五個鄰居四票柳丁，所以猜柳丁。
+
+  - layout: sources
+    title: 來源
+    items:
+      - 本課示意資料：40 顆水果的重量、直徑、表面，本課自編，非實測
+      - scikit-learn 1.5 文件：KNeighborsClassifier、StandardScaler
+      - Cover, T. & Hart, P. (1967). Nearest neighbor pattern classification. IEEE Transactions on Information Theory 13(1), 21–27
+    notes: 這頁列出今天所有的資料和引用來源。
