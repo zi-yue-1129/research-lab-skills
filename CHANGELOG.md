@@ -16,6 +16,10 @@ All notable changes to this project will be documented in this file.
 - **`docs/SETUP.md`: `report-slides` dependency section** — the skill's Python, renderer, and diagram dependencies were undocumented. Also records that Windows must run the skills' `python3 ...` commands as `python ...`, because `python3` there resolves to a Microsoft Store stub that exits without output.
 - **`scripts/checks/check_installer_skill_parity.py`** — compares `install.sh` / `install.ps1` / `bin/crs.js`'s hardcoded skill arrays against `marketplace.json`'s plugin lists and fails on drift, wired into `spec-consistency.yml` alongside the other manifest-consistency checks.
 
+### Changed
+
+- **`advisor-writing-style` is now `writing-voice`, and the advisor's rules are the `formal-explicit-voice` profile.** The skill had shipped one advisor's calibration as its own content, and `academic-paper` told every user to apply it ("this lab's manuscripts"). `writing-voice` now holds only the method: reading the voice from the active profile, the three guardrails, and the `.docx` calibration scripts. The ten rules and their derivation evidence moved to `skills/research-profile/profiles/formal-explicit-voice/`, with the manuscript's method and file names replaced by neutral stand-ins. `academic-paper` and `research-mode` apply a voice only when the active profile sets one. All three installers remove a stale `advisor-writing-style` copy on install so its old triggers cannot shadow the new skill.
+
 ### Fixed
 
 - **`advisor-writing-style` was not actually installed by any script-based installer.** It shipped correctly in `marketplace.json`'s `academic-research-skills` plugin, but `install.sh`, `install.ps1` and `bin/crs.js` each keep their own hardcoded `ARS_SKILLS` array rather than reading the manifest, and none of the three had the new skill added to it — so `curl | bash`, the PowerShell installer, and `npx research-lab-skills` all silently left it out of `~/.claude/skills` while the plugin-marketplace install path worked. Added to all three arrays; `check_installer_skill_parity.py` (above) now catches this class of drift for future skills.

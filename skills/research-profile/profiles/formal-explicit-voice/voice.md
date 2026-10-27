@@ -1,38 +1,18 @@
----
-name: advisor-writing-style
-description: "Write academic English in a lab advisor's voice. A prescriptive style guide distilled from a professor's own rewrites of one lab's manuscripts: first-person contribution claims, explicit connectives, subordinated clauses, acronym discipline, numerals, run-in list colons, and a raised verb register. Apply when drafting or revising a paper, abstract, response letter, or supplementary section for a lab that has calibrated this profile against its own advisor's edits. Triggers: write in the professor's style, advisor style, lab writing style, 教授的寫法, 教授風格, 用教授的風格改寫, polish this paragraph, academic English polish."
-metadata:
-  version: "1.0.0"
-  last_updated: "2026-09-20"
-  status: active
-  data_access_level: verified_only
-  task_type: open-ended
-  related_skills:
-    - academic-paper
-    - academic-paper-reviewer
-    - academic-pipeline
----
+# Formal explicit voice
 
-# Advisor Writing Style
+Prescriptive rules for formal academic English in which every sentence states
+its relation to the last, claims are made in the first person, and the verb
+register is raised. Each rule was observed at least twice in one supervisor's
+rewrites of a manuscript; the evidence is in `derivation_evidence.md`. Apply
+the rules when drafting, and run the checklist at the end when revising.
 
-How one lab's advisor writes academic English, stated as rules you can draft
-against. Every rule below is taken from that professor's own edits to the
-lab's manuscripts, with the real before and after. Apply it when drafting, and
-run it as a checklist when revising.
+Rules 6 to 8 (acronyms, numerals, punctuation) are close to conventions most
+venues share. Rules 1 to 5, 9 and 10 are this voice's habits: use them because
+this voice is the one wanted, not as general advice.
 
-`references/derivation_evidence.md` holds the raw observations and the
-instances each rule rests on, for the profile this skill ships with.
-
-## Calibrating this to your own advisor
-
-This profile is one lab's calibration, not a universal house style. Two
-advisors do not write alike. Before applying rule 9 (raised verb register) or
-rule 3 (subordination) to your own manuscript, confirm they hold for your own
-advisor's edits — see "Refreshing this profile" below for how to derive your
-own version of `references/derivation_evidence.md` from a `.docx` your
-advisor returned. Rules 6 through 8 (acronym discipline, numerals,
-punctuation) are closer to house-style conventions most venues share, and are
-a reasonable default even before calibration.
+The `writing-voice` guardrails (never drop a limitation, never let a
+strengthened verb outrun its evidence, never let style touch a number) outrank
+every rule below.
 
 ---
 
@@ -42,15 +22,15 @@ The contribution belongs to the authors, so say so. Impersonal constructions
 that hide the agent get rewritten.
 
 > **Instead of:** Motivated by complementary learning systems theory,
-> Cognitive Memory (CM) splits the buffer into two tiers.
-> **Write:** To address this limitation, we propose Cognitive Memory (CM)
+> Tiered Replay Memory (TRM) splits the buffer into two tiers.
+> **Write:** To address this limitation, we propose Tiered Replay Memory (TRM)
 > inspired by complementary learning systems theory.
 
 Also "Our distance metric is most closely related to...", "In our framework,
 the same quantity serves a different end."
 
 Keep the first person for what the authors did. Results still speak in the
-third person: "CM-SAC's point estimate exceeds the baseline's on six of seven
+third person: "TRM-SAC's point estimate exceeds the baseline's on six of seven
 tasks."
 
 ## 2. Open with an explicit connective
@@ -119,7 +99,7 @@ Method names are proper nouns and take title case.
 - "first-in-first-out" → "first-in, first-out (FIFO)"
 - "prioritized experience replay (PER)" → "Prioritized Experience Replay
   (PER)"
-- After Section III, "Cognitive Memory does not alter..." → "CM does not
+- After Section III, "Tiered Replay Memory does not alter..." → "TRM does not
   alter..."
 
 ## 7. Numerals, not words
@@ -151,37 +131,18 @@ Do not let this reach the results. A measurement still "is" what it is.
 State the conclusion of a comparison, then its limit, in one sentence.
 
 > **Instead of:** The baseline comparison bears on geometric retention at a
-> reduced budget. ReLo, at the same slots, rules transition-slot capacity out
+> reduced budget. The loss-based prioritization baseline, at the same slots, rules transition-slot capacity out
 > but also changes the sampling rule.
 > **Write:** While the baseline comparison demonstrates the efficacy of
-> geometric retention under a constrained budget, evaluating against ReLo (at
-> the same $3 \times 10^6$ slots) conflates capacity constraints with altered
+> geometric retention under a constrained budget, evaluating against a loss-based
+> prioritization baseline (at the same $3 \times 10^6$ slots) conflates capacity constraints with altered
 > sampling rules.
 
 ---
 
-## Guardrails
-
-The style is a way of writing, not a licence to change what the paper claims.
-Three of the advisor's habits conflict with research integrity, and the rules
-above stop at each one.
-
-- **IRON RULE — never drop a limitation to tighten a sentence.** Compression
-  is where hedges die. Observed losses in one rewrite: a control still to be
-  run, the note that a hyperparameter was fixed by symmetry rather than swept,
-  and the rationale for keeping two metrics on separate figures. If the style
-  makes a caveat awkward, give the caveat its own sentence. Then tell the
-  author what you moved.
-- **IRON RULE — "demonstrates the efficacy" needs the statistics to say so.**
-  The raised register makes claims sound stronger. Check each strengthened
-  verb against the test that backs it. If nothing survives correction, the
-  sentence says so.
-- **IRON RULE — style never touches a number.** Numerals replace spelled-out
-  words; they never replace a value. Figures come from the analysis pipeline.
-
 ## Revision checklist
 
-Run over a draft, in order:
+Run over a draft, in order, before `writing-voice`'s guardrail checks:
 
 1. Does each paragraph's first sentence say how it follows from the last?
 2. Any two adjacent short sentences on one idea? Subordinate one.
@@ -190,21 +151,3 @@ Run over a draft, in order:
 5. Any spelled-out number? Any semicolon? Any em dash? Any colon before a
    display equation? Any run-in list head ending in a period?
 6. Is every proposition, table and figure announced before it appears?
-7. **Is every caveat still present and still true?**
-8. Does any strengthened verb outrun its evidence?
-
-## Refreshing this profile
-
-When the advisor returns a newly edited `.docx`, `scripts/docx_text.py` and
-`scripts/sentence_diff.py` extract its text and align it against the Markdown
-sources sentence by sentence. Add whatever recurs to
-`references/derivation_evidence.md` and promote it to a rule here once it has
-two instances.
-
-Starting this profile fresh for a different advisor: keep this file's
-structure and the two scripts, replace the rules above and
-`references/derivation_evidence.md` with what the new diff actually shows,
-and drop any rule that does not recur at least twice. Do not carry a rule
-across advisors on the assumption that academic style is universal — rules 1
-through 5, 9 and 10 here are this one advisor's habits, confirmed by their own
-edits, not a general prescription.
