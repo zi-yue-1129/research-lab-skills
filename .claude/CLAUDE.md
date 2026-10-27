@@ -37,6 +37,22 @@ which skills to prioritize and how session endings are handled.
 
 ---
 
+## Profiles
+
+Conventions that belong to one person, course, lab, field, venue, or language
+live in a named **profile**, never in a skill's core. A profile is orthogonal
+to both kinds of mode above: modes say which task or phase, a profile says
+whose conventions.
+
+- `/profile` commands and resolution: `skills/research-profile/SKILL.md`.
+- Registry of shipped profiles: `PROFILE_REGISTRY.md`.
+- With no profile active, every skill uses its general core defaults.
+- Profile names describe what the profile does; never name a person, school,
+  lab, course, or paper. Example text inside a profile is de-identified too.
+- A profile never overrides an IRON RULE, integrity gate, or citation requirement.
+
+---
+
 ## Installation
 
 Skills installed here are available globally after `bash install.sh`.
