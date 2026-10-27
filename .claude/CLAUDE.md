@@ -28,7 +28,9 @@ which skills to prioritize and how session endings are handled.
   `skills/research-mode/references/mode_templates.md`.
 
 - **report**: Route to `report-slides`. After deck generation, suggest `/mode end` to
-  log the slide deck paths and audience.
+  log the slide deck paths and audience. If the deck teaches a topic (a course
+  lecture or tutorial) rather than reporting the user's own research progress,
+  route to `lecture-slides` instead.
 
 - **publish**: Route to `academic-pipeline`. After each stage completes, offer `/mode end`
   to log the stage status. `/ars-*` commands automatically activate publish mode (Phase 3).
@@ -110,6 +112,7 @@ research-project-init (optional)
 | `academic-paper` v3.2.0 | Paper writer |
 | `academic-paper-reviewer` v1.10.0 | Peer reviewer |
 | `academic-pipeline` v3.11.1 | Pipeline orchestrator |
+| `lecture-slides` v1.0.0 | Teaching decks (course lectures, tutorials); course styles are named presets, e.g. `zh-classroom` |
 
 ## Handoff Protocol
 

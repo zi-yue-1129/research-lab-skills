@@ -1,0 +1,26 @@
+# Core default theme: neutral and course-agnostic. Presets ship their own.
+name: default
+description: White page, slate text, blue / red / green / amber accents
+title_style: plain          # plain | bar
+colors:
+  bg: "FFFFFF"
+  text: "1F2937"
+  muted: "4B5563"
+  faint: "9CA3AF"
+  card: "F9FAFB"
+  panel: "F3F4F6"
+  line: "D1D5DB"
+  bar: "1E3A5F"
+tones:
+  positive:  {accent: "047857", tint: "E6F4EE"}
+  alert:     {accent: "B91C1C", tint: "FBEAEA"}
+  info:      {accent: "1E3A5F", tint: "E8EEF6"}
+  highlight: {accent: "B45309", tint: "FDF1E2"}
+  neutral:   {accent: "4B5563", tint: "F9FAFB"}
+sizes:
+  title: 28
+  body: 17
+  small: 13
+  caption: 11
+  footer: 9
+  stat: 30

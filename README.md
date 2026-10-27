@@ -121,7 +121,7 @@ The journal's `follows:` field links experiments into a traceable timeline. `ame
 
 This repository's own contribution — independently developed here, not part of the upstream project:
 
-- `research-log`, `report-slides`, `research-mode` — the daily research journal, progress-slide generation, and session-mode routing
+- `research-log`, `report-slides`, `lecture-slides`, `research-mode` — the daily research journal, progress-slide generation, editable teaching decks with selectable course-style presets, and session-mode routing
 - `research-project-init`, `agent-state`, `resource-resolver` — project scoping and the persistent state layer that keeps Projects, Questions, Sources, and Evidence connected across sessions
 - `advisor-writing-style` — a prescriptive style guide distilled from a lab advisor's own manuscript rewrites, plus the scripts that derive it from a returned `.docx`
 - The integration and packaging layer that installs both toolsets together and lets research state flow from the daily layer into the upstream pipeline
@@ -220,6 +220,7 @@ Academic skills: `/ars-plan`, `/ars-full`, `/ars-lit-review`, `/ars-review`, and
 |-------|---------|---------|
 | `research-log` | `/research-log` | Structured experiment journal (daily logs, amendments, index) |
 | `report-slides` | `/report-slides` | SVG + PPTX progress presentations from journal entries |
+| `lecture-slides` | *(trigger phrase, no command)* | Editable teaching decks (.pptx): question titles, a running example, native shapes, speaker notes; named presets (e.g. `zh-classroom`) select a course's style |
 | `research-mode` | `/mode` | Session mode routing (exp / daily / explore / report / publish) |
 | `research-project-init` | `/research-init` | Scope a preliminary idea into a project charter + tracked research questions |
 | `deep-research` *(upstream ARS)* | `/ars-full`, `/ars-lit-review`, … | 13-agent research team with Socratic mode, PRISMA, fact-check |
