@@ -443,7 +443,7 @@ See `academic-pipeline/SKILL.md` for the complete workflow.
 | `references/socratic_questioning_framework.md` | 6 types of Socratic questions + 30+ prompt patterns | socratic_mentor |
 | `references/failure_paths.md` | 12 failure scenarios with triggers and recovery paths | all agents |
 | `references/mode_selection_guide.md` | Mode selection flowchart and comparison table | orchestrator |
-| `references/irb_decision_tree.md` | IRB decision tree + Taiwan process + HE quick reference | ethics_review, research_architect |
+| `references/irb_decision_tree.md` | IRB decision tree; jurisdiction process from the active profile's `field.ethics` | ethics_review, research_architect |
 | `references/equator_reporting_guidelines.md` | EQUATOR reporting guideline mapping | research_architect, report_compiler |
 | `references/preregistration_guide.md` | Preregistration decision tree + platforms + checklist | research_architect |
 | `references/systematic_review_toolkit.md` | Cochrane v6.4, PRISMA 2020, RoB 2, ROBINS-I, I² guide, GRADE, protocol registration | risk_of_bias, meta_analysis, bibliography, report_compiler |
@@ -486,7 +486,7 @@ See `academic-pipeline/SKILL.md` for the complete workflow.
 
 ## Output Language
 
-Follows the user's language. Academic terminology kept in English. Socratic mode uses natural conversational style.
+Follows the active research profile's `language.body`; by default, the user's language. Reports cite in APA 7.0 unless the active profile's `venue.citation_style` names another supported style. Academic terminology kept in English. Socratic mode uses natural conversational style.
 
 ---
 
@@ -524,10 +524,9 @@ Unified definitions across all agents. ⚠️ IRON RULE: **CRITICAL severity** =
 
 ## Integration with Other Skills
 
-This skill is domain-agnostic but can be combined with domain-specific skills:
+This skill is domain-agnostic. Field-specific conventions (glossaries, journals, a jurisdiction's ethics process, worked examples) come from the active research profile's `field` axis (`research-profile`). It also combines with other skills:
 
 ```
-deep-research + tw-hei-intelligence     -> Evidence-based HEI policy research
 deep-research + report-to-website       -> Interactive research report
 deep-research + podcast-script-generator -> Research podcast
 deep-research + academic-paper          -> Full research-to-publication pipeline

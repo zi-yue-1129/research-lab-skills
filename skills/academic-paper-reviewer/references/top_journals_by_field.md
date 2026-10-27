@@ -155,7 +155,7 @@ This document is used by `field_analyst_agent` and `eic_agent` as a reference fo
 
 1. **Match the discipline first**: Find the corresponding journal list from the paper's primary discipline
 2. **Then match quality**: Select an appropriate tier of journal based on the paper's quality
-3. **Consider context**: Taiwan or Asian research may be better suited to journals with regional focus
+3. **Consider context**: Research on one country or region may be better suited to journals with a regional focus (see section 9, and the active profile's `field.journals` if any)
 4. **Consider methodology**: Quantitative research may be better suited to certain journals, qualitative research to others
 
 ### Notes
@@ -169,18 +169,7 @@ This document is used by `field_analyst_agent` and `eic_agent` as a reference fo
 
 ## 9. Asian & Regional Journals
 
-### Taiwan (TSSCI-Indexed)
-
-| Journal | Field | ISSN | Notes |
-|---------|-------|------|-------|
-| 教育研究集刊 (Bulletin of Educational Research) | Education | 1028-8708 | NTNU; top Taiwan education journal |
-| 高等教育 (Higher Education) | Higher Education | 1813-3282 | Taiwan HE policy and practice |
-| 課程與教學季刊 (Curriculum & Instruction Quarterly) | Curriculum Studies | 1560-1277 | Curriculum design and pedagogy |
-| 教育科學研究期刊 (Journal of Research in Education Sciences) | Education Sciences | 2073-753X | Broad education research scope |
-| 當代教育研究季刊 (Contemporary Educational Research Quarterly) | Education | 1814-4810 | NTNU; contemporary education issues |
-| 教育政策論壇 (Educational Policy Forum) | Education Policy | 1560-3601 | NCNU; policy analysis |
-| 教育心理學報 (Bulletin of Educational Psychology) | Educational Psychology | 1011-5714 | NTNU; psychological perspectives in education |
-| 測驗學刊 (Psychological Testing) | Psychometrics | 1609-4905 | Assessment and measurement |
+National and regional indexes (for example a country's own social-science citation index) are not listed here. A research profile for that context adds them through its `field.journals` file, and `field_analyst_agent` reads it when the profile is active.
 
 ### Asia-Pacific
 

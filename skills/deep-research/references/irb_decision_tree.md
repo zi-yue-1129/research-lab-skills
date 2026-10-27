@@ -1,7 +1,7 @@
 # IRB Decision Tree — Human Subjects Research Ethics Review Guide
 
 ## Purpose
-IRB (Institutional Review Board) ethics review decision tree and Taiwan process guide. Used by the ethics_review_agent to determine whether research involves human subjects, and by the research_architect_agent to plan IRB review during methodology design.
+IRB (Institutional Review Board) ethics review decision tree. Jurisdiction-specific processes come from the active research profile (section 3). Used by the ethics_review_agent to determine whether research involves human subjects, and by the research_architect_agent to plan IRB review during methodology design.
 
 ---
 
@@ -72,75 +72,30 @@ Does your research collect, use, or analyze data from humans?
 
 ---
 
-## 3. Taiwan IRB Process
+## 3. Jurisdiction-Specific Process
 
-### 3.1 Governing Authorities
+Review authorities, governing law, application steps, and timelines differ by
+country and institution, so they are not hardcoded here. In order:
 
-| Authority | Jurisdiction | Legal Basis |
-|-----------|-------------|-------------|
-| **National Science and Technology Council (formerly MOST)** | NSTC-funded projects involving human research | "NSTC Guidelines for Research Grant Applications" |
-| **Ministry of Health and Welfare** | Human research, clinical trials, human biobanks | "Human Subjects Research Act" (2011) |
-| **Ministry of Education** | Research ethics in educational settings | Institutional regulations |
+1. If the active research profile sets `field.ethics` (`research-profile`,
+   `--active --json`), read that file: it holds the process for its
+   jurisdiction.
+2. Otherwise ask the user which country and institution will review the study,
+   and plan around their institution's IRB or ethics committee. Do not assume
+   any one country's law or authorities.
 
-### 3.2 Regulatory Framework
-
-| Regulation | Scope | Key Requirements |
-|-----------|-------|------------------|
-| **Human Subjects Research Act** | Research involving human subjects (surveys, interviews, observations, interventions) | Prior review, informed consent, personal data protection |
-| **Personal Data Protection Act** | Collection, processing, and use of personal data | Notification obligation, purpose limitation, security maintenance |
-| **Regulations Governing Human Trials** | Drug/medical device clinical trials | GCP compliance, subject insurance |
-
-### 3.3 Application Process
-
-```
-1. Write research proposal
-   ↓
-2. Determine whether human subjects are involved
-   ↓ (Involved)
-3. Confirm review level (Exempt / Expedited / Full Board)
-   ↓
-4. Submit application to institutional IRB
-   - Research proposal
-   - Informed consent form
-   - Questionnaire/interview guide
-   - Researcher qualification documentation (CITI or equivalent training)
-   ↓
-5. IRB review (timeline: Expedited 2-4 weeks, Full Board 4-8 weeks)
-   ↓
-6. Research may only begin after receiving approval letter
-   ↓
-7. Periodic progress reports (typically annual)
-   ↓
-8. Final report
-```
-
-### 3.4 Online Research Ethics Review Platforms
-
-| Platform | Description | URL |
-|----------|-------------|-----|
-| **AREC** (Academic Research Ethics Committee) | Multi-institutional joint ethics review committee | Institutional IRB websites |
-| **Institutional IRB systems** | Online application systems within universities | Institutional R&D office websites |
-| **CITI Program** | Online research ethics training course | citiprogram.org |
-| **Taiwan Research Ethics Education Resource Center** | Research ethics education materials | Institutional teaching development centers |
+The general shape is common: determine whether human subjects are involved
+(section 1), pick the review level (section 2), submit the proposal, consent
+form, instruments and training certificates to the institutional committee,
+start only after approval, then report progress and closure.
 
 ---
 
-## 4. Higher Education Research Quick Reference Table
+## 4. Field Quick Reference
 
-| Research Scenario | Involves Human Subjects | Recommended Review Level | Notes |
-|-------------------|------------------------|--------------------------|-------|
-| MOE public statistical data analysis | No | Exempt | Already publicly available de-identified data |
-| Institutional research (IR) data analysis | Depends | Exempt/Expedited | Depends on whether data is de-identified |
-| Student learning outcome survey | Yes | Expedited | Anonymous surveys typically qualify for expedited review |
-| Teacher interviews (general teaching experience) | Yes | Expedited | Non-sensitive topics |
-| Teaching experiment (A/B teaching method comparison) | Yes | Expedited/Full Board | Depends on whether it affects students' grades/rights |
-| Student mental health survey | Yes | Full Board | Sensitive topic |
-| Vulnerable student population study | Yes | Full Board | Vulnerable population protection |
-| Student learning portfolio analysis | Depends | Expedited | Contains identifiable information requiring expedited review |
-| Classroom observation (no personal data recorded) | Yes | Exempt/Expedited | Public setting observation |
-| Graduate career tracking survey | Yes | Expedited | Contains personal data requiring expedited review |
-| HEEACT accreditation data analysis | Depends | Exempt/Expedited | Publicly available portions exempt from review |
-| University faculty salary/labor conditions survey | Yes | Expedited/Full Board | May involve institutional power dynamics |
+Scenario-by-scenario review levels for one field (for example education
+research) ship in that field's research profile, alongside its jurisdiction
+process. Section 2's criteria apply everywhere.
 
 ---
 
@@ -167,7 +122,7 @@ Does your research collect, use, or analyze data from humans?
 | **Online survey** | Electronic consent (clicking "I agree" constitutes consent); must state that IP addresses will not be recorded |
 | **Audio/video recording** | Separate checkbox item: consent to audio/video recording |
 | **Minors** | Legal guardian consent + subject assent |
-| **Cross-national research** | Comply with local IRB requirements + Taiwan IRB requirements |
+| **Cross-national research** | Comply with the IRB requirements of every jurisdiction involved (the researcher's home institution and each research site) |
 | **Indigenous research** | Community consent (tribal consent) + individual informed consent |
 
 ### 5.3 Informed Consent Form Template Structure

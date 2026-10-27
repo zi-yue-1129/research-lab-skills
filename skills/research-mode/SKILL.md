@@ -1,6 +1,6 @@
 ---
 name: research-mode
-description: "Work mode dispatcher for research workflows. 5 modes: exp (running experiments), daily (reading/notes), explore (deep-research exploration), report (slide generation), publish (academic-pipeline). Commands: /mode exp|daily|explore|report|publish|status|end. All output in English. Triggers: /mode, switch mode, start experiment, begin research session, mode status, end session."
+description: "Work mode dispatcher for research workflows. 5 modes: exp (running experiments), daily (reading/notes), explore (deep-research exploration), report (slide generation), publish (academic-pipeline). Commands: /mode exp|daily|explore|report|publish|status|end. Banner labels in English; prompts and log drafts follow the active profile's interface language. Triggers: /mode, switch mode, start experiment, begin research session, mode status, end session."
 metadata:
   data_access_level: raw
   task_type: open-ended
@@ -29,7 +29,7 @@ Each mode activates a set of recommended skills and a log draft template.
 
 When a mode is activated, do three things in order:
 
-**1. Print the activation banner** (English only):
+**1. Print the activation banner.** Banner labels stay in English so the fixed-width box lines up; values (paths, profile names) are printed as they are. Add a `Profile  : <name>` line to any banner when a research profile is active (`research-profile`, `--active --json`):
 
 For `/mode exp`:
 ```
@@ -108,8 +108,9 @@ recommendation, execution, repetition, or diagnosis. Follow the documented
 `types → search → fetch` sequence, disclose query failures, and do not treat
 an error as empty history.
 
-Use the per-mode decision points in `references/routing_guide.md`. Keep all
-banners, prompts, and user-visible research-mode output in English.
+Use the per-mode decision points in `references/routing_guide.md`. Keep banner
+labels in English; write prompts and other user-visible output in the active
+profile's `language.interface` (by default, the user's language).
 
 ---
 
@@ -184,4 +185,4 @@ Read `references/mode_templates.md` for the draft template for the active mode.
 - Mode is session-scoped. Starting a new Claude Code session clears the active mode.
 - Multiple `/mode end` calls in one session are allowed — each drafts a new log entry.
 - If no mode is active when `/mode end` is called, ask which mode this session was.
-- All output text is English. Never output Chinese characters in banners or prompts.
+- Banner labels are English and fixed-width. Prompts, questions, and drafted log text follow the active profile's `language.interface`; with no profile, the user's language.

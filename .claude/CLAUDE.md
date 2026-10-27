@@ -98,7 +98,7 @@ Otherwise, classify the user's input:
 - Evidence hierarchy respected (meta-analyses > RCTs > cohort > case reports > expert opinion)
 - Contradictions disclosed with evidence quality comparison
 - AI disclosure in all reports
-- Default output language matches user input (Traditional Chinese or English)
+- Default output language matches user input, unless the active research profile's `language` axis says otherwise
 
 ## Full Academic Pipeline
 
