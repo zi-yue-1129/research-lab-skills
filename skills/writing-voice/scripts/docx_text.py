@@ -14,7 +14,7 @@ from Word.
 
 Typical use::
 
-    python3 docx_text.py CM-SAC_manuscript_en_v3.docx > v3.txt
+    python3 docx_text.py manuscript_v3.docx > v3.txt
 """
 
 from __future__ import annotations

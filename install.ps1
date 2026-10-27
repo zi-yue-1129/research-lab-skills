@@ -45,7 +45,11 @@ $ResolverSkills = @("resource-resolver", "agent-state", "research-profile")
 # Lab skills (experiment journal + presentations + mode routing)
 $LabSkills = @("research-log", "report-slides", "research-mode")
 # Academic Research Skills (deep research, paper writing, review, pipeline)
-$ArsSkills = @("research-project-init", "deep-research", "academic-paper", "academic-paper-reviewer", "academic-pipeline", "advisor-writing-style")
+$ArsSkills = @("research-project-init", "deep-research", "academic-paper", "academic-paper-reviewer", "academic-pipeline", "writing-voice")
+
+# Skills renamed or replaced in earlier releases. Installing removes a stale
+# copy so its old triggers cannot shadow the replacement.
+$RetiredSkills = @("advisor-writing-style")
 
 $Skills = $ResolverSkills + $LabSkills + $ArsSkills
 if ($ArsOnly) { $Skills = $ResolverSkills + $ArsSkills }
@@ -72,6 +76,13 @@ function Install-Skills {
         foreach ($skill in $Skills) {
             Copy-Item -Recurse -Force (Join-Path $Tmp "skills\$skill") $Dest
             Write-Host "  * $skill"
+        }
+        foreach ($skill in $RetiredSkills) {
+            $stale = Join-Path $Dest $skill
+            if (Test-Path $stale) {
+                Remove-Item -Recurse -Force $stale
+                Write-Host "  * Removed retired skill: $skill"
+            }
         }
 
         Write-Host ""

@@ -15,3 +15,4 @@ school, lab, course, or paper names.
 
 | Profile | Axes set | Extends | Use for |
 |---------|----------|---------|---------|
+| `formal-explicit-voice` | voice | — | Formal academic English: first-person claims, explicit connectives, subordination, strict acronym and numeral rules, raised verb register. Applied by `writing-voice`. |
