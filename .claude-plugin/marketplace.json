@@ -18,6 +18,7 @@
       "skills": [
         "./skills/resource-resolver",
         "./skills/agent-state",
+        "./skills/research-profile",
         "./skills/research-log",
         "./skills/report-slides",
         "./skills/research-mode"
@@ -32,6 +33,7 @@
       "skills": [
         "./skills/resource-resolver",
         "./skills/agent-state",
+        "./skills/research-profile",
         "./skills/research-project-init",
         "./skills/deep-research",
         "./skills/academic-paper",

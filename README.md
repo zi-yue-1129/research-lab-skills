@@ -123,6 +123,7 @@ This repository's own contribution — independently developed here, not part of
 
 - `research-log`, `report-slides`, `research-mode` — the daily research journal, progress-slide generation, and session-mode routing
 - `research-project-init`, `agent-state`, `resource-resolver` — project scoping and the persistent state layer that keeps Projects, Questions, Sources, and Evidence connected across sessions
+- `research-profile` — named, selectable profiles that hold every convention belonging to one way of working (writing voice, language, field, venue, slide style), so the skill cores stay general
 - `advisor-writing-style` — a prescriptive style guide distilled from a lab advisor's own manuscript rewrites, plus the scripts that derive it from a returned `.docx`
 - The integration and packaging layer that installs both toolsets together and lets research state flow from the daily layer into the upstream pipeline
 
@@ -222,6 +223,7 @@ Academic skills: `/ars-plan`, `/ars-full`, `/ars-lit-review`, `/ars-review`, and
 | `report-slides` | `/report-slides` | SVG + PPTX progress presentations from journal entries |
 | `research-mode` | `/mode` | Session mode routing (exp / daily / explore / report / publish) |
 | `research-project-init` | `/research-init` | Scope a preliminary idea into a project charter + tracked research questions |
+| `research-profile` | `/profile` | Choose a named profile (voice, language, field, venue, slides) for the session or project; see [PROFILE_REGISTRY.md](PROFILE_REGISTRY.md) |
 | `deep-research` *(upstream ARS)* | `/ars-full`, `/ars-lit-review`, … | 13-agent research team with Socratic mode, PRISMA, fact-check |
 | `academic-paper` *(upstream ARS)* | `/ars-plan`, `/ars-outline`, … | 12-agent paper writing with citation verification |
 | `academic-paper-reviewer` *(upstream ARS)* | `/ars-review`, `/ars-re-review` | Multi-perspective peer review (EIC + 3 reviewers + DA) |
