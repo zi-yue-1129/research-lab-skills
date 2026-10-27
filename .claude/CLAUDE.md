@@ -112,7 +112,7 @@ research-project-init (optional)
 | `academic-paper` v3.2.0 | Paper writer |
 | `academic-paper-reviewer` v1.10.0 | Peer reviewer |
 | `academic-pipeline` v3.11.1 | Pipeline orchestrator |
-| `lecture-slides` v1.0.0 | Teaching decks in the lab's lecture style (course lectures, tutorials) |
+| `lecture-slides` v1.0.0 | Teaching decks (course lectures, tutorials); course styles are named presets, e.g. `tku-lecture` |
 
 ## Handoff Protocol
 

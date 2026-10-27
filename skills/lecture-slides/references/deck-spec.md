@@ -4,19 +4,25 @@ A deck spec is one YAML file: a `deck` header and a list of `slides`. Image
 paths are relative to the spec file. A missing image becomes a labelled,
 dashed placeholder and a build warning, so a draft deck always builds.
 
-`examples/knn-demo.yaml` uses every layout and is the quickest reference.
+`examples/generic-demo.yaml` uses every layout with no preset;
+`presets/tku-lecture/examples/knn-demo.yaml` is the same deck in the
+`tku-lecture` preset.
 
 ## Header
 
 ```yaml
 deck:
-  theme: warm-paper          # warm-paper | navy-academic | path/to/theme.yaml
+  preset: tku-lecture        # optional; a folder under presets/ (or a path)
+  theme: warm-paper          # optional; the preset's themes, then the core's, or a path
   course: 人工智慧導論
   week: 第七週
   title: 看鄰居猜類別：K 近鄰
   author: 授課教師
   sections: [看資料, 量距離, 檢查, 比方法]   # nav chips, 3–5 short names
 ```
+
+With no `preset` the core defaults apply (theme `default`, Calibri). With a
+preset and no `theme`, the preset's `default_theme` applies.
 
 ## Fields every slide may carry
 
@@ -27,7 +33,7 @@ deck:
 | `section` | which `deck.sections` chip to light up |
 | `takeaway` | one centred sentence above the footer |
 | `source` | footnote: dataset, paper, image licence, or 本課實際計算 |
-| `notes` | full speaker script; mark clicks with `【按】` |
+| `notes` | full speaker script; mark clicks with the preset's click marker |
 
 ## Inline markup (any text field)
 
@@ -38,7 +44,7 @@ deck:
 
 | Layout | Use it for | Keys |
 |---|---|---|
-| `title` | opening slide | `title`, `subtitle` (the hook question), `image` (left-bleed photo) or `motif: tree` |
+| `title` | opening slide | `title`, `subtitle` (the hook question), `image` (left-bleed photo) or `motif` (a name the active preset's `motifs.py` defines, e.g. `tree` in `tku-lecture`) |
 | `agenda` | numbered stages | `items: [{label, note, tone}]`, `current` (1-based) |
 | `facts` | the opening case | `image`, `caption`, `heading`, `facts: [{key: value}]`, `question`, `tone` |
 | `compare` | last week vs this week, A vs B | `panels:` exactly 2 × `{heading, tone, lines, image}` |

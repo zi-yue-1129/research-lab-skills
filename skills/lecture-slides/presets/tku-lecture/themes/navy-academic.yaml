@@ -1,12 +1,9 @@
 # Navy academic: white page, navy title bar, crimson emphasis, cool grey panels.
+# Part of the tku-lecture preset; fonts come from preset.yaml.
 # Measured from 第06週_U-Net語意分割.pptx.
 name: navy-academic
 description: White page, navy title bar, crimson / blue / green accents, grey panels
 title_style: bar
-fonts:
-  latin: Times New Roman
-  east_asian: DFKai-SB
-  mono: Consolas
 colors:
   bg: "FFFFFF"
   text: "1F2328"

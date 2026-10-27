@@ -2,19 +2,21 @@
 """Build an editable lecture deck (.pptx) from a YAML deck spec.
 
 Every element is a native PowerPoint shape or text box, so the teacher can
-edit any number, label, or colour afterwards. The visual language (cream or
-white page, question titles, tinted cards, nav chips, footnote sources,
-``n / N`` page numbers, full speaker notes) is distilled from the reference
-lecture decks described in ``references/style-guide.md``.
+edit any number, label, or colour afterwards. The core is course-agnostic:
+layouts, chrome (title, section chips, footnote source, ``n / N``), speaker
+notes, and a neutral default theme. A named *preset* under ``presets/``
+supplies one course's look: its themes, fonts, strings, and title motifs.
 
 Usage:
-    python3 build_deck.py deck.yaml -o out.pptx [--theme warm-paper]
+    python3 build_deck.py deck.yaml -o out.pptx [--preset NAME] [--theme NAME]
 
-The spec format is documented in ``references/deck-spec.md``.
+The spec format is documented in ``references/deck-spec.md``; presets in
+``presets/README.md``.
 """
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import re
 import sys
 from pathlib import Path
@@ -29,6 +31,11 @@ from pptx.util import Emu, Inches, Pt
 
 SKILL_DIR = Path(__file__).resolve().parent.parent
 THEME_DIR = SKILL_DIR / "references" / "themes"
+PRESET_DIR = SKILL_DIR / "presets"
+
+# Course-agnostic defaults; a preset overrides them, and a theme overrides both.
+CORE_FONTS = {"latin": "Calibri", "east_asian": None, "mono": "Courier New"}
+CORE_STRINGS = {"image_placeholder": "[Image] ", "meta_separator": " · "}
 
 SLIDE_W, SLIDE_H = 13.333, 7.5
 LEFT, RIGHT = 0.8, 12.53
@@ -52,11 +59,46 @@ class SpecError(ValueError):
     """The deck spec is malformed."""
 
 
-def load_theme(name_or_path: str) -> dict:
-    """Load a theme by built-in name or by path to a theme YAML file."""
+def available_presets() -> list[str]:
+    return sorted(d.name for d in PRESET_DIR.iterdir() if (d / "preset.yaml").is_file())
+
+
+def load_preset(name_or_path: str | None) -> dict:
+    """Load a preset by name (``presets/<name>``) or by path to its folder.
+
+    Returns an empty preset when ``name_or_path`` is None. The result carries
+    ``_dir`` (the preset folder) and ``_motifs`` (name -> draw function).
+    """
+    if not name_or_path:
+        return {"_dir": None, "_motifs": {}}
+    folder = Path(name_or_path)
+    if not (folder / "preset.yaml").is_file():
+        folder = PRESET_DIR / str(name_or_path)
+    manifest = folder / "preset.yaml"
+    if not manifest.is_file():
+        raise SpecError(f"preset not found: {name_or_path}; available: "
+                        f"{', '.join(available_presets()) or 'none'}")
+    preset = yaml.safe_load(manifest.read_text(encoding="utf-8")) or {}
+    preset["_dir"] = folder
+    preset["_motifs"] = {}
+    if preset.get("motifs"):
+        module_path = folder / preset["motifs"]
+        spec = importlib.util.spec_from_file_location(
+            f"lecture_preset_{folder.name.replace('-', '_')}_motifs", module_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        preset["_motifs"] = dict(module.MOTIFS)
+    return preset
+
+
+def load_theme(name_or_path: str, preset: dict | None = None) -> dict:
+    """Load a theme by name (the preset's themes first, then the core's) or path."""
     path = Path(name_or_path)
     if not path.suffix:
-        path = THEME_DIR / f"{name_or_path}.yaml"
+        folders = [preset["_dir"] / "themes"] if preset and preset.get("_dir") else []
+        folders.append(THEME_DIR)
+        path = next((f / f"{name_or_path}.yaml" for f in folders
+                     if (f / f"{name_or_path}.yaml").is_file()), path)
     if not path.is_file():
         raise SpecError(f"theme not found: {name_or_path}")
     theme = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -78,8 +120,13 @@ def visual_width(text: str) -> float:
 class Builder:
     """Draws slides onto a Presentation using one theme."""
 
-    def __init__(self, theme: dict, spec: dict, base_dir: Path):
+    def __init__(self, theme: dict, spec: dict, base_dir: Path, preset: dict | None = None):
+        preset = preset or {"_motifs": {}}
         self.t = theme
+        self.fonts = {**CORE_FONTS, **(preset.get("fonts") or {}), **(theme.get("fonts") or {})}
+        self.strings = {**CORE_STRINGS, **(preset.get("strings") or {})}
+        self.motifs = preset["_motifs"]
+        self.preset_name = preset.get("name")
         self.spec = spec
         self.deck = spec.get("deck", {})
         self.base_dir = base_dir
@@ -113,16 +160,20 @@ class Builder:
         f.size = Pt(size)
         f.bold = bold
         f.color.rgb = rgb(color)
-        fonts = self.t["fonts"]
-        f.name = fonts["mono"] if mono else fonts["latin"]
+        fonts = self.fonts
+        latin = fonts["mono"] if mono else fonts["latin"]
+        f.name = latin
         rpr = run._r.get_or_add_rPr()
-        for tag in ("a:ea", "a:cs"):
+        # With no east-Asian face set, PowerPoint uses the theme's own.
+        faces = {"a:ea": fonts.get("east_asian"), "a:cs": latin}
+        for tag, face in faces.items():
+            if not face:
+                continue
             el = rpr.find(qn(tag))
             if el is None:
                 el = rpr.makeelement(qn(tag), {})
                 rpr.append(el)
-            face = fonts["latin"] if tag == "a:cs" else fonts["east_asian"]
-            el.set("typeface", fonts["mono"] if mono and tag == "a:cs" else face)
+            el.set("typeface", face)
 
     def _fill_paragraph(self, para, text, size, color, bold=False, mono=False):
         pos = 0
@@ -212,6 +263,16 @@ class Builder:
         sppr.append(sppr.makeelement(qn("a:effectLst"), {}))
         return shape
 
+    def line(self, slide, x1, y1, x2, y2, color=None, width=1.0):
+        """Plain straight line; ``color`` is a hex string or a colour role."""
+        hexcolor = color if color and re.fullmatch(r"[0-9A-Fa-f]{6}", color) \
+            else self.color(color or "line")
+        conn = slide.shapes.add_connector(MSO_CONNECTOR.STRAIGHT, Inches(x1), Inches(y1),
+                                          Inches(x2), Inches(y2))
+        conn.line.color.rgb = rgb(hexcolor)
+        conn.line.width = Pt(width)
+        return conn
+
     def arrow(self, slide, x1, y1, x2, y2, color="muted", width=1.75):
         line = slide.shapes.add_connector(MSO_CONNECTOR.STRAIGHT, Inches(x1),
                                           Inches(y1), Inches(x2), Inches(y2))
@@ -235,7 +296,7 @@ class Builder:
         ph = self.box(slide, x, y, w, h, fill=self.t["colors"]["panel"],
                       border=self.t["colors"]["line"], rounded=False, shadow=False)
         ph.line.dash_style = 4  # dash
-        self.text(slide, x + 0.2, y, w - 0.4, h, f"［圖］{label or path or ''}",
+        self.text(slide, x + 0.2, y, w - 0.4, h, f"{self.strings['image_placeholder']}{label or path or ''}",
                   size=self.t["sizes"]["small"], color="faint", align="c", anchor="m")
         return ph
 
@@ -297,14 +358,19 @@ class Builder:
     def layout_title(self, slide, s):
         sz = self.t["sizes"]
         d = self.deck
-        meta = "　".join(v for v in (d.get("course"), d.get("week")) if v)
+        meta = self.strings["meta_separator"].join(v for v in (d.get("course"), d.get("week")) if v)
         if s.get("image"):
             self.image(slide, s["image"], 0, 0, 5.6, SLIDE_H, s.get("image_label", ""))
             x, w, align = 6.3, 6.2, "l"
         else:
             x, w, align = LEFT, CONTENT_W, "c"
             if s.get("motif"):
-                self.motif_tree(slide, SLIDE_W / 2, 0.9)
+                draw = self.motifs.get(s["motif"])
+                if draw is None:
+                    raise SpecError(
+                        f"slide {self.slide_no}: motif {s['motif']!r} is not provided by "
+                        f"preset {self.preset_name or '(none)'}; motifs come from presets")
+                draw(self, slide, SLIDE_W / 2, 0.9)
         top = 2.55 if s.get("image") or not s.get("motif") else 3.0
         self.text(slide, x, top - 0.5, w, 0.35, meta, size=sz["small"], color="muted", align=align)
         self.text(slide, x, top, w, 1.0, s.get("title", d.get("title", "")), size=36,
@@ -315,22 +381,6 @@ class Builder:
         if d.get("author"):
             self.text(slide, x, top + 1.9, w, 0.4, d["author"], size=sz["small"],
                       color="muted", align=align)
-
-    def motif_tree(self, slide, cx, y):
-        """Small two-level decision-tree motif used on title slides."""
-        line = self.t["colors"]["line"]
-        nodes = [(cx, y), (cx - 0.9, y + 0.55), (cx + 0.9, y + 0.55)]
-        for (px, py), (qx, qy) in ((nodes[0], nodes[1]), (nodes[0], nodes[2])):
-            c = slide.shapes.add_connector(MSO_CONNECTOR.STRAIGHT, Inches(px), Inches(py + 0.12),
-                                           Inches(qx), Inches(qy))
-            c.line.color.rgb = rgb(line)
-        for nx, ny in nodes:
-            self.box(slide, nx - 0.4, ny - 0.05, 0.8, 0.22, fill=self.t["colors"]["card"],
-                     border=line, radius=0.1, shadow=False)
-        for i, nx in enumerate((cx - 1.3, cx - 0.5, cx + 0.5, cx + 1.3)):
-            self.dot(slide, nx - 0.06, y + 1.1, 0.12,
-                     self.accent("positive") if i % 2 else self.t["colors"]["card"],
-                     border=self.accent("positive"))
 
     def layout_agenda(self, slide, s):
         items = s.get("items") or []
@@ -688,13 +738,17 @@ class Builder:
         return self.prs
 
 
-def build(spec_path: Path, out: Path, theme_override: str | None = None) -> list[str]:
+def build(spec_path: Path, out: Path, theme_override: str | None = None,
+          preset_override: str | None = None) -> list[str]:
     """Build ``spec_path`` into ``out`` and return the lint warnings."""
     spec = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
     if not isinstance(spec, dict) or not spec.get("slides"):
         raise SpecError("spec must be a mapping with a non-empty 'slides' list")
-    theme = load_theme(theme_override or spec.get("deck", {}).get("theme", "warm-paper"))
-    builder = Builder(theme, spec, spec_path.parent)
+    deck = spec.get("deck") or {}
+    preset = load_preset(preset_override or deck.get("preset"))
+    theme_name = theme_override or deck.get("theme") or preset.get("default_theme") or "default"
+    theme = load_theme(theme_name, preset)
+    builder = Builder(theme, spec, spec_path.parent, preset)
     prs = builder.build()
     out.parent.mkdir(parents=True, exist_ok=True)
     prs.save(str(out))
@@ -705,10 +759,11 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("spec", type=Path)
     ap.add_argument("-o", "--out", type=Path, required=True)
-    ap.add_argument("--theme", help="built-in theme name or path to a theme YAML")
+    ap.add_argument("--preset", help="preset name under presets/, or path to a preset folder")
+    ap.add_argument("--theme", help="theme name (preset's, then core) or path to a theme YAML")
     args = ap.parse_args(argv)
     try:
-        warnings = build(args.spec, args.out, args.theme)
+        warnings = build(args.spec, args.out, args.theme, args.preset)
     except SpecError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
