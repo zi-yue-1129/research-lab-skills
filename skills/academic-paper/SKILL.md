@@ -1,6 +1,6 @@
 ---
 name: academic-paper
-description: "12-agent academic paper writing pipeline. 10 modes (full/plan/outline/revision/revision-coach/abstract/lit-review/format-convert/citation-check/disclosure). 6 paper types, 5 citation formats, bilingual abstracts, LaTeX/DOCX-via-Pandoc/PDF output. Style Calibration + Writing Quality Check + Anti-Patterns with IRON RULE markers. Triggers: write paper, academic paper, guide my paper, parse reviews, AI disclosure, 寫論文, 學術論文, 引導我寫論文, 審查意見."
+description: "12-agent academic paper writing pipeline. 10 modes (full/plan/outline/revision/revision-coach/abstract/lit-review/format-convert/citation-check/disclosure). 6 paper types, 5 citation formats, abstracts in one or more languages, LaTeX/DOCX-via-Pandoc/PDF output. Style Calibration + Writing Quality Check + Anti-Patterns with IRON RULE markers. Triggers: write paper, academic paper, guide my paper, parse reviews, AI disclosure, 寫論文, 學術論文, 引導我寫論文, 審查意見."
 metadata:
   version: "3.2.0"
   last_updated: "2026-06-01"
@@ -17,7 +17,7 @@ metadata:
 
 # Academic Paper — Academic Paper Writing Agent Team
 
-A general-purpose academic paper writing tool — 12-agent pipeline covering all disciplines, with higher education domain as the default reference.
+A general-purpose academic paper writing tool — 12-agent pipeline covering all disciplines, with no default domain. Conventions that belong to one field, venue, language, or author (a domain glossary, a default citation style, extra abstract languages, a prescriptive voice) come from the active research profile (`research-profile`); with none active, the general defaults below apply.
 
 **v2.5** adds two writing quality features:
 - **Style Calibration** (intake Step 10, optional) — Provide 3+ past papers and the pipeline learns your writing voice (sentence rhythm, vocabulary preferences, citation integration style). Applied as a soft guide during drafting; discipline conventions always take priority. See `shared/protocols/style_calibration_protocol.md`. If the active research profile sets a `voice` (`research-profile`, `--active --json`), invoke the `writing-voice` skill with that profile's rules instead of calibrating from past papers. A profile voice is prescriptive, not a soft guide, and `writing-voice`'s guardrails (never drop a limitation, never let a strengthened verb outrun its evidence, never let style touch a number) outrank its rules. With no profile voice, Style Calibration works as described.
@@ -42,7 +42,7 @@ Write a paper on the impact of declining birth rates on private university manag
 3. Architecture design — paper structure, outline, word count allocation
 4. Argumentation construction — claim-evidence chains, logical flow
 5. Full-text drafting — section-by-section draft, register adjustment
-6. Citation compliance + bilingual abstract (parallel)
+6. Citation compliance + abstract(s) (parallel)
 7. Peer review — five-dimension scoring, revision suggestions
 8. Output formatting — LaTeX/DOCX (via Pandoc)/PDF/Markdown
 
@@ -77,7 +77,7 @@ Activate `plan` mode when the user wants guidance, step-by-step planning, or exp
 | Primary output | Publishable paper draft | Research report |
 | Structure | Journal-ready (IMRaD, etc.) | APA 7.0 report |
 | Citation | Multi-format (APA/Chicago/MLA/IEEE/Vancouver) | APA 7.0 only |
-| Abstract | Bilingual (zh-TW + EN) | Single language |
+| Abstract | One per configured language (default: body language) | Single language |
 | Peer review | Simulated 5-dimension review | Editorial review |
 | Output format | LaTeX/DOCX (via Pandoc)/PDF/Markdown | Markdown only |
 | Revision loop | Max 2 rounds with targeted feedback | Max 2 rounds |
@@ -94,7 +94,7 @@ Activate `plan` mode when the user wants guidance, step-by-step planning, or exp
 | 4 | `argument_builder_agent` | Argument construction, claim-evidence chains, logical flow, counter-argument handling; Plan mode argument stress test | Phase 3 / Plan Step 3 |
 | 5 | `draft_writer_agent` | Section-by-section full draft writing, discipline register adjustment, word count tracking | Phase 4 |
 | 6 | `citation_compliance_agent` | Citation format verification, reference list completeness, DOI checking | Phase 5a |
-| 7 | `abstract_bilingual_agent` | Bilingual abstract (zh-TW + EN), 5-7 keywords each | Phase 5b |
+| 7 | `abstract_bilingual_agent` | Abstract(s) per configured language, 5-7 keywords each | Phase 5b |
 | 8 | `peer_reviewer_agent` | Simulated double-blind review, five-dimension scoring, revision suggestions (max 2 rounds) | Phase 6 |
 | 9 | `formatter_agent` | Convert to LaTeX/DOCX (via Pandoc)/PDF/Markdown, journal formatting, cover letter, citation format conversion (APA 7 / Chicago / MLA / IEEE / Vancouver) | Phase 7 |
 | 10 | `socratic_mentor_agent` | Plan mode Socratic mentor: chapter-by-chapter guidance, convergence criteria (4 signals), question taxonomy (4 types), INSIGHT extraction | Plan Step 0-3 |
@@ -112,7 +112,7 @@ LaTeX (.tex + .bib), DOCX (via Pandoc), PDF (via LaTeX or Pandoc), Markdown.
 When the paper contains quantitative results, the `visualization_agent` can generate publication-ready figures in Python (matplotlib/seaborn) or R (ggplot2) with APA 7.0 formatting and colorblind-safe palettes. Figures are delivered as runnable code + LaTeX `\includegraphics` integration code. See `references/statistical_visualization_standards.md` for chart type decision trees and code templates.
 
 ### Citation Formats
-APA 7.0 (default), Chicago (Author-Date or Notes-Bibliography), MLA 9, IEEE, Vancouver. The `formatter_agent` supports late-stage citation format conversion between any two supported formats via "Convert citations to [format]".
+APA 7.0, Chicago (Author-Date or Notes-Bibliography), MLA 9, IEEE, Vancouver. No style is preselected: intake uses the active profile's `venue.citation_style` if set, otherwise suggests one from the discipline, and the user confirms. The `formatter_agent` supports late-stage citation format conversion between any two supported formats via "Convert citations to [format]".
 
 ---
 
@@ -125,7 +125,7 @@ Phase 2: ARCHITECTURE  -> [structure_architect]        -> Paper Outline + Eviden
 Phase 3: ARGUMENTATION -> [argument_builder]           -> Argument Blueprint
 Phase 4: DRAFTING      -> [draft_writer]               -> Complete Draft
 Phase 5a: CITATIONS    -> [citation_compliance] ──┐    -> Citation Audit Report
-Phase 5b: ABSTRACT     -> [abstract_bilingual]   ─┘    -> Bilingual Abstract + Keywords  (parallel)
+Phase 5b: ABSTRACT     -> [abstract_bilingual]   ─┘    -> Abstract(s) + Keywords        (parallel)
 Phase 6: PEER REVIEW   -> [peer_reviewer]              -> Review Report (max 2 revision loops)
 Phase 7: FORMAT        -> [formatter]                  -> Final Output Package
 ```
@@ -270,7 +270,7 @@ See `references/mode_selection_guide.md` for details.
 | `full` | "Write a paper" | All 9 (+ 11 if quantitative) | Complete paper draft (with figures if applicable) |
 | `outline-only` | "Paper outline" | 1->2->3 | Detailed outline + evidence map |
 | `revision` | "Revise paper" | 8->5->6 | Revised draft with tracked changes (uses `templates/revision_tracking_template.md`) |
-| `abstract-only` | "Write abstract" | 1->7 | Bilingual abstract + keywords |
+| `abstract-only` | "Write abstract" | 1->7 | Abstract(s) + keywords |
 | `lit-review` | "Literature review" | 1->2 | Annotated bibliography + synthesis |
 | `format-convert` | "Convert to LaTeX" / "Convert citations to [format]" | 9 only | Formatted document; includes citation format conversion (APA 7 / Chicago / MLA / IEEE / Vancouver) |
 | `citation-check` | "Check citations" | 6 only | Citation error report |
@@ -354,7 +354,7 @@ See `agents/intake_agent.md` for the complete field definitions of the Phase 0 c
 - Citation: `apa7_extended_guide`, `apa7_chinese_citation_guide`, `citation_format_switcher`
 - Writing: `academic_writing_style`, `writing_quality_check`, `writing_judgment_framework`
 - Structure: `paper_structure_patterns` (6 types), `abstract_writing_guide`
-- Domain: `hei_domain_glossary` (bilingual), `journal_submission_guide`, `latex_template_reference`
+- Domain: `journal_submission_guide`, `latex_template_reference` (field glossaries live in research profiles, e.g. `bilingual-education-research`)
 - Process: `failure_paths` (12 scenarios), `mode_selection_guide` (10 modes), `plan_mode_protocol`, `workflow_phase_details`
 - Ethics: `credit_authorship_guide` (CRediT 14 roles), `funding_statement_guide`, `statistical_visualization_standards`
 - Disclosure (v3.2): `disclosure_mode_protocol` (venue-specific AI-usage statement generation), `venue_disclosure_policies` (v1 database: ICLR, NeurIPS, Nature, Science, ACL, EMNLP)
@@ -362,7 +362,7 @@ See `agents/intake_agent.md` for the complete field definitions of the Phase 0 c
 
 **Templates** (11 files in `templates/`): `imrad`, `literature_review`, `case_study`, `theoretical_paper`, `policy_brief`, `conference_paper`, `latex_article_template.tex`, `bilingual_abstract`, `credit_statement`, `funding_statement`, `revision_tracking` (4 status types).
 
-**Examples** (9 files in `examples/`): `imrad_hei_example`, `literature_review_example`, `plan_mode_guided_writing`, `chinese_paper_example`, `revision_mode_example`, `revision_recovery_example`, `clinical_citation_verification_checklist`, `clinical_epistemic_status_example`, `version_family_reconciliation_example`.
+**Examples** (in `examples/`): `literature_review_example`, `plan_mode_guided_writing`, `revision_mode_example`, `revision_recovery_example`, `clinical_citation_verification_checklist`, `clinical_epistemic_status_example`, `version_family_reconciliation_example`.
 
 ---
 
@@ -392,11 +392,11 @@ Explicit prohibitions to prevent common failure modes:
 4. **Logical flow** — clear transitions between paragraphs and sections
 5. **Word count compliance** — within +/-10% of target
 
-### Bilingual Abstract Quality
-6. **Independent writing** — zh-TW and EN abstracts are independently composed, NOT mechanical translations
-7. **Structural alignment** — both abstracts cover the same key points in the same order
+### Abstract Quality
+6. **Independent writing** — with two or more abstract languages, each abstract is independently composed, NOT a mechanical translation
+7. **Structural alignment** — all abstracts cover the same key points in the same order
 8. **Keywords** — 5-7 per language, reflecting the paper's core concepts
-9. **Word count** — EN: 150-300 words; zh-TW: 300-500 characters
+9. **Word count** — EN: 150-300 words; Chinese: 300-500 characters; otherwise the target journal's limits
 
 ### Citation Quality
 10. **Format compliance** — 100% adherence to selected citation style
@@ -419,14 +419,13 @@ Explicit prohibitions to prevent common failure modes:
 
 ## Output Language
 
-Follows the user's language. Academic terminology is kept in English. Bilingual abstracts are always provided regardless of the main text language.
+Follows the active research profile's `language` axis; by default, the user's language. Academic terminology is kept in English. Abstracts: one per language the configuration lists, by default a single abstract in the body language (a profile such as `bilingual-education-research` adds a second).
 
 ---
 
 ## Integration with Other Skills
 
 ```
-academic-paper + tw-hei-intelligence  -> Evidence-based HEI paper with real MOE data
 academic-paper + deep-research        -> Deep research phase -> paper writing phase (auto-handoff)
 academic-paper + report-to-website    -> Interactive web version of the paper
 academic-paper + notebooklm-slides-generator -> Presentation slides from paper

@@ -44,7 +44,7 @@ User Input →
 - User has no idea about research direction (→ use `deep-research` first)
 - Only need a specific section (→ use another specialized mode)
 
-**Expected Output**: Complete paper draft + references + bilingual abstract + review report
+**Expected Output**: Complete paper draft + references + abstract(s) + review report
 **Expected Duration**: Long (all 8 Phases fully executed)
 **Agents Used**: All 9 + socratic_mentor (if needed)
 
@@ -115,12 +115,12 @@ User Input →
 **Applicable Scenarios**:
 - Paper is already complete, only need an abstract
 - Need to submit a conference abstract
-- Need a bilingual abstract
+- Need an abstract (or abstracts in several languages)
 
 **Not Applicable When**:
 - No paper content to summarize (→ full mode or plan mode)
 
-**Expected Output**: Bilingual abstract (zh-TW + EN) + keywords
+**Expected Output**: Abstract(s) in the configured language(s) + keywords
 **Expected Duration**: Short
 **Agents Used**: intake → abstract_bilingual
 

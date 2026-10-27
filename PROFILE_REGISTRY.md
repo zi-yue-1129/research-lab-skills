@@ -15,4 +15,5 @@ school, lab, course, or paper names.
 
 | Profile | Axes set | Extends | Use for |
 |---------|----------|---------|---------|
+| `bilingual-education-research` | language, field, venue | — | Education and higher-education research for Taiwan and international venues: English + Traditional Chinese abstracts, APA 7, Taiwan IRB process, TSSCI education journals, higher-education glossary and examples. Formerly the suite-wide default. |
 | `formal-explicit-voice` | voice | — | Formal academic English: first-person claims, explicit connectives, subordination, strict acronym and numeral rules, raised verb register. Applied by `writing-voice`. |
