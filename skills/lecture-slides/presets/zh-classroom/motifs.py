@@ -1,4 +1,4 @@
-"""Title-slide motifs for the tku-lecture preset.
+"""Title-slide motifs for the zh-classroom preset.
 
 Each motif is ``draw(builder, slide, cx, y)``: it draws native shapes centred
 on ``cx`` with its top at ``y`` (inches), using the builder's primitives and

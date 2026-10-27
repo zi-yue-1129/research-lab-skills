@@ -13,7 +13,7 @@ the neutral `default` theme, Calibri, and English placeholder strings.
 
 | Preset | Style | Language | Themes |
 |---|---|---|---|
-| `tku-lecture` | The lab's TKU course decks (空間濾波, U-Net 語意分割, 分類與決策樹): Times New Roman + 標楷體, question titles, a running case, 【按】 notes | zh-TW | `warm-paper` (default), `navy-academic` |
+| `zh-classroom` | Three of the lab's course decks (空間濾波, U-Net 語意分割, 分類與決策樹): Times New Roman + 標楷體, question titles, a running case, 【按】 notes | zh-TW | `warm-paper` (default), `navy-academic` |
 
 ## What a preset folder holds
 
@@ -43,7 +43,7 @@ A theme may also carry a `fonts` block; it overrides the preset's.
 
 ## Adding a preset from new example decks
 
-1. Copy `tku-lecture/` to `presets/<new-name>/` and edit `preset.yaml`.
+1. Copy `zh-classroom/` to `presets/<new-name>/` and edit `preset.yaml`.
 2. Measure the examples instead of eyeballing them: render them with
    `scripts/render_preview.py`, and count fonts, sizes, text colours and fills
    across all slides with `python-pptx`. Put the measured colours in

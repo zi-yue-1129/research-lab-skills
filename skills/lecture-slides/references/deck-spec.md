@@ -5,14 +5,14 @@ paths are relative to the spec file. A missing image becomes a labelled,
 dashed placeholder and a build warning, so a draft deck always builds.
 
 `examples/generic-demo.yaml` uses every layout with no preset;
-`presets/tku-lecture/examples/knn-demo.yaml` is the same deck in the
-`tku-lecture` preset.
+`presets/zh-classroom/examples/knn-demo.yaml` is the same deck in the
+`zh-classroom` preset.
 
 ## Header
 
 ```yaml
 deck:
-  preset: tku-lecture        # optional; a folder under presets/ (or a path)
+  preset: zh-classroom        # optional; a folder under presets/ (or a path)
   theme: warm-paper          # optional; the preset's themes, then the core's, or a path
   course: 人工智慧導論
   week: 第七週
@@ -44,7 +44,7 @@ preset and no `theme`, the preset's `default_theme` applies.
 
 | Layout | Use it for | Keys |
 |---|---|---|
-| `title` | opening slide | `title`, `subtitle` (the hook question), `image` (left-bleed photo) or `motif` (a name the active preset's `motifs.py` defines, e.g. `tree` in `tku-lecture`) |
+| `title` | opening slide | `title`, `subtitle` (the hook question), `image` (left-bleed photo) or `motif` (a name the active preset's `motifs.py` defines, e.g. `tree` in `zh-classroom`) |
 | `agenda` | numbered stages | `items: [{label, note, tone}]`, `current` (1-based) |
 | `facts` | the opening case | `image`, `caption`, `heading`, `facts: [{key: value}]`, `question`, `tone` |
 | `compare` | last week vs this week, A vs B | `panels:` exactly 2 × `{heading, tone, lines, image}` |

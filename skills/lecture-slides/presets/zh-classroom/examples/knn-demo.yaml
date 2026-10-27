@@ -1,7 +1,7 @@
 # Demo deck for lecture-slides: one layout of each kind, on a toy example.
 # All numbers are illustrative toy data (stated in each slide's source line).
 deck:
-  preset: tku-lecture
+  preset: zh-classroom
   theme: warm-paper
   course: 人工智慧導論
   week: 第七週

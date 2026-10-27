@@ -220,7 +220,7 @@ Academic skills: `/ars-plan`, `/ars-full`, `/ars-lit-review`, `/ars-review`, and
 |-------|---------|---------|
 | `research-log` | `/research-log` | Structured experiment journal (daily logs, amendments, index) |
 | `report-slides` | `/report-slides` | SVG + PPTX progress presentations from journal entries |
-| `lecture-slides` | *(trigger phrase, no command)* | Editable teaching decks (.pptx): question titles, a running example, native shapes, speaker notes; named presets (e.g. `tku-lecture`) select a course's style |
+| `lecture-slides` | *(trigger phrase, no command)* | Editable teaching decks (.pptx): question titles, a running example, native shapes, speaker notes; named presets (e.g. `zh-classroom`) select a course's style |
 | `research-mode` | `/mode` | Session mode routing (exp / daily / explore / report / publish) |
 | `research-project-init` | `/research-init` | Scope a preliminary idea into a project charter + tracked research questions |
 | `deep-research` *(upstream ARS)* | `/ars-full`, `/ars-lit-review`, … | 13-agent research team with Socratic mode, PRISMA, fact-check |

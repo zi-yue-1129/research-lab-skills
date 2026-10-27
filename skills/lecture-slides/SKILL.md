@@ -1,6 +1,6 @@
 ---
 name: lecture-slides
-description: "Build an editable teaching deck (.pptx) for a course lecture, tutorial, or onboarding talk: question titles, a running concrete example, cards and charts drawn as native shapes, section chips, footnoted sources, n / N page numbers, and full speaker notes. A named preset selects one course's look (e.g. tku-lecture, the lab's TKU lecture style). Triggers: 上課簡報, 教學投影片, 講義簡報, 做一份課程簡報, 第 N 週的投影片, lecture slides, teaching deck, course slides, make slides like the examples."
+description: "Build an editable teaching deck (.pptx) for a course lecture, tutorial, or onboarding talk: question titles, a running concrete example, cards and charts drawn as native shapes, section chips, footnoted sources, n / N page numbers, and full speaker notes. A named preset selects one course's look (e.g. zh-classroom, the lab's own lecture style). Triggers: 上課簡報, 教學投影片, 講義簡報, 做一份課程簡報, 第 N 週的投影片, lecture slides, teaching deck, course slides, make slides like the examples."
 metadata:
   version: "1.0.0"
   last_updated: "2026-10-27"
@@ -27,7 +27,7 @@ teacher can edit. The skill has two parts:
 | Preset | Use when |
 |---|---|
 | *(none)* | no house style is asked for |
-| `tku-lecture` | the user wants the lab's TKU course style ("像範例那樣", 淡江課程簡報, 跟上次一樣的課程風格) |
+| `zh-classroom` | the user wants the lab's own lecture style ("像範例那樣", 跟上次一樣的課程風格) |
 
 **This skill vs `report-slides`:** `report-slides` turns research-log entries
 into a progress report through an approval-gated pipeline. This skill teaches
