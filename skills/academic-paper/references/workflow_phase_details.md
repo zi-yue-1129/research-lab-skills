@@ -14,8 +14,8 @@ Detailed per-phase agent behavior and output descriptions for the 8-phase orches
 - Target journal (optional)
 - Citation format (APA 7 / Chicago / MLA / IEEE / Vancouver)
 - Output format (LaTeX / DOCX / PDF / Markdown / Combined)
-- Language (EN / zh-TW / bilingual sections)
-- Bilingual abstract (Yes / EN-only / zh-TW-only)
+- Language (body language; default from the active profile or the user's language)
+- Abstract languages (default: one, in the body language; a profile or the user can add more)
 - Word count target
 - Existing materials (RQ, data, drafts, lit)
 
@@ -93,13 +93,11 @@ Detailed per-phase agent behavior and output descriptions for the 8-phase orches
 ### Phase 5b: Abstract
 
 **Agent**: `abstract_bilingual_agent`
-**Output**: Bilingual Abstract + Keywords
+**Output**: Abstract(s) per configured language + Keywords
 
-- English abstract (150-300 words, structured)
-- Traditional Chinese abstract (300-500 characters, structured)
-- EN keywords (5-7)
-- zh-TW keywords (5-7)
-- Independent writing (not mechanical translation)
+- One structured abstract per configured language (EN 150-300 words; Chinese 300-500 characters)
+- 5-7 keywords per language
+- With two or more languages: independent writing (not mechanical translation)
 
 ---
 

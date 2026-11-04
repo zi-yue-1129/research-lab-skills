@@ -1,0 +1,5 @@
+name: formal-explicit-voice
+description: Formal academic English with first-person claims, explicit connectives, subordinated clauses, strict acronym and numeral rules, and a raised verb register.
+axes:
+  voice:
+    rules: voice.md

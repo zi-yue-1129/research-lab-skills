@@ -1,7 +1,7 @@
 # Bilingual Abstract Template
 
 ## Usage
-Use this template when writing bilingual abstracts (English + Traditional Chinese). Each version must be independently composed — not a translation of the other.
+Use this template when two abstracts are configured, shown here for English + Traditional Chinese (for example via a research profile whose `language.abstract` is `[en, zh-TW]`). Each version must be independently composed — not a translation of the other. For a single abstract, use only the first section.
 
 ---
 

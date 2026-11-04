@@ -1,0 +1,17 @@
+name: bilingual-education-research
+description: Education and higher-education research written for Taiwan and international venues, with English + Traditional Chinese abstracts, APA 7, the Taiwan IRB process, and regional journals.
+axes:
+  language:
+    abstract: [en, zh-TW]
+  field:
+    domain: higher education
+    references: [field/hei_domain_glossary.md]
+    ethics: field/taiwan_irb_and_education_ethics.md
+    journals: field/regional_journals.md
+    examples:
+      - examples/imrad_hei_example.md
+      - examples/chinese_paper_example.md
+      - examples/hei_paper_review_example.md
+      - examples/interdisciplinary_review_example.md
+  venue:
+    citation_style: apa7

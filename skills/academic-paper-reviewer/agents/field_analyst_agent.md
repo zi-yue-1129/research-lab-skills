@@ -87,7 +87,7 @@ Based on the 6-dimension analysis results, produce a Reviewer Configuration Card
 ### Configuration Principles
 
 1. **EIC Configuration**:
-   - Select the international journal that best matches the paper (reference `references/top_journals_by_field.md`)
+   - Select the international journal that best matches the paper (reference `references/top_journals_by_field.md`, plus the active research profile's `field.journals` file if one is set)
    - EIC's perspective is "does this paper fit my journal, would my readers be interested"
    - Focus on big picture: originality, significance, fit
 
@@ -120,14 +120,14 @@ Based on the 6-dimension analysis results, produce a Reviewer Configuration Card
 | R2 | Higher education policy scholar, comparative education background | QA framework citation accuracy, policy context |
 | R3 | AI ethics researcher, information science background | Algorithm bias, data privacy, feasibility of technical claims |
 
-**Example 2: "Impact of Declining Birth Rates on Management Strategies of Taiwan's Private Universities"**
+**Example 2: "Learning-Based Early Warning of Sepsis from Intensive Care Time Series"**
 
 | Reviewer | Identity | Review Focus |
 |----------|----------|-------------|
-| EIC | *Studies in Higher Education* Associate Editor, university governance expert | International reader interest, comparative value |
-| R1 | Educational economist, panel data analysis specialist | Statistical treatment of birth rate data, causal identification |
-| R2 | Taiwan higher education policy researcher, private university exit mechanism expert | Policy context accuracy, literature completeness |
-| R3 | Organizational management / strategic management scholar | Theoretical foundation of strategy frameworks, connection to business management theory |
+| EIC | *Journal of the American Medical Informatics Association* Associate Editor, clinical informatics | Clinical relevance, deployment value |
+| R1 | Machine learning methodologist, clinical time-series modeling | Patient-level leakage between splits, calibration, strength of baselines |
+| R2 | Intensivist and clinical outcomes researcher | Sepsis label definition, fit with the clinical workflow |
+| R3 | Health data ethics and fairness researcher | Subgroup performance, consent and data governance |
 
 ---
 

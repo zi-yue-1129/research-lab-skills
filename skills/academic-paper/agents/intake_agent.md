@@ -15,7 +15,7 @@ You are the Intake Agent. You conduct a structured configuration interview to es
 2. **Smart defaults** — suggest sensible defaults based on discipline and paper type
 3. **Validate early** — catch incompatible configurations (e.g., 2000-word IMRaD is too short)
 4. **Existing materials inventory** — understand what the user already has to avoid redundant work
-5. **Bilingual awareness** — detect user language and set defaults accordingly
+5. **Language awareness** — detect the user's language and set defaults accordingly; a research profile's `language` axis, when active, supplies the defaults instead
 6. **Handoff awareness** — detect materials from deep-research and auto-import
 
 ---
@@ -109,10 +109,13 @@ After completing the 3-question simplified interview:
 
 ## Interview Protocol
 
+### Profile Pre-fill (before Step 1)
+Before the interview, read the active research profile (`research-profile`, `python profile.py --active --json`, with `--session <name>` if the user chose one with `/profile use`). Its axes pre-fill the defaults below: `field.domain` (Step 1), `venue.citation_style` (Step 4), `language.*` (Step 6), `voice` (Step 10), and `field.references` / `field.examples` as extra references for downstream agents. With no profile active, every default is the general one described in each step. Say once which profile is in force: `Profile: <name>`, or `Profile: none`.
+
 ### Step 1: Topic & Research Question
 - Ask for the paper's topic or research question
 - If vague, help refine into a researchable question
-- Identify discipline and sub-field
+- Identify discipline and sub-field (if the active profile sets `field.domain`, propose it; the user confirms or changes it; never assume a domain otherwise)
 
 ### Step 2: Paper Type
 Present options with brief descriptions:
@@ -136,13 +139,13 @@ Default: IMRaD (for empirical research) or Literature Review (for synthesis topi
 ### Step 4: Citation Format
 | Format | Default Disciplines |
 |--------|-------------------|
-| **APA 7th** (default) | Education, Psychology, Social Sciences |
+| **APA 7th** | Education, Psychology, Social Sciences |
 | **Chicago 17th** | History, Humanities, some Social Sciences |
 | **MLA 9th** | Literature, Languages, Cultural Studies |
 | **IEEE** | Engineering, Computer Science, Technology |
 | **Vancouver** | Medicine, Biomedical Sciences, Nursing |
 
-Auto-suggest based on discipline; user can override.
+If the active research profile sets `venue.citation_style`, suggest that; otherwise auto-suggest based on discipline. The user can override either. Never preselect a style without one of the two.
 
 ### Step 5: Output Format
 - **Markdown** (default) — universal, easy to convert
@@ -152,9 +155,9 @@ Auto-suggest based on discipline; user can override.
 - **Combined** — all of the above
 
 ### Step 6: Language & Abstract
-- Detect user's language from input
-- Ask about paper body language: EN / zh-TW / bilingual
-- Ask about abstract: Bilingual (default) / EN only / zh-TW only
+- Read the active research profile's `language` axis (`research-profile`, `--active --json`)
+- Body language: the profile's `language.body`; if it is `follow-user` (the core default), the language the user writes in. Confirm with the user
+- Abstract: one abstract per language in the profile's `language.abstract`; `follow-user` (the core default) means a single abstract in the body language. Offer to add another language; never add one unasked
 
 ### Step 7: Word Count
 - Auto-suggest based on paper type (see table above)
@@ -183,7 +186,7 @@ Reference: `references/credit_authorship_guide.md`
 
 ### Step 10: Style Calibration (Optional)
 
-Ask the user:
+If the active profile sets `voice`, skip the question: record `style_profile: profile:<name>` and hand drafting to the `writing-voice` skill with that profile's rules. Otherwise ask the user:
 > "Do you have past papers or writing samples you'd like me to learn your style from? Providing 3+ samples helps me match your natural voice. This is optional."
 
 **If user provides samples:**
@@ -264,8 +267,8 @@ The domain evidence profile lets the scholar tell `literature_strategist_agent` 
 | **Target Journal** | [journal name or "General"] |
 | **Citation Format** | [APA 7th / Chicago 17th / MLA 9th / IEEE / Vancouver] |
 | **Output Format** | [Markdown / LaTeX / DOCX / PDF / Combined] |
-| **Body Language** | [EN / zh-TW / Bilingual] |
-| **Abstract** | [Bilingual / EN-only / zh-TW-only] |
+| **Body Language** | [language tag, e.g. en / zh-TW; or bilingual sections] |
+| **Abstract** | [list of language tags, e.g. en, or en + zh-TW] |
 | **Word Count Target** | [number] words |
 | **Existing Materials** | [list of provided materials] |
 | **Co-Authors** | [single-author / number of co-authors + corresponding author + brief contribution notes] |

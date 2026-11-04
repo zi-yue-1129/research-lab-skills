@@ -18,6 +18,7 @@
       "skills": [
         "./skills/resource-resolver",
         "./skills/agent-state",
+        "./skills/research-profile",
         "./skills/research-log",
         "./skills/report-slides",
         "./skills/lecture-slides",
@@ -33,12 +34,13 @@
       "skills": [
         "./skills/resource-resolver",
         "./skills/agent-state",
+        "./skills/research-profile",
         "./skills/research-project-init",
         "./skills/deep-research",
         "./skills/academic-paper",
         "./skills/academic-paper-reviewer",
         "./skills/academic-pipeline",
-        "./skills/advisor-writing-style"
+        "./skills/writing-voice"
       ]
     }
   ]

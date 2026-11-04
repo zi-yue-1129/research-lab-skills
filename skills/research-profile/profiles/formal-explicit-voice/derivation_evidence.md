@@ -1,26 +1,27 @@
-# Style profile: CM-SAC supervisor rewrite (observed 2026-09-20)
+# Derivation evidence: one supervisor's rewrite of one manuscript (observed 2026-09-20)
 
-Derived from a sentence-level diff of `CM-SAC_manuscript_en_v3.docx` against
-the Markdown sources it was built from. Every pattern below is backed by at
-least two instances in that diff. Treat it as a checklist for drafting, and as
-a prior for what the same supervisor will change next time.
+Derived from a sentence-level diff of a supervisor's returned `.docx` against
+the Markdown sources it was built from, using `writing-voice`'s
+`scripts/docx_text.py` and `scripts/sentence_diff.py`. Every pattern below is
+backed by at least two instances in that diff. The manuscript's method name is
+replaced throughout by a neutral stand-in, Tiered Replay Memory (TRM); the
+patterns themselves are unchanged.
 
-This is a worked example of the derivation process, kept as the reference
-implementation for `SKILL.md`'s "Refreshing this profile" section. It is one
-advisor's calibration, not a template to fill in with a different advisor's
-name — build a fresh file of this shape from your own advisor's edits instead
-of editing this one in place.
+This is the evidence behind `voice.md` in this profile, and the worked example
+of the derivation process `writing-voice` describes. To calibrate a voice for
+someone else, build a new profile of this shape from their own edits rather
+than editing this one.
 
 ## Voice
 
 - **Claim the contribution in the first person.** "Motivated by complementary
-  learning systems theory, Cognitive Memory (CM) splits..." became "To address
-  this limitation, we propose Cognitive Memory (CM) inspired by complementary
+  learning systems theory, Tiered Replay Memory (TRM) splits..." became "To address
+  this limitation, we propose Tiered Replay Memory (TRM) inspired by complementary
   learning systems theory." Also "Our distance metric", "In our framework".
 - **Name the acronym once, then use it.** "interquartile mean" became
   "interquartile mean (IQM)"; "temporal-difference error" became
   "temporal-difference (TD) errors"; "first-in-first-out" became
-  "first-in, first-out (FIFO)"; "Cognitive Memory does not alter" became "CM
+  "first-in, first-out (FIFO)"; "Tiered Replay Memory does not alter" became "TRM
   does not alter". Method names take title case as proper nouns: "prioritized
   experience replay" became "Prioritized Experience Replay (PER)".
 
@@ -74,7 +75,7 @@ dynamically balances · acts on → targets.
   Acrobot-swingup row and had no section for the newest experiments.
 - **Slips arrive with the rewrite.** Observed: "keep the only the",
   "log-term coverage", "traditional lookup table suffer", "Since, the critic",
-  "Let ... denotes", "representing recent data term", "CM mechanism",
+  "Let ... denotes", "representing recent data term", "TRM mechanism",
   "While Sampling", "all experiments fixe", "DMControl task", "Finaly".
   Fix them, and list every fix.
 - **Inline editorial notes are tasks.** This rewrite carried

@@ -11,10 +11,13 @@ const VERSION    = require('../package.json').version;
 const PKG_SKILLS = path.join(__dirname, '..', 'skills');
 
 // Shared foundation both lab and ARS skills depend on — always installed
-const RESOLVER_SKILLS = ['resource-resolver', 'agent-state'];
+const RESOLVER_SKILLS = ['resource-resolver', 'agent-state', 'research-profile'];
 const LAB_SKILLS = ['research-log', 'report-slides', 'lecture-slides', 'research-mode'];
-const ARS_SKILLS = ['research-project-init', 'deep-research', 'academic-paper', 'academic-paper-reviewer', 'academic-pipeline', 'advisor-writing-style'];
+const ARS_SKILLS = ['research-project-init', 'deep-research', 'academic-paper', 'academic-paper-reviewer', 'academic-pipeline', 'writing-voice'];
 const ALL_SKILLS = [...RESOLVER_SKILLS, ...LAB_SKILLS, ...ARS_SKILLS];
+// Skills renamed or replaced in earlier releases. Installing removes a stale
+// copy so its old triggers cannot shadow the replacement.
+const RETIRED_SKILLS = ['advisor-writing-style'];
 
 // AI target → skills root path
 const AI_PATHS = {
@@ -106,6 +109,13 @@ function cmdInit(args) {
     copyDir(src, dest);
     log(`  ✓ ${skill}`);
   }
+  for (const skill of RETIRED_SKILLS) {
+    const stale = path.join(target, skill);
+    if (fs.existsSync(stale)) {
+      fs.rmSync(stale, { recursive: true, force: true });
+      log(`  ✓ Removed retired skill: ${skill}`);
+    }
+  }
 
   log('');
   log(`Installed ${skills.length} skill(s) to: ${target}`);
@@ -150,7 +160,7 @@ research-lab-skills (crs) v${VERSION}
 9 Claude Code skills for research teams:
   Lab:      /research-log  /report-slides  /mode
   Academic: /ars-full  /ars-plan  /ars-lit-review  /ars-review  and more
-  Shared:   resource-resolver, agent-state (always installed foundation)
+  Shared:   resource-resolver, agent-state, research-profile (always installed foundation)
 
 Quick install (no global npm needed):
   npx research-lab-skills init --global

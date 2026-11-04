@@ -2,7 +2,7 @@
 
 This example shows the editorial synthesizer's Step 1 → Step 2 → Step 5 flow on a **compound weakness** — the case the §F.3.2 partial-evidence trap exists to catch — and contrasts the old bundle-level aggregation (which buries a minority sub-claim) with the sub-claim decomposition introduced for [#214](https://github.com/Imbad0202/academic-research-skills/issues/214).
 
-It is a focused illustration of one weakness bundle, not a full Phase 0–2 walkthrough (see `hei_paper_review_example.md` for that).
+It is a focused illustration of one weakness bundle, not a full Phase 0–2 walkthrough (the `bilingual-education-research` research profile ships one in its `examples/hei_paper_review_example.md`).
 
 ---
 

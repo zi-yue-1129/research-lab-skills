@@ -224,7 +224,7 @@ or conditions].
 - [ ] Corresponding additional protective measures have been planned
 - [ ] IRB review level accounts for vulnerable population considerations
 
-> For detailed IRB decision tree and Taiwan-specific process: see `references/irb_decision_tree.md`
+> For the detailed IRB decision tree: see `references/irb_decision_tree.md`. A jurisdiction's own process comes from the active research profile's `field.ethics`, if any.
 
 ---
 

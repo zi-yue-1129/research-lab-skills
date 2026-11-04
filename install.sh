@@ -11,11 +11,14 @@ set -e
 REPO="https://github.com/zi-yue-1129/research-lab-skills.git"
 
 # Shared foundation both lab and ARS skills depend on -- always installed
-RESOLVER_SKILLS=("resource-resolver" "agent-state")
+RESOLVER_SKILLS=("resource-resolver" "agent-state" "research-profile")
 # Lab skills (experiment journal + presentations + mode routing)
 LAB_SKILLS=("research-log" "report-slides" "lecture-slides" "research-mode")
 # Academic Research Skills (deep research, paper writing, review, pipeline)
-ARS_SKILLS=("research-project-init" "deep-research" "academic-paper" "academic-paper-reviewer" "academic-pipeline" "advisor-writing-style")
+ARS_SKILLS=("research-project-init" "deep-research" "academic-paper" "academic-paper-reviewer" "academic-pipeline" "writing-voice")
+# Skills renamed or replaced in earlier releases. Installing removes a stale
+# copy so its old triggers cannot shadow the replacement.
+RETIRED_SKILLS=("advisor-writing-style")
 # Default: install everything
 SKILLS=("${RESOLVER_SKILLS[@]}" "${LAB_SKILLS[@]}" "${ARS_SKILLS[@]}")
 
@@ -54,6 +57,12 @@ install_skills() {
   for skill in "${SKILLS[@]}"; do
     cp -r "$TMP/repo/skills/$skill" "$DEST/"
     echo "  ✓ $skill"
+  done
+  for skill in "${RETIRED_SKILLS[@]}"; do
+    if [ -d "$DEST/$skill" ]; then
+      rm -rf "${DEST:?}/$skill"
+      echo "  ✓ Removed retired skill: $skill"
+    fi
   done
 
   echo ""

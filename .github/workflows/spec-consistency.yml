@@ -138,6 +138,23 @@ jobs:
           PYTHONPATH: .
         run: python3 -m unittest tests.checks.test_check_installer_skill_parity -v
 
+      - name: Check profiles (schema / registry / non-identifying names)
+        # Every profile under skills/research-profile/profiles/ must validate,
+        # appear in PROFILE_REGISTRY.md, and carry no person, school, lab,
+        # course or paper name (see check_profiles.py).
+        run: python3 scripts/checks/check_profiles.py
+
+      - name: Check core neutrality ratchet
+        # Profile-specific terms may only shrink in skill cores; content that
+        # belongs to one person, field or context moves into a profile
+        # (see check_core_neutrality.py and core_neutrality_baseline.json).
+        run: python3 scripts/checks/check_core_neutrality.py
+
+      - name: Run profile check unit tests
+        env:
+          PYTHONPATH: .
+        run: python3 -m unittest tests.checks.test_check_profiles tests.checks.test_check_core_neutrality -v
+
       - name: Run spec consistency unit tests
         env:
           PYTHONPATH: .

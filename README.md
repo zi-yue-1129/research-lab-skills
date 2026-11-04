@@ -123,7 +123,8 @@ This repository's own contribution — independently developed here, not part of
 
 - `research-log`, `report-slides`, `lecture-slides`, `research-mode` — the daily research journal, progress-slide generation, editable teaching decks with selectable course-style presets, and session-mode routing
 - `research-project-init`, `agent-state`, `resource-resolver` — project scoping and the persistent state layer that keeps Projects, Questions, Sources, and Evidence connected across sessions
-- `advisor-writing-style` — a prescriptive style guide distilled from a lab advisor's own manuscript rewrites, plus the scripts that derive it from a returned `.docx`
+- `research-profile` — named, selectable profiles that hold every convention belonging to one way of working (writing voice, language, field, venue, slide style), so the skill cores stay general
+- `writing-voice` — applies a prescriptive writing voice from the active profile, and derives new voices from someone's real manuscript edits (scripts that align a returned `.docx` against its sources)
 - The integration and packaging layer that installs both toolsets together and lets research state flow from the daily layer into the upstream pipeline
 
 The upstream ARS agent pipeline itself was not developed in this repository. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the exact, path-by-path split, and [NOTICE.md](NOTICE.md) / [LICENSE](LICENSE) for the full licensing terms.
@@ -223,11 +224,12 @@ Academic skills: `/ars-plan`, `/ars-full`, `/ars-lit-review`, `/ars-review`, and
 | `lecture-slides` | *(trigger phrase, no command)* | Editable teaching decks (.pptx): question titles, a running example, native shapes, speaker notes; named presets (e.g. `zh-classroom`) select a course's style |
 | `research-mode` | `/mode` | Session mode routing (exp / daily / explore / report / publish) |
 | `research-project-init` | `/research-init` | Scope a preliminary idea into a project charter + tracked research questions |
+| `research-profile` | `/profile` | Choose a named profile (voice, language, field, venue, slides) for the session or project; see [PROFILE_REGISTRY.md](PROFILE_REGISTRY.md) |
 | `deep-research` *(upstream ARS)* | `/ars-full`, `/ars-lit-review`, … | 13-agent research team with Socratic mode, PRISMA, fact-check |
 | `academic-paper` *(upstream ARS)* | `/ars-plan`, `/ars-outline`, … | 12-agent paper writing with citation verification |
 | `academic-paper-reviewer` *(upstream ARS)* | `/ars-review`, `/ars-re-review` | Multi-perspective peer review (EIC + 3 reviewers + DA) |
 | `academic-pipeline` *(upstream ARS)* | `/ars-pipeline` | Full 10-stage pipeline orchestrator |
-| `advisor-writing-style` | *(trigger phrase, no command)* | Draft/revise in a lab advisor's voice, calibrated from their own manuscript edits |
+| `writing-voice` | *(trigger phrase, no command)* | Draft/revise in the active profile's voice; calibrate a new voice from real manuscript edits |
 
 ---
 

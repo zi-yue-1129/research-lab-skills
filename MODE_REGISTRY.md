@@ -29,7 +29,7 @@ Last updated: v3.11.1 (2026-06-06)
 | `outline-only` | Balanced | Detailed outline + evidence map | High | "paper outline", "just need an outline" |
 | `revision` | Fidelity | Revised draft + point-by-point R&R responses | High | "revise paper", "incorporate reviewer feedback" |
 | `revision-coach` | Balanced | Revision Roadmap + Response Letter Skeleton | Medium | "parse reviews", "I got reviewer comments" |
-| `abstract-only` | Fidelity | Bilingual abstract (zh-TW + EN) + keywords | Medium | "write abstract" |
+| `abstract-only` | Fidelity | Abstract(s) per configured language + keywords | Medium | "write abstract" |
 | `lit-review` | Fidelity | Annotated bibliography in paper format | Medium | "literature review paper", "write a lit review" |
 | `format-convert` | Fidelity | Formatted document (LaTeX/DOCX-via-Pandoc/PDF/MD) | Low | "convert to LaTeX", "convert citations to [format]" |
 | `citation-check` | Fidelity | Citation error report | Low | "check citations", "verify references" |

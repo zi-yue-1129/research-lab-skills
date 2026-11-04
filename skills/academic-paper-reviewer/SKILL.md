@@ -343,8 +343,9 @@ deep-research --> academic-paper --> [integrity check] --> academic-paper-review
 
 | Example | Demonstrates |
 |---------|-------------|
-| `examples/hei_paper_review_example.md` | Full review example: "Impact of Declining Birth Rates on Management Strategies of Taiwan's Private Universities" |
-| `examples/interdisciplinary_review_example.md` | Cross-disciplinary review example: "Using Machine Learning to Predict University Closure Risk in Taiwan" |
+| `examples/subclaim_decomposition_example.md` | One weakness bundle decomposed into sub-claims |
+
+Full end-to-end review walkthroughs are field-specific, so they ship with the research profile for that field. The `bilingual-education-research` profile carries two (`examples/hei_paper_review_example.md`, a full review; `examples/interdisciplinary_review_example.md`, a cross-disciplinary review); its `field.examples` lists them when the profile is active.
 
 ---
 
@@ -392,7 +393,6 @@ Follows the paper's language. Academic terms remain in English. User can overrid
 |-------|-------------|
 | `academic-paper` | Upstream (provides paper) + Downstream (receives revision roadmap) |
 | `deep-research` | Upstream (provides research foundation) |
-| `tw-hei-intelligence` | Auxiliary (verifies higher education data accuracy) |
 | `academic-pipeline` | Orchestrated by (Stage 3 + Stage 3') |
 
 ---
