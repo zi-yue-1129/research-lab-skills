@@ -1,0 +1,19 @@
+# zh-classroom: the lecture style of three reference course decks (2026-10):
+#   07 空間濾波, 第06週 U-Net 語意分割, 第06週 判斷類別：分類與決策樹.
+# Everything course-specific lives in this folder; the core skill knows
+# nothing about it. Select it with `deck.preset: zh-classroom`.
+name: zh-classroom
+description: Lab lecture style — Times New Roman + 標楷體, question titles, a running case, 【按】 notes
+language: zh-TW
+style_guide: style-guide.md       # authoring rules Claude follows for this preset
+default_theme: warm-paper         # themes/ in this folder; navy-academic also ships
+fonts:
+  latin: Times New Roman
+  east_asian: DFKai-SB            # 標楷體: installed on Windows; substituted elsewhere
+  mono: Consolas
+strings:
+  image_placeholder: "［圖］"
+  meta_separator: "　"            # between course and week on the title slide
+notes:
+  click_marker: "【按】"           # how speaker notes mark each click
+motifs: motifs.py                 # title-slide motifs this preset adds (`motif: tree`)

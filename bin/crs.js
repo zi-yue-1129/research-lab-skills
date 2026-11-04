@@ -12,7 +12,7 @@ const PKG_SKILLS = path.join(__dirname, '..', 'skills');
 
 // Shared foundation both lab and ARS skills depend on — always installed
 const RESOLVER_SKILLS = ['resource-resolver', 'agent-state', 'research-profile'];
-const LAB_SKILLS = ['research-log', 'report-slides', 'research-mode'];
+const LAB_SKILLS = ['research-log', 'report-slides', 'lecture-slides', 'research-mode'];
 const ARS_SKILLS = ['research-project-init', 'deep-research', 'academic-paper', 'academic-paper-reviewer', 'academic-pipeline', 'writing-voice'];
 const ALL_SKILLS = [...RESOLVER_SKILLS, ...LAB_SKILLS, ...ARS_SKILLS];
 // Skills renamed or replaced in earlier releases. Installing removes a stale

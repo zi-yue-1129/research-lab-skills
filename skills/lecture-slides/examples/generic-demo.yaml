@@ -1,0 +1,165 @@
+# Core demo: no preset, default theme, one layout of each kind.
+# All numbers are illustrative toy data (stated in each slide's source line).
+deck:
+  course: Intro to Machine Learning
+  week: Week 7
+  title: "Guess by the neighbours: k-nearest neighbours"
+  author: Instructor
+  sections: [Data, Distance, Check, Compare]
+
+slides:
+  - layout: title
+    subtitle: Is this unlabelled fruit an apple or an orange?
+    notes: Today's one question is how a computer can label a fruit it has never seen.
+
+  - layout: facts
+    title: "First, a question: what is this fruit?"
+    image: images/mystery-fruit.png
+    image_label: an unlabelled fruit
+    caption: Illustration
+    heading: What we can measure
+    facts:
+      - Weight: 165 g
+      - Diameter: 7.2 cm
+      - Skin: dimpled
+    question: "Apple or orange?\nHow sure are you?"
+    takeaway: We will answer this at the end of the lecture.
+    source: Toy data written for this lecture
+    notes: Look at one fruit and three measurements. [click] Make a guess and hold on to it.
+
+  - layout: agenda
+    title: Today's plan
+    current: 1
+    items:
+      - {label: Why neighbours, note: labelled examples are the teacher}
+      - {label: The data, note: 40 labelled fruits}
+      - {label: Measuring similarity, note: distance}
+      - {label: Choosing k, note: too small memorises, too large averages}
+      - {label: Compare, note: next to decision trees}
+    source: Lecture outline
+    notes: Five parts.
+
+  - layout: compare
+    title: "Last week vs this week"
+    section: Data
+    panels:
+      - heading: "Last week: decision tree"
+        lines: ["■ Ask one question at a time", "■ End in a leaf", "■ Predict the leaf's majority"]
+      - heading: "This week: k-NN"
+        lines: ["■ Find the k most similar examples", "■ Let them vote", "■ The majority wins"]
+    takeaway: Both rely on **labelled examples**, used in different ways.
+    source: Illustration
+    notes: Connect to last week.
+
+  - layout: cards
+    title: Find the three nearest neighbours and vote
+    section: Distance
+    cards:
+      - {heading: All three are apples, dots: [3, 3], value: Apple, tone: positive, lines: [Confident]}
+      - {heading: Two against one, dots: [2, 3], value: Apple, tone: highlight, lines: [Majority, less sure]}
+      - {heading: One against two, dots: [1, 3], value: Orange, tone: alert, lines: [Majority flips]}
+    takeaway: An odd k never ties.
+    source: "Illustration: filled = apple, hollow = orange"
+    notes: Three cases.
+
+  - layout: formula
+    title: How is "nearest" measured?
+    section: Distance
+    band:
+      expr: distance = √( (weight gap)² + (diameter gap)² )
+      plain: "In words: the straight-line length between two points on one chart"
+      aside: "Pythagoras\n{alert:from school}"
+    steps:
+      - {heading: Fruit A, lines: ["165 g, 7.2 cm"]}
+      - {heading: Fruit B, lines: ["150 g, 7.0 cm"]}
+      - {heading: Distance, tone: alert, lines: ["√(15² + 0.2²) ≈ **15.0**"]}
+    result:
+      expr: "Problem: grams swamp centimetres, so scale features first"
+    source: Euclidean distance; toy numbers
+    notes: Distance is Pythagoras. [click] Units matter.
+
+  - layout: table
+    title: "The data: 40 labelled fruits"
+    section: Data
+    headers: [ID, Weight (g), Diameter (cm), Skin, Label]
+    highlight_col: 4
+    rows:
+      - [1, 172, 7.5, smooth, apple]
+      - [2, 140, 6.8, dimpled, orange]
+      - [3, 181, 7.9, smooth, apple]
+    caption: "… (40 in total; toy data)"
+    source: Toy data written for this lecture
+    notes: One row per fruit.
+
+  - layout: bars
+    title: Which k? Try each one
+    section: Check
+    axis_label: Accuracy on 10 unseen fruits
+    max: 100
+    best: 1
+    items:
+      - {label: k = 1, value: 70, note: memorises}
+      - {label: k = 5, value: 90, note: best}
+      - {label: k = 21, value: 60, note: becomes the overall average}
+    takeaway: Too small follows one odd fruit; too large stops being "neighbours".
+    source: Toy numbers
+    notes: k = 5 is best here.
+
+  - layout: numbers
+    title: What does it cost?
+    section: Check
+    panel:
+      heading: For every prediction
+      lines: ["1. Measure the distance to every stored example", "2. Sort and keep the k nearest", "3. Vote"]
+    stats:
+      - {value: "40", label: distances for 40 stored examples, tone: info}
+      - {value: 0 s, label: training time, tone: positive}
+      - {value: All, label: data must be kept, tone: alert}
+    source: Illustration
+    notes: No training, but every prediction scans the data.
+
+  - layout: flow
+    title: "The pipeline: store now, search later"
+    section: Compare
+    steps:
+      - {heading: Scale, lines: [Put features on one scale]}
+      - {heading: Store, lines: [Keep all 40]}
+      - {heading: Search, tone: alert, lines: [Distance, sort, keep k]}
+      - {heading: Vote, tone: positive, lines: [Majority wins]}
+    source: Illustration
+    notes: Four steps.
+
+  - layout: code
+    title: A dozen lines of code
+    section: Compare
+    label: Week 7 notebook
+    code: |
+      from sklearn.preprocessing import StandardScaler
+      from sklearn.neighbors import KNeighborsClassifier
+
+      scaler = StandardScaler().fit(X_train)
+      knn = KNeighborsClassifier(n_neighbors=5)
+      knn.fit(scaler.transform(X_train), y_train)
+    points:
+      - {heading: Scaling, text: never skip it, tone: alert}
+      - {heading: fit, text: only stores the data, tone: info}
+    source: "scikit-learn documentation: KNeighborsClassifier"
+    notes: Short code; the scaling line matters.
+
+  - layout: image
+    title: "Back to the start: what is this fruit?"
+    section: Compare
+    image: images/neighbors.png
+    image_label: scatter plot with the 5 nearest neighbours
+    quote: 4 of 5 neighbours are oranges → predict orange
+    takeaway: The prediction is what the neighbours say, not a guarantee.
+    source: Toy data written for this lecture
+    notes: Answer the opening question.
+
+  - layout: sources
+    title: Sources
+    items:
+      - Toy data written for this lecture; not measured
+      - "scikit-learn documentation: KNeighborsClassifier, StandardScaler"
+      - Cover, T. & Hart, P. (1967). Nearest neighbor pattern classification. IEEE Transactions on Information Theory 13(1), 21–27
+    notes: All sources used today.
