@@ -1,0 +1,17 @@
+# zh-kai-times: Traditional Chinese technical and research decks.
+# 標楷體 (DFKai-SB) for Chinese text, Times New Roman for English, digits and
+# symbols; speaker notes mark each click with 【按】. Select it with
+# `--quality-preset zh-kai-times` on the deck generators, or
+# `--preset zh-kai-times` on `python3 -m deck_quality`.
+name: zh-kai-times
+description: 標楷體 + Times New Roman pairing, 【按】 click markers, Chinese source labels
+fonts:
+  latin: Times New Roman
+  cjk: DFKai-SB          # 標楷體: installed on Windows; other systems substitute it
+notes:
+  click_marker: "【按】"
+terms:
+  # Words that open a source footnote (B4); the core already lists English ones.
+  source_labels: ["來源", "資料來源", "出處", "圖片來源"]
+  # Public names the B1/B2 patterns would otherwise flag.
+  allow: []

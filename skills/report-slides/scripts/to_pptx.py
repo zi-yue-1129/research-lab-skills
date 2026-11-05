@@ -26,6 +26,7 @@ from typing import Sequence
 from pptx import Presentation
 from pptx.util import Emu
 
+from deck_quality.gate import add_gate_arguments, finish_build, resolve_output
 from presentation_gates import ProductionGateError, assert_production_allowed
 from presentation_state import find_project_root
 
@@ -207,6 +208,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         default=None,
         help="Project root (defaults to the nearest ancestor of the current directory)",
     )
+    add_gate_arguments(ap)
     args = ap.parse_args(arguments)
 
     if _authorize_production(args.deck_id, args.project_root) is None:
@@ -219,7 +221,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         print(f"No slide*.svg files found in {slide_dir}")
         return 1
 
-    out_path = Path(args.out)
+    out_path = resolve_output(args.out, args.timestamp)
     pack_slides(svg_files, out_path)
 
     for svg in svg_files:
@@ -227,7 +229,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
     print(f"\n{len(svg_files)} slide(s) -> {out_path}")
     print("Open with PowerPoint 2016+ / 365 for native SVG rendering.")
     print("Older viewers display the white PNG fallback (slide content is visible in SVG mode only).")
-    return 0
+    # Research deck quality standard: any unwaived finding fails the build.
+    return finish_build(out_path, args)
 
 
 if __name__ == "__main__":

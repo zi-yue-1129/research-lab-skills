@@ -1017,6 +1017,35 @@ log file's frontmatter and rebuild `INDEX.md`.
 
 ---
 
+## Research deck quality standard
+
+Technical and research-progress decks follow
+`references/deck-quality/standard.md`: fonts, wording, numbers, structure,
+shape semantics, layout, notes and files, each rule with its reason and how
+it is checked.
+
+- **Automatic rules** (A1–A3, B1, B2, B4, E1, E2 screen, F2, F3, G1) are
+  checked by `deck_quality`. `svg_to_pptx` and `to_pptx.py` run it after
+  writing the deck, in both modes, and **any finding fails the export** (exit
+  1, output renamed `<name>.rejected.pptx`). To let a finding through, list it
+  in an exceptions file with a reason (`--quality-exceptions`); nothing else
+  bypasses the gate.
+- **Presets** carry language- and house-specific values. `--quality-preset
+  zh-kai-times` pairs 標楷體 with Times New Roman (applied to the deck before
+  the check), marks clicks with `【按】`, and adds Chinese source labels. With
+  no preset the core rules run without a font pairing.
+- `--timestamp` writes `<stem>-YYYYMMDDTHHMMSS.pptx` beside `--out` and
+  deletes older copies once the new one passes (G1). It is off by default
+  because the stages above refer to a fixed `deck.pptx` path.
+- **Manual rules** (B3, C1–C4, D1–D7, E2, E3, F1, F4) are a review checklist,
+  `references/deck-quality/review-checklist.md`. Before delivering, export
+  every slide to PNG from PowerPoint, go through the list page by page, run
+  the slide show once against the notes' click markers, and report the
+  checker result (findings, waived exceptions) and the pages viewed.
+
+Embed mode carries no speaker notes, so it always fails F2: use native mode
+for research decks, or list the exception with its reason.
+
 ## PPTX export (optional)
 
 After slides are generated:
@@ -1028,6 +1057,7 @@ cd "$(find ~/.claude -path "*/report-slides/scripts" -type d | head -1)"
 python3 -m svg_to_pptx \
     --slides "$SLIDES_DIR/reports/YYYY-MM-DD_<name>/" \
     --out    "$SLIDES_DIR/reports/YYYY-MM-DD_<name>/deck.pptx"
+# add --quality-preset <name> / --quality-exceptions <file> / --timestamp as needed
 ```
 
 Native mode converts every SVG element to editable shapes: rectangles, ovals, text boxes, connectors, and paths (including Bézier curves). Text labels inside shapes are embedded directly — double-click a shape in PowerPoint to edit its text. Connectors re-route when shapes are moved. Content wrapped in a `data-pptx-role="table"`/`"chart"` marker becomes a real PPTX table or chart object (double-click to edit cell text or the chart's underlying data series, exactly like a manually-inserted PowerPoint table/chart); content wrapped in `data-pptx-role="group"` becomes one native Group shape.

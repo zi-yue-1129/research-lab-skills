@@ -8,6 +8,8 @@ from typing import Sequence
 from presentation_gates import ProductionGateError, assert_production_allowed
 from presentation_state import find_project_root
 
+from deck_quality.gate import add_gate_arguments, finish_build, resolve_output
+
 from .converter import convert_file
 
 _MODE_HELP = """
@@ -114,6 +116,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         default=None,
         help="Project root (defaults to the nearest ancestor of the current directory)",
     )
+    add_gate_arguments(ap)
     ap.add_argument("--mode", choices=["native", "embed"], default=None,
                     help="native: editable shapes; embed: SVG blip. "
                          "Omit to be prompted with a description of each "
@@ -139,18 +142,20 @@ def main(arguments: Sequence[str] | None = None) -> int:
         return 1
 
     mode = _resolve_mode(args.mode)
+    out_path = resolve_output(args.out, args.timestamp)
 
     if mode == "embed":
         sys.path.insert(0, str(Path(__file__).parent.parent))
         from to_pptx import pack_slides
-        pack_slides(svg_files, Path(args.out))
-        print(f"\n{len(svg_files)} slide(s) → {args.out} (embed mode)")
+        pack_slides(svg_files, out_path)
+        print(f"\n{len(svg_files)} slide(s) → {out_path} (embed mode)")
     else:
         convert_file(
-            args.slides, args.out, verbose=args.verbose,
+            args.slides, str(out_path), verbose=args.verbose,
             template=args.template, layout_name=args.layout,
         )
-    return 0
+    # Research deck quality standard: any unwaived finding fails the build.
+    return finish_build(out_path, args)
 
 
 if __name__ == "__main__":
