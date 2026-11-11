@@ -55,7 +55,10 @@ def build_fetch_response(
 
     requested_ids = tuple(item_ids)
     _validate_fetch_ids(requested_ids, scan)
-    sections_by_id = {section.result_id: section for section in scan.sections}
+    sections_by_id = {
+        section.result_id: section
+        for section in (*scan.sections, *scan.summaries)
+    }
     requested_sections = tuple(sections_by_id[item_id] for item_id in requested_ids)
 
     def complete_response(batch_ids: Sequence[str]) -> dict[str, object]:
@@ -144,7 +147,7 @@ def _validate_fetch_ids(item_ids: Sequence[str], scan: ScanResult) -> None:
     """Reject duplicate or unknown full-text section identifiers."""
     if len(set(item_ids)) != len(item_ids):
         raise QueryInputError("duplicate_ids", "Fetch requests must not repeat an ID.")
-    known_ids = {section.result_id for section in scan.sections}
+    known_ids = {section.result_id for section in (*scan.sections, *scan.summaries)}
     unknown_ids = [item_id for item_id in item_ids if item_id not in known_ids]
     if unknown_ids:
         raise QueryInputError(
@@ -312,7 +315,10 @@ def _fetch_chunk_response(
         raise CursorError("cursor_journal_mismatch", "Journal contents changed after cursor creation.")
     if cursor["budget"] != budget:
         raise CursorError("cursor_budget_mismatch", "Cursor budget does not match the request.")
-    sections_by_id = {section.result_id: section for section in scan.sections}
+    sections_by_id = {
+        section.result_id: section
+        for section in (*scan.sections, *scan.summaries)
+    }
     result_id = cursor["result_id"]
     section = sections_by_id.get(result_id)
     if section is None:

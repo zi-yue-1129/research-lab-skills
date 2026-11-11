@@ -57,7 +57,12 @@ never run a command that would expand `$RESEARCH_LOG_DIR` to an empty string.
 
 Filename: `YYYY-MM-DD_<experiment-slug>.md`
 Index: `$RESEARCH_LOG_DIR/INDEX.md` (auto-generated, never hand-edited)
-Milestones: `$RESEARCH_LOG_DIR/MILESTONES.md` (auto-generated once milestone mode is active — see Milestone Mode below; never hand-edited)
+Milestones: `$RESEARCH_LOG_DIR/MILESTONES.md` (derived tables are auto-generated once milestone mode is active — see Milestone Mode below; never hand-edit generated content)
+
+Only top-level `.md` files are entries. A filename whose stem matches
+`^[A-Z][A-Z0-9_]*$` is a reserved journal meta file (for example `INDEX.md`,
+`MILESTONES.md`, `STATE.md`, or `PROTOCOL.md`), never an entry. Subdirectories
+are never scanned, including `milestones/`.
 
 ---
 
@@ -94,6 +99,12 @@ The script prints a JSON object: `file_count`, `total_chars`,
 `estimated_tokens`, `milestones_exists`, `threshold` (default `6000`, override
 with `--threshold`), and `recommend_enable` — `true` only when
 `milestones_exists` is `false` and `estimated_tokens >= threshold`.
+For an existing directory it also reports `milestones` (`id`, preserved
+`status`, and frontmatter-derived `entries`) and `recommend_new_milestone`.
+The latter is true when the newest ongoing milestone (highest numeric ID)
+has at least 30 entries; override with `--milestone-max-entries N`.
+A missing directory retains the legacy zero-volume response without these
+additional fields.
 
 **When `recommend_enable` is `true`** (first trigger — the check itself runs
 automatically; no permission prompt is needed to start this flow):
@@ -106,8 +117,10 @@ automatically; no permission prompt is needed to start this flow):
    cluster.
 3. Present the proposed grouping to the user. Let them confirm, rename, merge,
    or split clusters — never finalize a grouping silently.
-4. Write `$RESEARCH_LOG_DIR/MILESTONES.md` (format below) and add a
-   `milestone:` field (e.g. `M2`) to each affected log's frontmatter.
+4. Create the confirmed milestone source headers, descriptions, and status
+   in `$RESEARCH_LOG_DIR/MILESTONES.md` (format below) and add a `milestone:`
+   field (e.g. `M2`) to each affected log's frontmatter. Run `build_index.py`
+   using the `index` command below to generate both views.
 
 **`MILESTONES.md` format** (newest milestone first):
 
@@ -118,7 +131,8 @@ _Last updated: YYYY-MM-DD_
 
 ## M2: <short title>
 <one-paragraph description>
-**Date range:** YYYY-MM-DD – YYYY-MM-DD · **Status:** ongoing|closed
+
+**Date range:** YYYY-MM-DD – ongoing · **Status:** ongoing · **Entries:** N
 
 | Date | Experiment | Summary |
 |------|-----------|---------|
@@ -128,20 +142,44 @@ _Last updated: YYYY-MM-DD_
 ...
 ```
 
+Milestone headers (`## M1: Title`), description paragraphs, and status are
+source definitions; the builder preserves them. Everything from each
+`**Date range:**` line to the next milestone header is regenerated, including
+date range, status, entry count, and table. Closed milestones use their min/max
+entry dates; ongoing ones have an open-ended range. A non-milestone level-two
+heading inside a description is an error with a file and line diagnostic.
+
+Per-journal rendering options may be set in one HTML comment directly under
+the `# Research Milestones` title; the builder preserves the comment:
+
+```markdown
+# Research Milestones
+<!-- research-log: summary_chars=200 split_closed=true -->
+```
+
+`summary_chars` limits each table summary (default 300). Cells collapse
+whitespace, escape pipes, and truncate with an ellipsis. Unknown option keys
+are errors. `split_closed` defaults to `false`; when `true`, closed milestone
+tables are generated in `milestones/<ID>.md`, with relative links in
+`MILESTONES.md`. Ongoing tables stay inline.
+
 **Ongoing use, once `MILESTONES.md` exists:**
 - **Reading:** read `MILESTONES.md` first, pick the relevant milestone from its
-  description and table, then open only the specific log file(s) needed —
-  don't fall back to reading all of `INDEX.md` unless no milestone matches.
+  description and table, then open only the specific log file(s) needed. With
+  `split_closed=true`, read `MILESTONES.md`, then `milestones/<ID>.md`, then
+  the log file. Don't fall back to reading all of `INDEX.md` unless no milestone matches.
 - **Writing (`add`):** compare the new entry's `tags` against the most recent
   milestone's aggregate tags (Jaccard overlap) and the date gap since that
-  milestone's last entry. If overlap is low or the gap is large, suggest
+  milestone's last entry. Run `log_stats.py`; if overlap is low, the gap is
+  large, or `recommend_new_milestone` is true, suggest
   starting a new milestone with a drafted title/description; otherwise suggest
   continuing the current one. The user confirms or overrides; if the user
   gives no clear signal, default to continuing the current milestone. Update
-  the log's `milestone:` field and refresh `MILESTONES.md`.
+  the log's `milestone:` field and run `build_index.py` as shown under `index`.
 
-`INDEX.md`'s format is unchanged by milestone mode — it remains the complete
-flat chronological reference regardless of whether milestones are active.
+`INDEX.md` remains the complete flat chronological reference. In milestone
+mode it adds a `Milestone` column between `Tags` and `Follows`; otherwise it
+uses the seven-column format shown under `index`.
 
 ---
 
@@ -151,6 +189,15 @@ flat chronological reference regardless of whether milestones are active.
 
 Create a new log entry.
 
+**Unattended sessions (`add` and `amend`):** when no person is available to
+answer (a background or scheduled agent), do not ask the interview questions.
+Fill the entry from what was actually run in the session, never invent results,
+and keep the current milestone. Defer new milestone grouping for human review.
+At the end of the reply, list every field filled without confirmation so a
+person can amend it later. If an amendment target cannot be established from
+the session, report that missing information instead of choosing an entry
+arbitrarily. This rule also applies to pre-filled entries and summary review.
+
 **Step 0 — Gather git context (run silently before asking questions)**
 
 Find the most recent prior log, then run `git_context.py` to extract recent commit history.
@@ -159,7 +206,7 @@ Use the output to pre-fill the **Changes** section and to capture the `git_head`
 ```bash
 # macOS / Linux / Git Bash:
 GIT_CTX="$(find ~/.claude -path "*/research-log/scripts/git_context.py" | head -1)"
-PRIOR=$(ls -t "$RESEARCH_LOG_DIR"/*.md 2>/dev/null | grep -v INDEX | grep -v MILESTONES | head -1)
+PRIOR=$(ls -t "$RESEARCH_LOG_DIR"/*.md 2>/dev/null | grep -Ev '/[A-Z][A-Z0-9_]*\.md$' | head -1)
 if [ -n "$PRIOR" ]; then
     python "$GIT_CTX" --since-log "$PRIOR"
 else
@@ -174,7 +221,7 @@ GIT_HEAD=$(python "$GIT_CTX" --head)
 $GIT_CTX = (Get-ChildItem $env:USERPROFILE\.claude -Recurse -Filter git_context.py |
     Where-Object FullName -like "*research-log*" | Select-Object -First 1).FullName
 $PRIOR = Get-ChildItem $RESEARCH_LOG_DIR -Filter "*.md" |
-    Where-Object { $_.Name -ne "INDEX.md" -and $_.Name -ne "MILESTONES.md" } |
+    Where-Object { -not $_.PSIsContainer -and $_.BaseName -cnotmatch '^[A-Z][A-Z0-9_]*$' } |
     Sort-Object LastWriteTime -Desc |
     Select-Object -First 1 -Exp FullName
 if ($PRIOR) { python $GIT_CTX --since-log $PRIOR }
@@ -213,7 +260,8 @@ Quick (3 questions, good for in-progress runs) or Full (all sections)?
 **After answers:** ask if this experiment follows a prior one (list existing files to help).
 
 **Step 2 — Draft summary (always, regardless of milestone mode):**
-Draft a one-sentence `summary:` from the Goal (and Conclusion, if present).
+Draft a one-sentence `summary:` of at most 300 characters from the Goal (and
+Conclusion, if present). Keep details in the entry body.
 Show it to the user to accept or edit.
 
 **Step 3 — Milestone check (only if `$RESEARCH_LOG_DIR/MILESTONES.md` already exists):**
@@ -229,7 +277,8 @@ date: YYYY-MM-DD
 experiment: <slug>
 mode: <exp|daily|explore|report|publish, or omit if unknown>
 tags: []
-summary: <one-sentence description, always present>
+summary: <one sentence, at most 300 characters, always present>
+kind: <registration|results, or omit for an ordinary entry>
 milestone: <id such as M2, or omit if milestone mode is not active>
 follows: <prior-filename-or-empty>
 reason_follows: <one-line reason or empty>
@@ -268,13 +317,11 @@ amended: []
 
 Omit any section that was skipped. Quick mode writes: Goal, Analysis, Next Steps.
 
-Rebuild INDEX.md after saving.
-
-If `$RESEARCH_LOG_DIR/MILESTONES.md` already exists, also update it: append
-this entry's row to its milestone's table and refresh `_Last updated_`. If it
-does not exist yet, run the Milestone Mode threshold check — if
-`recommend_enable` is `true`, run the enable flow (see Milestone Mode above)
-before finishing.
+After saving, run `build_index.py` as shown under `index` to rebuild INDEX.md
+and, when active, MILESTONES.md. Run the Milestone Mode threshold check; if
+`recommend_enable` is true, follow the enable flow (defer grouping in an
+unattended session). Run `build_index.py --dir "$RESEARCH_LOG_DIR" --check`
+before finishing `add`; surface validation errors instead of claiming success.
 
 ### Pre-filled add (called from research-mode)
 
@@ -292,9 +339,10 @@ Confirm: `✓ Created $RESEARCH_LOG_DIR/YYYY-MM-DD_<slug>.md`
 
 Update an existing entry.
 
-If no argument, list the 5 most recent files and ask which to edit:
+If no argument in an attended session, list the 5 most recent files and ask
+which to edit:
 ```bash
-ls -t "$RESEARCH_LOG_DIR"/*.md | grep -v INDEX | grep -v MILESTONES | head -5
+ls -t "$RESEARCH_LOG_DIR"/*.md | grep -Ev '/[A-Z][A-Z0-9_]*\.md$' | head -5
 ```
 
 **Optional — show git changes since this entry was created:**
@@ -304,30 +352,60 @@ python "$GIT_CTX" --since-log <target-log-file>
 ```
 Useful when the user wants to add new results or fill in a Changes section retroactively.
 
-Show current section headings. Ask which sections to update. Rewrite the file with new content. Append to `amended:` in frontmatter:
+Show current section headings. Ask which sections to update (except in an
+unattended session). For an ordinary or results entry, rewrite the file with
+new content. For a committed registration, only append a dated `## Amendment N`
+section; preserve its original frontmatter and content. For other entries,
+append to `amended:` in frontmatter:
 ```yaml
 amended:
   - date: YYYY-MM-DD
     summary: <one-line description of change>
 ```
 
-If the amendment substantially changes the entry's content, ask (non-blocking
-— skip if the user declines) whether `summary` or `milestone` membership
-should be revisited.
+For an ordinary or results entry in an attended session, if the amendment
+substantially changes its content, ask (non-blocking — skip if the user declines)
+whether `summary` or `milestone` membership should be revisited.
 
-Rebuild INDEX.md. If `$RESEARCH_LOG_DIR/MILESTONES.md` exists, rebuild it too.
+Run `build_index.py` as shown under `index` to rebuild INDEX.md and, when
+active, MILESTONES.md. Run `build_index.py --dir "$RESEARCH_LOG_DIR" --check`
+before finishing `amend`; report validation errors explicitly.
 
 ---
 
 ### index
 
-Rebuild INDEX.md by scanning all `.md` files (excluding INDEX.md and MILESTONES.md):
+Rebuild derived views with `build_index.py`; never write their tables by hand.
+Resolve `$RESEARCH_LOG_DIR` in this call (see Storage), then locate the builder
+in the same way as the other scripts:
 
 ```bash
-find "$RESEARCH_LOG_DIR" -maxdepth 1 -name "*.md" ! -name "INDEX.md" ! -name "MILESTONES.md" | sort -r
+# macOS / Linux / Git Bash:
+BUILD_INDEX="$(find ~/.claude -path "*/research-log/scripts/build_index.py" | head -1)"
+python "$BUILD_INDEX" --dir "$RESEARCH_LOG_DIR"
+python "$BUILD_INDEX" --dir "$RESEARCH_LOG_DIR" --check
 ```
 
-Read frontmatter from each file. Write:
+```powershell
+# Windows (PowerShell):
+$BUILD_INDEX = (Get-ChildItem $env:USERPROFILE\.claude -Recurse -Filter build_index.py |
+    Where-Object FullName -like "*research-log*" | Select-Object -First 1).FullName
+python $BUILD_INDEX --dir $RESEARCH_LOG_DIR
+python $BUILD_INDEX --dir $RESEARCH_LOG_DIR --check
+```
+
+`--check` writes nothing and fails on stale views or validation errors.
+`--json` reports files written or stale, per-entry problems, and milestone
+counts. Text output groups warnings by kind and count; use `--verbose` to list
+warnings individually. JSON retains every per-entry diagnostic. Missing `date`,
+`experiment`, or `summary`, filename/date mismatch,
+and unknown milestone IDs are errors. Multiline or overlong summaries (warning
+threshold `--max-summary-chars`, default 300) and missing `follows` targets are
+warnings. `--no-strict` allows entry errors for an explicit recovery rebuild;
+source-definition errors still require repair. Last-updated dates derive from
+the latest entry date so repeated builds are deterministic.
+
+Without MILESTONES.md, only INDEX.md is built, in this format:
 
 ```markdown
 # Research Log Index
@@ -344,8 +422,9 @@ Rules: newest first; `Mode` = `mode` frontmatter value, or `—` if absent; `HEA
 
 **After rebuilding INDEX.md**, run the Milestone Mode threshold check (see
 above):
-- If `$RESEARCH_LOG_DIR/MILESTONES.md` already exists, rebuild it too, from
-  all logs' `milestone:` and `summary:` frontmatter fields.
+- If `$RESEARCH_LOG_DIR/MILESTONES.md` already exists, the same builder run
+  rebuilds it from source headers and entry frontmatter. Empty milestones are
+  retained with warnings. Never append rows manually.
 - If it does not exist and `recommend_enable` is `true`, run the enable flow
   from Milestone Mode above.
 
@@ -386,7 +465,23 @@ claiming that a custom type does not exist:
 python "$SECTION_QUERY" types --dir "$RESEARCH_LOG_DIR" --budget 4000 --cursor "<opaque-cursor>"
 ```
 
-Then search the selected types to receive a manifest, never full bodies:
+Then search the selected types to receive a manifest, never full bodies.
+Use `--grep TERM [TERM ...]` for case-insensitive literal substrings in section
+headings and bodies, and in frontmatter summaries. Terms match ANY by default;
+`--grep-all` requires every term. With `--grep`, omit `--sections` to search all
+section types; without `--grep`, `--sections` remains required. Section filters
+and date bounds can refine a grep search. Summary hits have `type_key: summary`
+and a fetchable ID whose body is the summary text. Grep manifest records include
+`match_count` (nonoverlapping occurrences per term) and one whitespace-collapsed
+`snippet` of at most 160 characters; both count toward the response budget.
+Normalized grep terms and `--grep-all` are bound into continuation cursors.
+
+```bash
+python "$SECTION_QUERY" search --dir "$RESEARCH_LOG_DIR" \
+  --grep "distinctive factor" "comparison arm" --range all --budget 4000
+```
+
+For type-based searches:
 
 ```bash
 python "$SECTION_QUERY" search \
@@ -489,6 +584,13 @@ query conditions and the journal state fingerprint. This is session-local
 decision state, not a persistent index: the agent does not repeat an identical
 query while the relevant files remain unchanged.
 
+For a hypothesis-level check ("has this factor or arm been measured before?"),
+run a `--grep` search over the whole history (`--range all`, no `--sections`)
+with distinctive terms of the hypothesis before proposing or registering an
+experiment. Traverse all manifest pages, fetch relevant evidence, and cite the
+entry filenames/section IDs found, or state the searched terms and scope when
+no match was found. A type-only search does not satisfy this check.
+
 After retrieval, classify the evidence without collapsing distinct cases:
 
 - previously attempted and unsuccessful;
@@ -514,6 +616,22 @@ Historical records inform a decision but do not automatically prohibit work.
 
 ---
 
+## Optional entry kinds
+
+Ordinary entries omit `kind`. Any empirical work may optionally use
+`kind: registration` or `kind: results` with these fixed level-two headings:
+
+| Kind | Headings in order |
+|------|-------------------|
+| `registration` | Goal, Prior Evidence, Setup, Gates, Tests, Reading, Adoption, Power |
+| `results` | Goal, Gates, Results, Deviations, Analysis, Conclusion, Next Steps |
+
+A registration is written and committed before any data of the experiment is
+read. It is never rewritten afterwards: changes go in a dated `## Amendment N`
+section. The results entry `follows` the registration and scores its planned
+gates/tests, reporting deviations and actual observations. This practice is
+optional; the skill does not require it.
+
 ## Frontmatter reference
 
 | Field | Description |
@@ -521,9 +639,10 @@ Historical records inform a decision but do not automatically prohibit work.
 | `date` | YYYY-MM-DD |
 | `experiment` | slug used in filename |
 | `tags` | free-form list |
-| `summary` | one-sentence description of this entry's content; always present, drafted by the agent and confirmed by the user on every `add`/`amend` |
+| `summary` | one sentence, at most 300 characters; details belong in the body; always present, agent-drafted and user-confirmed except in unattended sessions |
+| `kind` | optional `registration` or `results`; absent means an ordinary entry |
 | `milestone` | milestone ID this entry belongs to (e.g. `M2`); only set once milestone mode is active (see Milestone Mode) |
-| `follows` | filename of prior experiment (optional) |
+| `follows` | optional prior entry reference, resolved as exact filename, then filename stem, then unique `experiment` slug; warn on missing or ambiguous slugs; new entries write the full filename including `.md` |
 | `reason_follows` | why this follows from the prior (optional) |
 | `git_head` | short SHA of HEAD commit when this entry was written (optional) |
 | `slide_decks` | paths added by /report-slides (do not edit manually) |
@@ -532,16 +651,17 @@ Historical records inform a decision but do not automatically prohibit work.
 ## Notes
 
 - If `$RESEARCH_LOG_DIR` does not exist, create it silently — the directory itself was already confirmed by the user during role resolution; this only covers the directory not yet existing on disk. This applies **only** to a path that came back with `status: "resolved"`. Never create a directory for an empty `$RESEARCH_LOG_DIR`, and never recreate the `primary` of a `stale_mapping` response — that path is one the user moved or deleted, and it must be re-confirmed first.
-- If a `follows:` target file is not found, warn but continue.
+- If a `follows:` reference matches no entry or an ambiguous experiment slug,
+  warn but continue; name the ambiguous slug and its candidate files.
 - `slide_decks` and `amended` are managed by skills only — never ask the user to set them.
 - `git_head` enables reconstructing the exact commit range for any experiment:
   given two consecutive entries with `git_head` values A and B, run `git log A..B` to see all changes.
-- `summary` is drafted by the agent and confirmed by the user on every `add`; never left blank.
+- `summary` is drafted by the agent and confirmed by the user on every attended `add`; never left blank.
 - Milestone mode (`MILESTONES.md`) auto-enables once total log content crosses
   the token threshold reported by `log_stats.py` (default 6000 tokens) and,
   once created, is always kept up to date — there is no auto-disable.
 - Milestone grouping and titles are always agent-suggested and user-confirmed,
-  never decided silently.
+  never decided silently. Unattended sessions keep the current milestone.
 - A `follows:` chain crossing a milestone boundary is fine and not flagged —
   milestones are a content-grouping convenience, not a hard timeline
   partition.
