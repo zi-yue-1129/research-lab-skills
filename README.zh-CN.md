@@ -185,9 +185,9 @@ powershell -ExecutionPolicy Bypass -File install.ps1 -Uninstall      # 卸载
 |------|------|
 | `/research-log add` | 新增记录（quick 3 问引导、full 9 节完整格式） |
 | `/research-log amend` | 修订现有记录的某个章节 |
-| `/research-log index` | 从 frontmatter 重建 `docs/research_log/INDEX.md` |
+| `/research-log index` | 运行 `build_index.py`，从 frontmatter 重建 INDEX.md 与已启用的 MILESTONES.md |
 | `/research-log show [n]` | 显示最近 n 条记录的摘要（默认 5） |
-| `/research-log query` | 按章节与日期搜索历史，再在安全 token 预算内读取选定结果 |
+| `/research-log query` | 按章节、日期或 `--grep` 字面关键词搜索历史，再在安全 token 预算内读取选定结果 |
 
 即使没有启用 `/mode`，Agent 也会在开始新实验、诊断异常、调整参数或启动成本高昂的重跑前，主动查阅相关历史。
 

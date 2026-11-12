@@ -30,6 +30,7 @@ from section_query_core import (
     ScanResult,
     SectionOccurrence,
     discover_types,
+    grep_details,
     normalize_heading,
     resolve_date_bounds,
     scan_journal,
@@ -108,6 +109,12 @@ def main(arguments: list[str] | None = None) -> int:
     parser = _build_parser()
     try:
         parsed_arguments = parser.parse_args(arguments)
+        if (
+            parsed_arguments.command == "search"
+            and not parsed_arguments.sections
+            and not parsed_arguments.grep
+        ):
+            parser.error("the following arguments are required: --sections")
         budget = _validate_budget(parsed_arguments.budget)
         log_directory = Path(parsed_arguments.dir).resolve()
         scan = scan_journal(log_directory)
@@ -154,7 +161,14 @@ def _build_parser() -> QueryArgumentParser:
     search_parser = subparsers.add_parser("search", help="Search sections by type and date.")
     _add_pagination_arguments(search_parser)
     search_parser.add_argument(
-        "--sections", nargs="+", required=True, metavar="SECTION", help="Section types to include."
+        "--sections", nargs="+", metavar="SECTION", help="Section types to include."
+    )
+    search_parser.add_argument(
+        "--grep", nargs="+", metavar="TERM",
+        help="Case-insensitive literal heading/body/summary substrings.",
+    )
+    search_parser.add_argument(
+        "--grep-all", action="store_true", help="Require every grep term."
     )
     search_parser.add_argument(
         "--range", choices=("all", "7d", "30d", "90d", "year"), help="Named inclusive date range."
@@ -326,8 +340,17 @@ def _run_search(
         parsed_arguments.to_text,
         reference_date,
     )
-    normalized_types = _validate_requested_types(tuple(parsed_arguments.sections), scan)
-    matches = search_sections(scan, normalized_types, bounds)
+    normalized_types = _validate_requested_types(
+        tuple(parsed_arguments.sections or ()), scan
+    )
+    grep_terms = tuple(sorted({
+        term.casefold() for term in (parsed_arguments.grep or ())
+    }))
+    if grep_terms and any(not term for term in grep_terms):
+        raise QueryInputError("invalid_arguments", "--grep terms must not be empty.")
+    matches = search_sections(
+        scan, normalized_types, bounds, grep_terms, parsed_arguments.grep_all
+    )
     warnings = list(scan.warnings)
     warnings.extend(_undated_exclusion_warnings(scan, normalized_types, bounds.range_name))
     query: dict[str, object] = {
@@ -339,6 +362,9 @@ def _run_search(
         "resolved_from": bounds.start.isoformat() if bounds.start is not None else None,
         "resolved_to": bounds.end.isoformat() if bounds.end is not None else None,
     }
+    if grep_terms:
+        query["grep"] = list(grep_terms)
+        query["grep_all"] = parsed_arguments.grep_all
     conditions = {"command": "search", "query": query}
     start_index = _cursor_start_index(
         parsed_arguments.cursor,
@@ -352,6 +378,9 @@ def _run_search(
         manifest_record_for_budget(section, scan.journal_fingerprint, budget)
         for section in matches
     ]
+    if grep_terms:
+        for section, record in zip(matches, records):
+            record.update(grep_details(section, grep_terms))
     base_payload: dict[str, object] = {
         "ok": True,
         "query": query,
@@ -614,8 +643,9 @@ def _undated_exclusion_warnings(
     requested_keys = {normalize_heading(type_name)[1] for type_name in requested_types}
     omitted_paths = sorted({
         section.path.as_posix()
-        for section in scan.sections
-        if section.type_key in requested_keys and section.log_date is None
+        for section in (*scan.sections, *scan.summaries)
+        if (not requested_keys or section.type_key in requested_keys)
+        and section.log_date is None
     })
     return tuple(
         QueryWarning(

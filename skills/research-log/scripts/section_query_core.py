@@ -10,6 +10,8 @@ from pathlib import Path
 import re
 from urllib.parse import quote
 
+from journal_common import entry_paths, parse_frontmatter, scalar
+
 CANONICAL_TYPES: tuple[str, ...] = (
     "Goal", "Changes", "Setup", "Results", "Failures",
     "Analysis", "Charts", "Conclusion", "Next Steps",
@@ -22,10 +24,8 @@ HEADING_ALIASES: dict[str, str] = {
     "failures / pitfalls": "Failures",
 }
 
-_EXCLUDED_NAMES = frozenset({"INDEX.md", "MILESTONES.md"})
 _HEADING_PATTERN = re.compile(r"^[ \t]{0,3}##(?!#)[ \t]+(.+?)[ \t]*(?:\r?\n)?$")
 _FENCE_PATTERN = re.compile(r"^[ \t]{0,3}(`{3,}|~{3,})")
-_SCALAR_PATTERN = re.compile(r"^(date|experiment):[ \t]*(.*?)[ \t]*$")
 _CANONICAL_BY_NORMALIZED = {
     " ".join(type_name.split()).casefold(): type_name
     for type_name in CANONICAL_TYPES
@@ -68,6 +68,7 @@ class ScanResult:
     sections: tuple[SectionOccurrence, ...]
     warnings: tuple[QueryWarning, ...]
     journal_fingerprint: str
+    summaries: tuple[SectionOccurrence, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -159,15 +160,10 @@ def scan_journal(log_dir: Path) -> ScanResult:
     if not log_dir.is_dir():
         return ScanResult((), (), sha256().hexdigest())
 
-    markdown_paths = sorted(
-        (
-            path for path in log_dir.glob("*.md")
-            if path.is_file() and path.name not in _EXCLUDED_NAMES
-        ),
-        key=lambda path: path.relative_to(log_dir).as_posix(),
-    )
+    markdown_paths = entry_paths(log_dir)
     digest = sha256()
     all_sections: list[SectionOccurrence] = []
+    all_summaries: list[SectionOccurrence] = []
     all_warnings: list[QueryWarning] = []
     for path in markdown_paths:
         relative_path = path.relative_to(log_dir).as_posix()
@@ -186,10 +182,29 @@ def scan_journal(log_dir: Path) -> ScanResult:
             raise JournalReadError(
                 "invalid_utf8", path, f"Could not decode {path} as UTF-8."
             ) from error
-        sections, warnings = _scan_log(path, relative_path, text)
+        try:
+            sections, warnings = _scan_log(path, relative_path, text)
+            metadata, _ = parse_frontmatter(text)
+        except ValueError as error:
+            raise JournalReadError("invalid_frontmatter", path, str(error)) from error
+        summary = scalar(metadata, "summary")
+        if summary:
+            log_date = _parse_date(
+                scalar(metadata, "date") or None, relative_path, []
+            )
+            all_summaries.append(SectionOccurrence(
+                result_id=f"{path.stem}::summary::frontmatter",
+                path=Path(relative_path), log_stem=path.stem, log_date=log_date,
+                experiment=scalar(metadata, "experiment") or None,
+                type_name="Summary", type_key="summary", original_heading="summary",
+                occurrence_number=0, body=summary, body_start=0, body_end=len(summary),
+            ))
         all_sections.extend(sections)
         all_warnings.extend(warnings)
-    return ScanResult(tuple(all_sections), tuple(all_warnings), digest.hexdigest())
+    return ScanResult(
+        tuple(all_sections), tuple(all_warnings), digest.hexdigest(),
+        tuple(all_summaries),
+    )
 
 
 def _decode_normalized(content_bytes: bytes) -> str:
@@ -300,6 +315,8 @@ def search_sections(
     scan: ScanResult,
     requested_types: tuple[str, ...],
     bounds: DateBounds,
+    grep_terms: tuple[str, ...] = (),
+    grep_all: bool = False,
 ) -> tuple[SectionOccurrence, ...]:
     """Filter and deterministically order matching section occurrences.
 
@@ -307,16 +324,63 @@ def search_sections(
         scan: Parsed research-log result to filter.
         requested_types: Canonical, alias, or discovered type names to include.
         bounds: Inclusive resolved date bounds.
+        grep_terms: Case-folded literal substrings, or empty for type-only search.
+        grep_all: Require every term rather than any term.
 
     Returns:
         Matching occurrences ordered by date, filename, and source position.
     """
     requested_keys = {normalize_heading(type_name)[1] for type_name in requested_types}
-    matching_sections = [
+    candidates = [
         section for section in scan.sections
-        if section.type_key in requested_keys and _is_within_bounds(section, bounds)
+        if not requested_keys or section.type_key in requested_keys
+    ]
+    if grep_terms:
+        candidates.extend(scan.summaries)
+    matching_sections = [
+        section for section in candidates
+        if _is_within_bounds(section, bounds)
+        and (not grep_terms or (
+            all(term in _grep_text(section).casefold() for term in grep_terms)
+            if grep_all else any(
+                term in _grep_text(section).casefold() for term in grep_terms
+            )
+        ))
     ]
     return tuple(sorted(matching_sections, key=_section_sort_key))
+
+
+def _grep_text(section: SectionOccurrence) -> str:
+    """Return the searchable heading and body, or just a frontmatter summary."""
+    if section.occurrence_number == 0:
+        return section.body
+    return section.original_heading + "\n" + section.body
+
+
+def grep_details(
+    section: SectionOccurrence, terms: tuple[str, ...]
+) -> dict[str, object]:
+    """Build occurrence counts and bounded context for a grep manifest record.
+
+    Args:
+        section: Matching section or frontmatter summary.
+        terms: Nonempty unique case-folded literal terms.
+
+    Returns:
+        Match count (nonoverlapping occurrences per term) and first-match context.
+    """
+    source = _grep_text(section)
+    folded = source.casefold()
+    match_count = sum(folded.count(term) for term in terms)
+    first = min(folded.index(term) for term in terms if term in folded)
+    folded_offset = 0
+    source_offset = 0
+    for source_offset, character in enumerate(source):
+        if folded_offset >= first:
+            break
+        folded_offset += len(character.casefold())
+    context = source[max(0, source_offset - 48):]
+    return {"match_count": match_count, "snippet": " ".join(context.split())[:160]}
 
 
 def manifest_record(
@@ -397,26 +461,11 @@ def _scan_log(
 
 def _parse_frontmatter(text: str) -> tuple[dict[str, str], int]:
     """Return recognized scalar frontmatter and the content offset."""
-    lines = text.splitlines(keepends=True)
-    if not lines or lines[0].rstrip("\r\n") != "---":
-        return {}, 0
-    offset = len(lines[0])
-    fields: dict[str, str] = {}
-    for line in lines[1:]:
-        offset += len(line)
-        if line.rstrip("\r\n") == "---":
-            return fields, offset
-        match = _SCALAR_PATTERN.match(line.rstrip("\r\n"))
-        if match is not None:
-            fields[match.group(1)] = _unquote_scalar(match.group(2))
-    return {}, 0
-
-
-def _unquote_scalar(value: str) -> str:
-    """Remove one matching pair of scalar quotes."""
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
-        return value[1:-1]
-    return value
+    metadata, offset = parse_frontmatter(text)
+    return {
+        key: scalar(metadata, key)
+        for key in ("date", "experiment") if key in metadata
+    }, offset
 
 
 def _parse_date(
